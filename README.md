@@ -168,7 +168,7 @@ pnpm dev
 
 ```text
 ├── WORKBUDDY.md                # 项目规则（Agent 开发约束，含 pure-admin 官方规范）
-├── PROGRESS.md                 # 项目进度（已完成 / 进行中 / 待办 / 已知问题 / 浏览器验证记录）
+├── docs/PROGRESS.md           # 项目进度（已归入 docs）（已完成 / 进行中 / 待办 / 已知问题 / 浏览器验证记录）
 ├── docs/
 │   ├── api.md                  # API 权威文档（人类可读，唯一权威）
 │   └── openapi.yaml            # API 机器可读规范（OpenAPI 3.0）

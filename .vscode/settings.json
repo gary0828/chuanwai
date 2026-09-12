@@ -41,4 +41,35 @@
     "v-ripple"
   ],
   "vscodeCustomCodeColor.highlightValueColor": "#b392f0",
+
+  // ── AI / 搜索 Token 节约（2026-09-12）：把依赖与产物挡在搜索与 AI 上下文之外 ──
+  // 与根目录 .aiignore / .cursorignore / .copilotignore / .ignore 保持一致
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/.git": true,
+    "server/data": true,
+    "evidence": true,
+    "_verify_test": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/server/data": true,
+    "**/evidence": true,
+    "**/pnpm-lock.yaml": true,
+    "**/package-lock.json": true
+  },
+  "chat.ignoredFiles": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/server/data": true,
+    "**/evidence": true,
+    "**/_verify_test": true,
+    "**/*.db": true,
+    "**/*.db-wal": true,
+    "**/*.db-shm": true,
+    "**/pnpm-lock.yaml": true,
+    "**/package-lock.json": true
+  },
 }

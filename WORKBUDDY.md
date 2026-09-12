@@ -1,6 +1,6 @@
 # WORKBUDDY.md · 教务管理系统 项目规则（Agent 开发约束）
 
-> 本文件是 Agent 在本仓库工作时的**最高优先级规则**。每次会话开始必须通读本文件 + `PROGRESS.md`。
+> 本文件是 Agent 在本仓库工作时的**最高优先级规则**。每次会话开始必须通读本文件 + `docs/项目地图.md`。
 > 生成时间：2026-09-11 ｜ 数据库版本：v14 ｜ e2e 断言数：80（全绿）
 
 ---
@@ -107,7 +107,7 @@ export const getStudentList = (params?: object) => {
 1. 先查官方文档：https://pure-admin.cn/
 2. 查不到 → 查官方 GitHub 仓库的示例代码（`src/views/` 下的官方页面）
 3. 还没有 → 查 `@pureadmin/utils` 工具库是否已有现成函数
-4. 都没有 → 在 `PROGRESS.md` 中记录问题，选择最接近官方风格的方案实现，**不要自己发明**
+4. 都没有 → 在 `docs/PROGRESS.md` 中记录问题，选择最接近官方风格的方案实现，**不要自己发明**
 
 ### 0.5 本项目的规范落地判定（实测结论，勿重复踩坑）
 
@@ -176,7 +176,7 @@ export const getStudentList = (params?: object) => {
 
 - 唯一权威文档：`docs/api.md`（结构化 Markdown 表格 + JSON 代码块，可被 AI 解析）。
 - 机器可读规范：`docs/openapi.yaml`（OpenAPI 3.0）。
-- **每次新增/修改 API 必须同步更新这两份文档**，并在 `PROGRESS.md` 记录。
+- **每次新增/修改 API 必须同步更新这两份文档**，并在 `docs/PROGRESS.md` 记录。
 - 统一响应格式见 `docs/api.md` 顶部「通用约定」。
 
 ## 六、浏览器测试要求
@@ -186,7 +186,7 @@ export const getStudentList = (params?: object) => {
 - 开发环境前端：`http://localhost:8848`（vite）；Docker 环境前端：`http://localhost:8080`。
 - 后端：`http://localhost:3000`，健康检查 `GET /api/health`。
 - 浏览器自动化工具：系统 Python 3.14 + Playwright 1.62（`C:\Program Files\Python314\python.exe`），脚本放在 `server/scripts/ui-*.py`，截图输出到 `evidence/`。
-- 每次浏览器验证后在 `PROGRESS.md` 的「最近一次浏览器验证」记录：时间、覆盖模块、每个检查项结果、发现的 bug 与修复状态。
+- 每次浏览器验证后在 `docs/PROGRESS.md` 的「最近一次浏览器验证」记录：时间、覆盖模块、每个检查项结果、发现的 bug 与修复状态。
 
 ## 七、Docker 部署约束
 
@@ -207,18 +207,67 @@ node server/scripts/e2e-lifecycle.mjs
 - 本机 `node_modules` 曾出现 **junction 链接丢失（顶层目录为空）** 的问题，表现是 `Cannot find module '.../node_modules/vite/bin/vite.js'`。
   - 修复：`pnpm install`（会自动 purge 并重建 `node_modules`），必要时 `$env:CI="true"` 跳过交互确认。
 - `server/node_modules` 为 npm 安装的真实目录，独立于前端，互不影响。
-- 本仓库**当前不是 git 仓库**（无 `.git`）。若需版本管理，先 `git init`，并按 commitlint 规范提交。
+- 本仓库**已是 git 仓库**（有 `.git`，远程 `origin = https://github.com/gary0828/chuanwai`，分支 `main`）。推送大包前须先配 `http.postBuffer=524288000` + `http.version=HTTP/1.1`。仓库为**公开**，推送前必须扫描敏感数据（真实学员数据 / 密钥）。
 
 ## 九、Agent 连续工作协议
 
-1. **初始化**：**先读 `00-项目导航.md`（唯一入口）**，按其中的「权威范围表」决定本次会话要读哪些文档。**必读清单以导航页为唯一权威，此处不再重复列举**（避免两处清单不同步）；启动后端；跑 `node server/scripts/e2e-lifecycle.mjs` 确认基线全绿；确认前端可访问。
+1. **初始化**：读 `docs/项目地图.md`（**代码定位**：目录结构 + 按功能找文件）与 `docs/00-项目导航.md`（**文档体系**：权威范围表 + ADR 索引 + 阶段速查），据此决定本次会话要读哪些文件（**不要再全项目扫描**）；启动后端；跑 `node server/scripts/e2e-lifecycle.mjs` 确认基线全绿；确认前端可访问。
 2. **任务选择优先级**：P0 缺陷 > 浏览器验证发现的 UI/交互问题 > e2e 失败项 > 跨模块联动不通过项 > API 文档缺失/不一致 > 数据库设计不规范 > pure-admin 规范偏离 > 性能/安全/体验。
-3. **执行**：先在 `PROGRESS.md` 记录当前任务；小步修改，每次只做一件事；前端改动前先确认符合第〇节。
+3. **执行**：先在 `docs/PROGRESS.md` 记录当前任务；小步修改，每次只做一件事；前端改动前先确认符合第〇节。
 4. **验证**：后端改动 → e2e + 浏览器；前端改动 → `pnpm lint` + `pnpm build` + 浏览器。
-5. **循环**：完成一个任务后自动进入下一个，不等待用户确认；遇到阻塞记入 `PROGRESS.md` 并跳过。
-6. **决策留痕**：任何「三个月后会被重新质疑」的决定，必须在 `docs/decisions/` 新增 ADR（`ADR-00N-简短标题.md`，格式见已有 ADR），并回链到 `00-项目导航.md` 的 ADR 索引表。**ADR 只追加、不修改**（要改就新增一条并标记取代关系）。典型信号：为什么不做 X、为什么选 A 不选 B、某个口径为什么这么定。
+5. **循环**：完成一个任务后自动进入下一个，不等待用户确认；遇到阻塞记入 `docs/PROGRESS.md` 并跳过。
+6. **决策留痕**：任何「三个月后会被重新质疑」的决定，必须在 `docs/decisions/` 新增 ADR（`ADR-00N-简短标题.md`，格式见已有 ADR），并回链到 `docs/00-项目导航.md` 的 ADR 索引表。**ADR 只追加、不修改**（要改就新增一条并标记取代关系）。典型信号：为什么不做 X、为什么选 A 不选 B、某个口径为什么这么定。
 
-## 十、约束
+## 十、AI 读取预算与 Token 纪律（2026-09-12 新增）
+
+项目磁盘 **809MB**，但真实源码仅约 **31,000 行 / 5MB（0.6%）**。为避免把依赖与产物读进上下文，遵守以下纪律：
+
+### 10.1 禁止整目录读取
+
+**禁止**对以下路径做全量列举 / 递归读取 / Glob 扫描：
+
+| 路径 | 体积 | 原因 |
+| --- | --- | --- |
+| `node_modules/`、`server/node_modules/` | 791MB | 第三方依赖，与业务逻辑无关 |
+| `server/data/` | 7MB | SQLite 二进制 + WAL + 备份，**且含真实学员数据** |
+| `dist/` | 4MB | 构建产物 |
+| `evidence/`、`_verify_test/` | 7MB | 截图 / 测试脚本（需改时按路径显式打开） |
+| `*.db*`、`pnpm-lock.yaml`、`package-lock.json` | — | 二进制与超长锁文件 |
+
+已由 `.aiignore` / `.cursorignore` / `.copilotignore` / `.ignore` 四份同内容规则文件覆盖（ripgrep 亦生效，实测搜索不再命中 `node_modules`）。
+
+### 10.2 用搜索代替遍历
+
+- 找"某个功能在哪实现" → 先用 Grep 搜关键词，**不要**先 `Glob` 出全部文件再逐个读。
+- 找"某个表/字段被谁写" → 搜索字段名，而不是读完整路由文件。
+- 确认"某个接口是否存在" → 搜索路由字符串，不要枚举路由文件。
+
+### 10.3 先读地图，再读代码
+
+会话开始时按序读取，总量控制在 **约 400 行以内**：
+
+1. `.workbuddy/memory/MEMORY.md`（长期约定，约 3,000 字符）
+2. **本文档 `WORKBUDDY.md`**（开发约束）
+3. **`docs/项目地图.md`**（目录结构 + 按功能定位文件的索引表）← 定位代码靠它，不要扫描
+4. 仅当任务涉及时，再读具体源码文件
+
+### 10.4 读取分级
+
+| 场景 | 允许读取范围 |
+| --- | --- |
+| 明确的小改动 | 目标文件 + 其直接依赖（通常 ≤ 5 个文件） |
+| 跨模块改动 | 目标模块的路由/视图 + `utils/scope.js` + `docs/api.md` 对应章节 |
+| 全量审查 / 评估 | 允许遍历 `server/src/` 与 `src/`（约 31,000 行），但仍排除依赖与产物 |
+| 不确定读什么 | **先读 `docs/项目地图.md` 第二节/第三节**，再决定 |
+
+### 10.5 输出纪律
+
+- 不把读取到的源码大段复述给用户（用户看得到文件）。
+- 报错时只贴**关键行 + 根因**，不贴完整堆栈与调试过程。
+
+---
+
+## 十一、约束
 
 - 不破坏现有数据库迁移历史；所有 schema 变更必须通过新迁移。
 - 不改变「纯员工端 CRM」定位：学生/家长无账号、不登录。
