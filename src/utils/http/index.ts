@@ -12,6 +12,7 @@ import type {
 import { stringify } from "qs";
 import { getToken, formatToken } from "@/utils/auth";
 import { useUserStoreHook } from "@/store/modules/user";
+import { ElMessage } from "element-plus";
 
 // 相关配置请参考：www.axios-js.com/zh-cn/docs/#axios-request-config-1
 const defaultConfig: AxiosRequestConfig = {
@@ -28,6 +29,12 @@ const defaultConfig: AxiosRequestConfig = {
   }
 };
 
+/** 暂存等待新 token 的请求：刷新成功则放行，失败则一并 reject（不再永久挂起） */
+type PendingRequest = {
+  resolve: (token: string) => void;
+  reject: (error: unknown) => void;
+};
+
 class PureHttp {
   constructor() {
     this.httpInterceptorsRequest();
@@ -35,10 +42,13 @@ class PureHttp {
   }
 
   /** `token`过期后，暂存待执行的请求 */
-  private static requests = [];
+  private static requests: PendingRequest[] = [];
 
   /** 防止重复刷新`token` */
   private static isRefreshing = false;
+
+  /** 防止并发 401 触发多次跳转登录页 */
+  private static isHandlingAuthFailure = false;
 
   /** 初始化配置对象 */
   private static initConfig: PureHttpRequestConfig = {};
@@ -46,12 +56,38 @@ class PureHttp {
   /** 保存当前`Axios`实例对象 */
   private static axiosInstance: AxiosInstance = Axios.create(defaultConfig);
 
-  /** 重连原始请求 */
+  /**
+   * 登录态失效的统一处理：拒绝所有挂起请求 → 清理凭证 → 跳转登录页
+   *
+   * 修复背景（2026-09-12 上线门禁 H1）：原实现刷新失败时既不 reject 挂起队列，
+   * 也没有 401 → 跳登录逻辑，导致 token 真失效时所有请求永久 pending，
+   * 用户看到的是「界面卡死」而不是「请重新登录」。
+   */
+  private static handleAuthFailure(message = "登录状态已失效，请重新登录") {
+    const error = new Error(message);
+    PureHttp.requests.forEach(item => item.reject(error));
+    PureHttp.requests = [];
+    PureHttp.isRefreshing = false;
+    if (PureHttp.isHandlingAuthFailure) return;
+    PureHttp.isHandlingAuthFailure = true;
+    ElMessage.error(message);
+    try {
+      useUserStoreHook().logOut();
+    } catch {
+      // 兜底：store 尚未就绪时直接跳登录页（本项目使用 hash 路由）
+      window.location.href = "/#/login";
+    }
+  }
+
+  /** 重连原始请求（刷新成功放行；刷新失败时由 handleAuthFailure 统一 reject） */
   private static retryOriginalRequest(config: PureHttpRequestConfig) {
-    return new Promise(resolve => {
-      PureHttp.requests.push((token: string) => {
-        config.headers["Authorization"] = formatToken(token);
-        resolve(config);
+    return new Promise((resolve, reject) => {
+      PureHttp.requests.push({
+        resolve: (token: string) => {
+          config.headers["Authorization"] = formatToken(token);
+          resolve(config);
+        },
+        reject
       });
     });
   }
@@ -69,9 +105,11 @@ class PureHttp {
           PureHttp.initConfig.beforeRequestCallback(config);
           return config;
         }
-        /** 请求白名单，放置一些不需要`token`的接口（通过设置请求白名单，防止`token`过期后再请求造成的死循环问题） */
-        const whiteList = ["/refresh-token", "/login"];
-        return whiteList.some(url => config.url.endsWith(url))
+        /** 请求白名单，放置一些不需要`token`的接口（通过设置请求白名单，防止`token`过期后再请求造成的死循环问题）
+         *  /logout 也在此列：登出由调用方显式传入 Authorization，且需在清理本地凭证前发出，
+         *  不能让拦截器再去读（可能已被清理的）本地 token，否则会触发无意义的 401。 */
+        const whiteList = ["/refresh-token", "/login", "/logout"];
+        return whiteList.some(url => config.url?.endsWith(url))
           ? config
           : new Promise(resolve => {
               const data = getToken();
@@ -86,10 +124,16 @@ class PureHttp {
                     useUserStoreHook()
                       .handRefreshToken({ refreshToken: data.refreshToken })
                       .then(res => {
-                        const token = res.data.accessToken;
+                        const token = res?.data?.accessToken;
+                        if (!token) throw new Error("刷新登录态失败");
                         config.headers["Authorization"] = formatToken(token);
-                        PureHttp.requests.forEach(cb => cb(token));
+                        // 放行所有等待中的请求
+                        PureHttp.requests.forEach(item => item.resolve(token));
                         PureHttp.requests = [];
+                      })
+                      .catch(() => {
+                        // 刷新失败：拒绝挂起队列并跳登录，避免请求永久挂起
+                        PureHttp.handleAuthFailure();
                       })
                       .finally(() => {
                         PureHttp.isRefreshing = false;
@@ -133,7 +177,31 @@ class PureHttp {
       (error: PureHttpError) => {
         const $error = error;
         $error.isCancelRequest = Axios.isCancel($error);
-        // 所有的响应异常 区分来源为取消请求/非取消请求
+        // 请求被主动取消（如切换页面）不算错误，静默处理
+        if ($error.isCancelRequest) return Promise.reject($error);
+
+        const status = $error?.response?.status;
+        const backendMessage = $error?.response?.data?.message;
+
+        if (status === 401) {
+          // 凭证失效 / 已被吊销（登出、改密、改角色）→ 统一清理并跳登录
+          PureHttp.handleAuthFailure(backendMessage);
+          return Promise.reject($error);
+        }
+
+        // 统一把后端 message 提升为可读文案，供视图层直接展示
+        const readable =
+          backendMessage ||
+          (status === 403
+            ? "无权限执行该操作"
+            : status === 404
+              ? "请求的资源不存在"
+              : status >= 500
+                ? "服务器开小差了，请稍后重试"
+                : $error.message || "请求失败，请检查网络后重试");
+        $error.message = readable;
+        // 全局提示：大量视图以 catch(() => {}) 静默吞错，此处兜底保证用户能感知失败
+        ElMessage.error(readable);
         return Promise.reject($error);
       }
     );

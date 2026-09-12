@@ -5,6 +5,7 @@
 //       → 删除场景关联性 → 数据自清理与基线校验
 //
 // 运行：node server/scripts/e2e-lifecycle.mjs   （Node >= 18 支持 fetch / top-level await）
+//       可指定后端地址：BASE=http://localhost:3101 node server/scripts/e2e-lifecycle.mjs
 // 说明：
 //   - 所有测试数据以 e2e_ 为前缀，结束后在 finally 中逆序清理，可重复运行。
 //   - 阶段 6.2（删除有业务记录的学生）为已知 bug 的「预期失败」断言：当前后端
@@ -12,7 +13,7 @@
 //   - 阶段 1 中任务描述的 GET /leads/:id 接口不存在（404），改用 GET /leads 列表
 //     断言 status=已转化 与 converted_name（列表通过 JOIN converted_student_id 关联学员）。
 
-const BASE = "http://localhost:3000/api";
+const BASE = (process.env.BASE || "http://localhost:3000") + "/api";
 
 // ==================== 断言工具 ====================
 let passed = 0;

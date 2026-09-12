@@ -2,6 +2,7 @@
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
+const { parseText } = require("../utils/validate");
 
 const router = express.Router();
 
@@ -35,6 +36,10 @@ router.post("/", auth, requireRole("admin"), (req, res) => {
   if (!code || !name) {
     return res.status(400).json({ success: false, message: "课程代码与课程名称为必填项" });
   }
+  const codeRes = parseText(code, { field: "课程代码", max: 30, required: true });
+  if (!codeRes.ok) return res.status(400).json({ success: false, message: codeRes.message });
+  const nameRes = parseText(name, { field: "课程名称", max: 50, required: true });
+  if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
   try {
     const result = db
       .prepare("INSERT INTO courses (code, name, teacher) VALUES (?, ?, ?)")
@@ -55,6 +60,10 @@ router.put("/:id", auth, requireRole("admin"), (req, res) => {
   if (!code || !name) {
     return res.status(400).json({ success: false, message: "课程代码与课程名称为必填项" });
   }
+  const codeRes = parseText(code, { field: "课程代码", max: 30, required: true });
+  if (!codeRes.ok) return res.status(400).json({ success: false, message: codeRes.message });
+  const nameRes = parseText(name, { field: "课程名称", max: 50, required: true });
+  if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
   try {
     const result = db
       .prepare("UPDATE courses SET code = ?, name = ?, teacher = ? WHERE id = ?")

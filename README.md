@@ -55,10 +55,33 @@
 
 ### 方式一：Docker 部署（推荐）
 
+> ⚠️ **上线前必读**：后端**必须**注入 `JWT_SECRET`，否则会回退到源码中的公开默认密钥，任何人可自签管理员 token 读取全部学员/家长电话/缴费数据。详见 `docs/上线评估报告-2026-09-12.md` 问题 **B1**。
+
 ```bash
+# 0) 生成生产密钥（后端必需环境变量，模板见 server/.env.example）
+export JWT_SECRET=$(openssl rand -hex 32)   # Windows PowerShell: [Convert]::ToHexString((1..32|%{Get-Random -Max 256})) -replace '-',''
+
 # 构建并启动（国内网络已在 Dockerfile/.npmrc 配置 npmmirror 源）
 docker compose up -d --build
 ```
+
+并将 `JWT_SECRET` 注入 `docker-compose.yml` 的 `server.environment`（或同级 `.env` 文件），例如：
+
+```yaml
+  server:
+    environment:
+      - PORT=3000
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET 未设置，拒绝启动}
+```
+
+> **后端环境变量清单**（完整模板见 `server/.env.example`）：
+>
+> | 变量 | 必填 | 说明 |
+> | --- | --- | --- |
+> | `JWT_SECRET` | **是** | 双 Token 签名密钥。生产**必须**注入且不可写入仓库；建议 `openssl rand -hex 32` 生成，并纳入密钥轮换计划 |
+> | `PORT` | 否 | 后端监听端口，默认 `3000` |
+>
+> 前端环境变量见根目录 `.env.example`（所有自定义变量须以 `VITE_` 开头）。
 
 启动后访问：
 
@@ -73,6 +96,7 @@ docker compose up -d --build
 > - 后端健康检查：`GET /api/health`，`web` 服务会等 `server` 健康后再启动
 > - 国内网络拉取 Docker Hub 基础镜像较慢时，可在 Docker Desktop → Settings → Docker Engine 中配置镜像加速（registry-mirrors），例如 `https://docker.m.daocloud.io`
 > - `docker-compose.yml` 顶部显式声明了 `name: attendance-system`：Compose 默认用**目录名**推导项目名且只接受小写字母/数字/`-`/`_`，若项目放在**纯中文目录**（如 `教学管理系统`）下，推导结果为空字符串，会直接报 `project name must not be empty`。
+> - **首次登录后必须修改默认口令**（`admin/admin123456`、`teacher/teacher123456`）。默认口令为公开信息，且当前后端登录接口无失败限速，未经修改的账号可被直接爆破（见上线评估报告 H7/H9）。
 
 #### 部署后验证
 

@@ -9,11 +9,21 @@ const {
   canManageStudent,
   canManageClass
 } = require("../utils/scope");
+const {
+  parseDate,
+  parseText,
+  isConstraintError,
+  constraintMessage
+} = require("../utils/validate");
 
 const router = express.Router();
 
 const GENDERS = ["男", "女"];
 const STATUSES = ["在读", "休学", "退学"];
+/** 姓名字段长度上限（防止 400 字符长名撑破表格与 CSV 导出） */
+const MAX_NAME_LENGTH = 50;
+/** 学号长度上限 */
+const MAX_CODE_LENGTH = 32;
 
 /** 学生列表（班级/姓名/学号/keyword 过滤 + 分页；教师仅本班） */
 router.get("/", auth, (req, res) => {
@@ -126,6 +136,13 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
       .status(403)
       .json({ success: false, message: "无权将学生分配到该班级" });
   }
+  // 边界校验（2026-09-12 全面测试发现：日期与长度此前未校验）
+  const nameRes = parseText(name, { field: "姓名", max: MAX_NAME_LENGTH, required: true });
+  if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
+  const noRes = parseText(student_no, { field: "学号", max: MAX_CODE_LENGTH, required: true });
+  if (!noRes.ok) return res.status(400).json({ success: false, message: noRes.message });
+  const enrollRes = parseDate(enroll_date, { field: "报名日期", required: false });
+  if (!enrollRes.ok) return res.status(400).json({ success: false, message: enrollRes.message });
   try {
     db.exec("BEGIN");
     try {
@@ -134,17 +151,17 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
           "INSERT INTO students (student_no, name, gender, phone, email, class_id, status, parent_name, parent_phone, source_channel, enroll_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .run(
-          student_no,
-          name,
+          noRes.value,
+          nameRes.value,
           gender,
-          phone,
-          email,
+          String(phone ?? ""),
+          String(email ?? ""),
           Number(class_id),
           status,
-          parent_name,
-          parent_phone,
-          source_channel,
-          enroll_date
+          String(parent_name ?? ""),
+          String(parent_phone ?? ""),
+          String(source_channel ?? ""),
+          enrollRes.value
         );
       db.exec("COMMIT");
       res.json({ success: true, data: { id: result.lastInsertRowid } });
@@ -193,7 +210,9 @@ router.post("/import", auth, requireRole("admin", "teacher"), (req, res) => {
       class_id,
       status = "在读",
       parent_name = "",
-      parent_phone = ""
+      parent_phone = "",
+      source_channel = "",
+      enroll_date = ""
     } = row;
     let reason = "";
     if (!student_no || !name || !class_id) reason = "学号、姓名、班级为必填项";
@@ -206,19 +225,49 @@ router.post("/import", auth, requireRole("admin", "teacher"), (req, res) => {
       fails.push({ line, student_no, name, reason });
       continue;
     }
+    // 服务端补校（2026-09-12 全面测试发现）：日期与字符串长度不可直接信任客户端
+    const enrollRes = parseDate(enroll_date, {
+      field: "报名日期",
+      required: false
+    });
+    if (!enrollRes.ok) {
+      fails.push({ line, student_no, name, reason: enrollRes.message });
+      continue;
+    }
+    const nameRes = parseText(name, {
+      field: "姓名",
+      max: MAX_NAME_LENGTH,
+      required: true
+    });
+    if (!nameRes.ok) {
+      fails.push({ line, student_no, name, reason: nameRes.message });
+      continue;
+    }
+    const noRes = parseText(student_no, {
+      field: "学号",
+      max: MAX_CODE_LENGTH,
+      required: true
+    });
+    if (!noRes.ok) {
+      fails.push({ line, student_no, name, reason: noRes.message });
+      continue;
+    }
     try {
       db.exec("BEGIN");
       try {
+        // 注意：列数与绑定值必须一一对应（11 列 / 11 个值）
         insert.run(
-          student_no,
-          name,
+          noRes.value,
+          nameRes.value,
           gender,
-          phone,
-          email,
+          String(phone ?? ""),
+          String(email ?? ""),
           Number(class_id),
           status,
-          parent_name,
-          parent_phone
+          String(parent_name ?? ""),
+          String(parent_phone ?? ""),
+          String(source_channel ?? ""),
+          enrollRes.value
         );
         db.exec("COMMIT");
       } catch (err) {
@@ -232,9 +281,9 @@ router.post("/import", auth, requireRole("admin", "teacher"), (req, res) => {
         line,
         student_no,
         name,
-        reason: String(err.message).includes("UNIQUE")
-          ? "学号已存在"
-          : "写入失败"
+        reason: isConstraintError(err)
+          ? constraintMessage(err)
+          : "写入失败，请检查该行数据后重试"
       });
     }
   }

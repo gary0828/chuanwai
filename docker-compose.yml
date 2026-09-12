@@ -16,6 +16,17 @@ services:
     restart: unless-stopped
     environment:
       - PORT=3000
+      # JWT 签名密钥（必需）。缺失时后端会直接拒绝启动，不再回退到源码默认值。
+      # 生成：openssl rand -hex 32
+      # 注入方式（任选其一）：
+      #   1) 在项目根目录放置 .env 文件，写入一行 JWT_SECRET=<64位十六进制>
+      #   2) 直接在执行 `docker compose up` 的 shell 中 export JWT_SECRET=...
+      # `:?` 语法确保变量为空时 compose 直接报错，避免带病启动。
+      - JWT_SECRET=${JWT_SECRET:?未设置 JWT_SECRET，请先执行 export JWT_SECRET=$(openssl rand -hex 32)}
+      # CORS 允许的来源（逗号分隔）。默认放开本机常用端口；生产请改为实际访问地址。
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080,http://localhost:8848,http://127.0.0.1:8848}
+      # 登录失败限速：窗口内最大尝试次数（默认 10 次 / 15 分钟）
+      - LOGIN_RATE_LIMIT_MAX=${LOGIN_RATE_LIMIT_MAX:-10}
     ports:
       - "3000:3000"
     volumes:

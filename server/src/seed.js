@@ -154,8 +154,53 @@ function seed() {
 
   console.log("[seed] 种子数据初始化完成");
   console.log(
-    "[seed] admin/admin123456（管理员）、teacher/teacher123456（教师）"
+    "[seed] 已创建初始账号 admin/admin123456（管理员）、teacher/teacher123456（教师）"
+  );
+  console.log(
+    [
+      "",
+      "⚠️  ⚠️  ⚠️  安全提醒  ⚠️  ⚠️  ⚠️",
+      "  初始密码为公开信息（写在 README 与种子脚本中），必须在首次登录后立即修改！",
+      "  修改路径：「系统管理 → 员工账号 → 重置密码」。",
+      "  未修改的账号可被任何人直接登录（登录接口限速仅能延缓爆破，不能替代改密）。",
+      ""
+    ].join("\n")
   );
 }
 
+/**
+ * 启动自检：若仍存在使用初始默认口令的账号，打印醒目告警。
+ * 仅比对 admin / teacher 两个种子账号，成本约 60ms，不遍历全部员工。
+ */
+function warnDefaultPasswords() {
+  const DEFAULTS = [
+    { username: "admin", password: "admin123456" },
+    { username: "teacher", password: "teacher123456" }
+  ];
+  const risky = [];
+  for (const d of DEFAULTS) {
+    const row = db
+      .prepare("SELECT password_hash FROM users WHERE username = ?")
+      .get(d.username);
+    if (row && bcrypt.compareSync(d.password, row.password_hash)) {
+      risky.push(d.username);
+    }
+  }
+  if (risky.length) {
+    console.warn(
+      [
+        "",
+        "════════════════════════════════════════════════════════════════",
+        `[安全告警] 以下账号仍在使用初始默认口令：${risky.join("、")}`,
+        "  初始口令是公开信息，请立即在「系统管理 → 员工账号」中重置，",
+        "  否则任何人都能直接登录系统查看学员与财务数据。",
+        "════════════════════════════════════════════════════════════════",
+        ""
+      ].join("\n")
+    );
+  }
+  return risky;
+}
+
 module.exports = seed;
+module.exports.warnDefaultPasswords = warnDefaultPasswords;

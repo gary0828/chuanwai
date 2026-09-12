@@ -18,7 +18,8 @@ const migrations = [
   require("./011-teaching-consumption"),
   require("./012-schedule-makeup"),
   require("./013-user-student-link"),
-  require("./014-staff-only-crm")
+  require("./014-staff-only-crm"),
+  require("./015-token-version")
 ];
 
 function migrate(db) {

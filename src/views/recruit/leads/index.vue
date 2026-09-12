@@ -67,6 +67,7 @@ const followRecords = ref<any[]>([]);
 const convertVisible = ref(false);
 const convertForm = reactive({
   id: 0,
+  name: "",
   class_id: "",
   course_id: "",
   amount: 0,
@@ -227,6 +228,7 @@ function handleStatus(row: any, status: string) {
 function openConvert(row: any) {
   Object.assign(convertForm, {
     id: row.id,
+    name: row.name ?? "",
     class_id: "",
     course_id: row.course_id ?? "",
     amount: 0,
@@ -250,7 +252,7 @@ function handleConvert() {
     .then((res: any) => {
       if (res.success) {
         ElMessage.success(
-          `转化成功，已生成学员档案（学号 ${res.data.student_no}）`
+          `转化成功，已生成学员档案（学号 ${res.data.student_no}），请到财务补录课时包与缴费`
         );
         convertVisible.value = false;
         handleSearch();
@@ -646,16 +648,23 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <!-- 标记转化 -->
+    <!-- 标记转化：仅建档（学员档案 + 建档订单），课时包与缴费在财务模块补录 -->
     <el-dialog
       v-model="convertVisible"
-      :title="`标记转化 - ${convertForm.id ? '' : ''}`"
+      :title="convertForm.name ? `标记转化 - ${convertForm.name}` : '标记转化'"
       width="480px"
       destroy-on-close
     >
-      <p class="mb-3 text-sm text-gray-500">
-        转化将自动创建学员档案与报班订单，请选择所属班级。
-      </p>
+      <el-alert type="info" :closable="false" class="mb-3">
+        <template #title>本步仅创建学员档案与建档订单</template>
+        <div class="text-xs leading-5">
+          <div>转化后请到「财务管理 → 报班管理」补录以下内容：</div>
+          <div>
+            <b>课时包（总课时）与缴费记录</b>
+          </div>
+          <div>未补录前，该学员的考勤不会扣减课时，也不会产生已确认收入。</div>
+        </div>
+      </el-alert>
       <el-form label-width="90px">
         <el-form-item label="学员班级" required>
           <el-select

@@ -75,6 +75,8 @@ paths:
                 $ref: "#/components/schemas/LoginResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /api/auth/info:
     get:
@@ -95,7 +97,10 @@ paths:
   /api/auth/refresh-token:
     post:
       tags: [Auth]
-      summary: 刷新 accessToken
+      summary: 刷新 accessToken（校验凭证未被吊销）
+      description: >-
+        除校验签名与过期时间外，还会比对 Token 中的 `tv` 声明与 `users.token_version`。
+        该账号已登出 / 已改密 / 已改角色时返回 401。
       security: []
       requestBody:
         required: true
@@ -113,9 +118,13 @@ paths:
   /api/auth/logout:
     post:
       tags: [Auth]
-      summary: 退出登录
+      summary: 退出登录（服务端吊销该账号全部已签发凭证）
+      description: >-
+        递增该账号的 `users.token_version`，使其已签发的 accessToken 与 refreshToken
+        立即全部失效。**需要携带有效 accessToken**（v15 起由空实现改为真实吊销）。
       responses:
-        "200": { description: 成功 }
+        "200": { description: 已登出，该账号全部凭证已吊销 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   # ---------------------------------------------------------------- Students
   /api/students:
@@ -335,7 +344,7 @@ paths:
         - { name: page, in: query, schema: { type: integer, default: 1 } }
         - { name: pageSize, in: query, schema: { type: integer, default: 10 } }
       responses:
-        "200": { description: 分页列表 { list, total } }
+        "200": { description: "分页列表（list / total）" }
 
   /api/attendance/statistics:
     get:
@@ -715,7 +724,12 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
     Unauthorized:
-      description: 未登录或 Token 失效
+      description: 未登录 / Token 失效 / 凭证已被吊销（登出、改密、改角色后 token_version 不再匹配）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    TooManyRequests:
+      description: 登录失败次数过多（默认 15 分钟内 10 次失败；`LOGIN_RATE_LIMIT_MAX` 可调）
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }

@@ -27,8 +27,9 @@
 | v12  | 排课优化           | 新增 `schedule_adjustments`（调课申请表：原/目标时段快照、审批状态、通过后事务内同步 `schedules` 原时段释放/新时段占用）与 `makeup_classes`（补课登记表：关联缺勤/请假原始日期，标记完成联动扣减课时包并写 `hour_consumptions` 流水，撤销回补，幂等由状态机保证）两表                                                                                                                                                                                                          |
 | v13  | 统一用户与联动     | `students` 增 `user_id`（唯一索引，账号↔档案一对一）；存量学生自动补建 student 账号（username=学号，占位密码 123456，学生暂不可登录）；`leaves` 增 `source`（手动/考勤同步），考勤↔请假双向联动（考勤标记请假自动生成待审批同步单，审批通过回写考勤+回补课时+通知家长；驳回回滚考勤为缺勤；改回其他状态撤销同步单及通知）；`notifications.type` CHECK 扩展 '请假审批通过'；清理 `settings.term_id` 僵尸键；删除保护增强（订单有缴费/退费禁删、班级/课程/课表/线索/学生保护） |
 | v14  | 员工端 CRM 定调    | **系统定位调整为纯员工端 CRM**：学生/家长不登录、无账号。`users.role` CHECK 收紧为 `('admin','teacher')`（重建表，清理历史 student/parent 账号数据）；`students` 删除 `user_id` 列及索引（账号关联废弃）；删除 `parent_children` 表（绑定关系回填为 `students.parent_name/parent_phone`）；`notifications` 重建：删除 `target_user_id`，新增 `parent_name` 快照列（通知仅内部留痕）；删除家长管理路由与页面，家长信息统一存于学生档案；线索转化不再建 student/parent 账号      |
+| v15  | JWT 凭证可吊销     | `users` 新增 `token_version INTEGER NOT NULL DEFAULT 0`。签发的 accessToken / refreshToken 均携带 `tv` 声明，`middleware/auth.js` 鉴权时与 `users.token_version` 比对；**登出 / 改密 / 改角色 / 删号**时递增该值即可立即吊销该用户全部已签发凭证（此前 JWT 无状态，登出为空实现、refreshToken 30 天内无法失效）。兼容性：升级前签发的旧 token 无 `tv` 声明，按 0 处理，与本列默认值一致，不会强制已登录员工重新登录 |
 
-当前最新版本：**v14**（`PRAGMA user_version` = 14）
+当前最新版本：**v15**（`PRAGMA user_version` = 15）
 
 ## 表结构
 
@@ -42,6 +43,7 @@
 | name          | TEXT    | NOT NULL                                                              | 姓名                                 |
 | role          | TEXT    | NOT NULL, DEFAULT 'teacher', CHECK IN ('admin','teacher')（v14 收紧） | 角色：管理员/教师（学生/家长无账号） |
 | phone         | TEXT    | UNIQUE                                                                | 手机号                               |
+| token_version | INTEGER | NOT NULL, DEFAULT 0（v15 新增）                                       | 凭证版本号；登录时写入 JWT 的 `tv` 声明，鉴权时比对。递增即吊销该员工全部已签发凭证（登出/改密/改角色） |
 | created_at    | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')                         | 创建时间                             |
 
 ### user_oauth（第三方/多端绑定，预留微信小程序）
@@ -296,7 +298,9 @@
 | created_by | INTEGER | REFERENCES users(id) ON DELETE SET NULL                       | 创建人   |
 | created_at | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')                 | 创建时间 |
 
-索引：`idx_exams_class (class_id)`、`idx_exams_course (course_id)`
+索引：`idx_exams_class (class_id)`、`idx_exams_date (exam_date)`
+
+> ⚠️ `exams(course_id)` **无索引**（`011-teaching-consumption.js:24-25` 未建）。考试列表按课程筛选（`routes/exams.js:51`）会退化为全表扫描，属已知缺索引项，见上线评估报告 H11。
 
 ### exam_scores（考试成绩，v11 新增）
 
@@ -310,7 +314,8 @@
 | created_at / updated_at | TEXT    | NOT NULL, DEFAULT                                   | 创建/更新时间               |
 
 约束：`UNIQUE (exam_id, student_id)`（一考一成绩，批量录入冲突覆盖）
-索引：`idx_exam_scores_exam (exam_id)`、`idx_exam_scores_student (student_id)`
+索引：`idx_exam_scores_student (student_id)`
+（`exam_id` 未单独建索引，由 `UNIQUE (exam_id, student_id)` 的最左前缀隐式覆盖，`011-teaching-consumption.js:33-39`）
 
 ### hour_consumptions（课时消耗流水，v11 新增）
 
@@ -322,12 +327,13 @@
 | course_id   | INTEGER | REFERENCES courses(id) ON DELETE CASCADE            | 课程 ID                        |
 | class_id    | INTEGER | REFERENCES classes(id) ON DELETE CASCADE            | 班级 ID                        |
 | date        | TEXT    | NOT NULL                                            | 考勤日期                       |
-| hours       | REAL    | NOT NULL, DEFAULT 1                                 | 变动课时（扣减为正、回补为负） |
+| hours       | REAL    | NOT NULL, DEFAULT 1                                 | 变动课时**绝对值，恒为正数 1**（方向由 `type` 字段表达，非符号） |
 | type        | TEXT    | NOT NULL, DEFAULT '扣减', CHECK IN ('扣减','回补')  | 流水类型                       |
 | operator_id | INTEGER | REFERENCES users(id) ON DELETE SET NULL             | 操作人                         |
 | created_at  | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')       | 创建时间                       |
 
-索引：`idx_hour_cons_student (student_id)`、`idx_hour_cons_order (order_id)`、`idx_hour_cons_date (date)`
+索引：`idx_hour_cons_order (order_id)`、`idx_hour_cons_student_date (student_id, date)`、`idx_hour_cons_course (course_id)`
+（`011-teaching-consumption.js:56-58`。注意：**无**单独的 `idx_hour_cons_student` / `idx_hour_cons_date`，二者已由联合索引 `(student_id, date)` 覆盖）
 
 ### schedule_adjustments（调课申请，v12 新增）
 

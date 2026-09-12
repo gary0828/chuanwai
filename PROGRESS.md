@@ -62,6 +62,42 @@
 
 - [ ] 无（本轮任务已闭环）
 
+## Git 版本管理（2026-09-12 已建立）
+
+- 仓库：`https://github.com/gary0828/chuanwai` ｜ 分支 `main` ｜ **首次提交 `42d87bd`（339 文件 / 49,459 行）已推送**
+- **⚠️ 该仓库当前为「公开 Public」**，任何人可查看源码。已排除数据库与 `.env`，但**后续任何真实数据 / 密钥都不得提交**。若要改为私有需仓库所有者手动设置。
+- 提交前已做敏感扫描：无私钥 / Token；命中的手机号均为 `13800000000` 类测试假数据与哈希摘要误报。
+- `.gitignore` 补充（原文件缺失这些）：`.env` 与 `.env.*`（保留 `.env.example`）、`evidence/`（截图可能含真实姓名电话）、`.obsidian/`、`_verify_test/`、`.workbuddy/`、`*.log`
+
+### 本机 git 环境坑
+
+1. **`pnpm` 不可用**：`corepack` 报 `Cannot find module ...\corepack\dist\pnpm.js`。改用
+   `"C:/Users/rui08/.workbuddy/binaries/node/versions/22.22.2-3/node.exe" ./node_modules/vite/bin/vite.js build`
+2. **推送大包会断**：首次 `git push` 报 `send-pack: unexpected disconnect while reading sideband packet`。解决：
+   ```bash
+   git config http.postBuffer 524288000
+   git config http.version HTTP/1.1
+   git config http.lowSpeedLimit 0
+   git config http.lowSpeedTime 999999
+   ```
+3. **远端跟踪 ref 写不进本地**（`git branch -r` 为空、`status` 显示 `[gone]`）：PortableGit 在此环境下 `fetch` 不持久化 `refs/remotes/origin/main`。**不影响推送**（`git ls-remote` 可验证远端 SHA 与本地一致），`git push` 也正常，仅 `git status` 的 ahead/behind 显示不准。
+
+## 全面测试与缺陷修复（2026-09-12 下午，完整报告见 `docs/全面测试报告-2026-09-12.md`）
+
+- [x] **重建生产镜像并部署当前源码**（含迁移 v15 + JWT_SECRET 注入）；容器 Healthy
+- [x] **抓到并修复部署缺陷 D1**：上一轮加固的 `USER node`（uid 1000）无法写入 Windows bind mount 的 `./server/data` → 容器 `readonly database` 启动失败。已回退（Windows Docker Desktop 约束，记录在案）
+- [x] **全面接口测试（新写 `_verify_test/api-full-suite.mjs`，72 断言）**：115 条路由派生权限矩阵（111 个 401 / 32 个 admin-only 403 / teacher 数据隔离）、令牌伪造与吊销、敏感字段、幂等、一致性
+- [x] **修复 5 项应用缺陷**（全部复验通过）：
+  - **F1 阻断**：学生批量导入 100% 失败（INSERT 11 占位符仅传 9 参，e2e 盲区）→ 补参 + 失败原因精确化；复验 200 行 0 失败
+  - **F2 高**：考勤接受 `2026-99-99` 等非法日期且照常扣课时 → 新增共享校验 `server/src/utils/validate.js`，非法日期 400 且课时不动
+  - **F3 高**：外键/唯一约束错误统一 500 → 全局错误中间件映射 400 + 可读提示
+  - **F4 中（原 H10 延后项）**：销假回补查询带 `remain_hours>0` → 最后一课时销假课时永久丢失 → 已去除，0→1 回补复验通过
+  - **F5 中**：12 处服务端校验缺失（考试日期/满分、班级/课程/公告名称长度、订单日期、缴费时间）→ 全部走 validate.js 收口；复扫 12 → 0
+- [x] **浏览器端到端（新写 `_verify_test/ui-full-suite.py`，20 断言，对 :8080 生产构建）**：27 个菜单页零控制台错误、admin/teacher 双角色、关键写操作真实提交核对落库、teacher 越权 fail-closed ✅
+- [x] **性能冒烟（新写 `_verify_test/perf-smoke.mjs`）**：读接口 P95 ≤ 6ms、导入 200 行 64ms、导出 ≤ 2ms —— 按目标规模余量 >100 倍
+- [x] **生产库测试残留清理**：4 名测试学员及关联数据级联删除（备份 `server/data/attendance.db.bak-20260912-test-clean`），恢复 27 名种子学员干净状态
+- **最终复验（全部针对修复后生产容器）**：接口 72/72、校验缺口 0、e2e 80/80、analytics 22/22、浏览器 20/20、docker-verify 9/9
+
 ## 待办（按优先级）
 
 - [ ] **P0**：成绩管理浏览器验证目前仅覆盖「页面可打开」。待补：创建考试 → 成绩录入 → 成绩单排名/等级 → 成绩发布通知 的全链路浏览器走查（API 层已由 e2e 覆盖）
@@ -102,6 +138,124 @@
 13. **无登录失败限速**：默认弱口令 `admin123456` 可被无限次爆破。建议加 `express-rate-limit`，失败 5 次锁定 15 分钟。
 
 14. **恢复备份接口直接 `process.exit(0)`**（`server/src/routes/backups.js:25-27`）：任何持有 admin token 者可一键停服；本地非容器运行时不会自愈。建议改为优雅关闭 / 由外部编排重启。
+
+## 🔴 全量代码审查发现（2026-09-12，第二轮回审）
+
+> 完整报告见 **`docs/上线评估报告-2026-09-12.md`**（含全部 4 阻断 / 12 高 / 18 中 / 8 低问题清单与上线门禁）。
+> 上一节 5 项安全发现已并入本轮复核并保持有效；以下为**本轮新增**、上一轮未覆盖的发现。
+
+### 阻断上线（P0）—— 上一轮未发现
+
+15. **线索转化建单缺 `total_hours`，转化学员永不扣课时、永不确认收入**（`server/src/routes/leads.js:296-313`）
+    - `INSERT INTO orders (...)` 的字段列表**不含 `total_hours`** → 落库默认 0。
+    - 而 `attendance.js:81` 扣课时要求 `total_hours > 0`，`finance.js:638` 确认收入同样要求 `total_hours > 0` → 招生链路产出的是"零课时学员"。
+    - 且 `docs/api.md` 原文档声称 convert 支持 `total_hours` 参数，**后端静默忽略** → 前端按文档接入必然踩坑。
+    - 处置：需业务方二选一并落地——① 转化即报班（补写 `total_hours`）；② 转化仅建档（修正文档 + 前端下线该字段）。当前已把 `docs/api.md` 改为**如实描述实现**并标注该缺口。
+
+16. **退班后收入确认口径断裂**（`server/src/routes/finance.js:368-379`、`:636-641`）
+    - 退费审批通过仅执行 `UPDATE orders SET status='退班'`，**不冲减 `remain_hours`、不写 `hour_consumptions` 回补流水**。
+    - 而 `revenue_recognized` 的 WHERE 为 `status IN ('在读','结业')` → 该订单**整单收入被剔除**，已消耗课时对应的收入凭空消失且不可追溯。
+    - 影响：财务数字错误 → 直接误导经营决策。
+
+17. **财务金额 / 课时无边界校验**（`server/src/routes/finance.js:145-176`、`:243-244`）
+    - `PUT /orders/:id` 的 `amount` 仅 `Number()`，**无正数 / 上限校验** → 可写负数或超大金额。
+    - 更严重：同一接口允许直接改 `remain_hours`，而它是 `revenue_recognized` 的唯一计算依据，**改动不留任何流水** → 收入可被静默篡改。
+
+### 高（P1）—— 上一轮未发现
+
+18. **前端 token 刷新失败会导致请求永久挂起**（`src/utils/http/index.ts:86-96`、`:133-138`）
+    - 刷新链路为 `.then().finally()`，**缺 `.catch()`**：刷新失败时 `PureHttp.requests` 队列回调永不执行，`retryOriginalRequest`（`:50-57`）的 Promise 永不 resolve → 相关请求永久 pending，并产生 unhandled rejection。
+    - 叠加响应拦截器**无 401 → 跳登录**逻辑，token 真失效时用户看到的是"界面卡死"而非"重新登录"。这是上线后最可能被用户感知的缺陷。
+
+19. **请假销假回补与考勤回补口径不一致**（`server/src/routes/leaves.js:138` vs `attendance.js:84`）
+    - 考勤回补查询**不带** `remain_hours > 0`（注释明确"余额为 0 时同样可以回补恢复"），请假回补查询**多带**该条件。
+    - 触发条件非边缘：**每个学员都会经过"剩余课时 = 1"**。此时缺勤扣减 → `remain_hours` 归 0 → 销假审批查不到订单 → 该课时**永久不回补**且不写流水，账实不符。
+    - 修法：删除 `leaves.js:138` 的 `remain_hours > 0` 条件，与 `attendance.js:84` 对齐。
+
+20. **逻辑删除未过滤，统计口径失真**（`attendance.js:349-359/414-461/483-519`、`classes.js:66-75`、`dashboard.js:44-53`、`analytics.js:211-219`）
+    - 多处 `JOIN students s` **不带** `s.status='在读'`，而 `classes.js:25`、`attendance.js:621` 带 → 退学/休学学员仍计入出勤率、班级今日统计、趋势与导出，**同一指标不同页面数字不一致**。
+
+21. **审计日志大面积缺失**（`server/src/index.js:20-40` 白名单 vs 实际）
+    - 22 个路由文件中 **11 个未挂 `audit`**：`attendance / students / classes / leaves / schedules / courses / users / terms / settings / notifications / backups`。
+    - 其中含 `backups.js:20` 恢复数据库、`users.js:131` 重置密码、`attendance.js:48` 批量考勤+扣课时 —— 均为高敏感写操作。
+    - 且 `users.js:170-177` 依赖 audit_logs 做删除拦截，语义自相矛盾。
+
+22. **缺索引（P0 签到主路径）**（`server/src/migrations/*.js`）
+    - `orders(student_id, course_id, status)`：`attendance.js:81/84`、`leaves.js:138`、`makeups.js:117` 每次考勤都用，当前仅有 `idx_orders_student`。
+    - `classes(head_teacher_id)`：`utils/scope.js:15/27/37` 教师每个请求的 scope 子查询都用。
+    - `attendances(student_id, date)`：`attendance.js:620/646` 缺勤预警用，现有 UNIQUE 仅前缀可用。
+    - 建议补跑 `EXPLAIN QUERY PLAN` 确认后新增迁移（**须新迁移脚本 + 同步 `server/database.md`**）。
+
+23. **前端 397 处 `any` + 类型系统失效**（`tsconfig.json:6-7`、`eslint.config.js:80-81`）
+    - `strict: false`、`strictFunctionTypes: false`；ESLint 关闭 `no-explicit-any`、`ban-ts-comment`、`no-debugger`；`@ts-expect-error` 9 处（全在 `utils/print.ts:10-41`）。
+    - `src/api/*.ts` 无返回泛型（`routes.ts:5` `data: Array<any>`）→ 后端契约变更无法在编译期暴露。
+
+24. **`xlsx@^0.18.5` 存在已知 CVE**：原型污染 CVE-2023-30533、ReDoS CVE-2024-22363，修复版仅在 SheetJS 官方 CDN，npm 无对应版本。需 `pnpm audit` 复核并评估替代方案。
+
+25. **Excel 导入无行数上限 + 每行独立事务**（`server/src/routes/students.js:184-240`）：N 行 → N 个 `BEGIN/COMMIT` + N 次 `canManageClass` 查询，慢且丧失整体回滚语义。
+
+### 中（P2）—— 上一轮未发现
+
+26. **学期写入无事务**（`server/src/routes/terms.js:49-61`、`:74-88`）：`UPDATE terms SET is_current=0` 与后续 INSERT/UPDATE 未同事务，后者若因 UNIQUE 抛错则清零已提交 → **全库无当前学期**，`/terms/current` 返回 null。
+27. **班主任双字段各自写**（`classes.js:135-138`、`:24-27`、`:84`）：`head_teacher`（文本）与 `head_teacher_id`（账号）可指向不同人；列表取 join 姓名、详情取文本 → 两处显示不同班主任。
+28. **请假审批通过未撤销已发出的缺勤通知**（`leaves.js:172-213` vs `attendance.js:129,199-201`）→ 家长侧留存与考勤状态矛盾的内部留痕。
+29. **全局错误中间件忽略 `err.status`**（`index.js:107-110`）：`utils/backup.js:62/67/80/87` 抛出的 400/404 一律变 500。
+30. **验证码仅前端实现**，后端 `auth.js:403 /login` 不校验 → 直接调 API 可绕过；叠加无限流 + 默认弱口令，登录接口可被自动化爆破。
+31. **CORS/安全头/限流全缺**：`index.js:16` `app.use(cors())` 通配任意源；`server/package.json` 无 `helmet`、`express-rate-limit`（与上一节第 11 条同源，此处补充"缺 helmet 与限流"）。
+32. **`attendance.js:48` `POST /batch` 仅挂 `auth` 无 `requireRole`**（有 per-record `canManageStudent` 兜底，影响有限）。
+33. **备份同步 IO 阻塞事件循环**：`utils/backup.js:36/40/92` 的 `copyFileSync/readdirSync/renameSync` 位于 HTTP 请求路径。
+34. **前端构建配置遮掩告警**：`vite.config.ts:50` 把 `chunkSizeWarningLimit` 提到 4000kB（主包 ~2MB 不再告警）；`build/plugins.ts:48` `vitePluginFakeServer({enableProd:true})` 把 mock 打进生产包。
+35. **`v-auth`/`v-perms` 指令已注册但 0 处使用**（`src/directives/index.ts`），按钮权限靠手写 roles computed，易漏。
+36. **前端 25 处 `catch(() => {})` 静默吞错**，32 个视图仅 3 处 try/catch。
+37. **前后端 Node 版本不一致**：前端 `Dockerfile:2` `node:20-alpine` vs 后端 `server/Dockerfile:3` `node:24-alpine`（与上一节第 8 条同源，此处补充为配置管理项）。
+38. **线索转化性别硬编码 `'男'`**（`leads.js:281`）→ 线索无性别字段时一律落库男。
+39. **课时扣减固定 1 课时**，与课程时长/节次无关（`attendance.js:87`、`makeups.js:123`）→ 跨课时课程会少扣。
+40. **`docs/openapi.yaml` 覆盖不足一半**：后端共 115 个路由处理器，openapi 未全量登记。
+
+### 本轮已核实「无问题」的项（避免重复排查）
+
+- **SQL 注入：22 个路由文件逐文件核对，未发现注入点。** 全部 `prepare` + `?` 参数绑定；动态拼接仅来自代码内固定条件串与**硬编码数组**；动态表名（`classes.js:172`、`students.js:359`）取自白名单；`analytics.js:488` 经 `DATASETS[...]` 查表未命中即 404；`db.exec(` 全为固定语句。
+- **外键完整性**：`db.js:14` 已 `PRAGMA foreign_keys = ON`；删学员受 `orders` 外键 RESTRICT 保护（`students.js:341`）；无孤儿记录风险。
+- **`students` 表不存在 `total_hours / remaining_hours / balance` 字段**：全库 grep 仅命中文档；课时冗余实际在 `orders.total_hours/remain_hours`。
+- **`classes.student_count` 非存储列**（实时子查询），`schedules.attended_count` 不存在 → 无同步风险。
+- **前后端接口契约无 404 风险**：前端 4 个 api 文件全部路径与后端逐条比对，**前端调用后端不存在的接口 = 0**，路径前缀与 HTTP 方法一致。
+- **不存在 4xx 误重试**：前端无任何 4xx 重试逻辑。
+- **事务覆盖良好**：`attendance.js:135`、`adjustments.js:130`、`exams.js:284`、`leaves.js:165`、`leads.js:276`、`makeups.js:133/183`、`finance.js:368`、`students.js:130/210/283/364`、`terms.js:98`、`settings.js:24` 均已正确包裹。
+- **无 TODO / FIXME 残留**（`src` 内 0 条）；`dist/` 未被 git 跟踪（`.gitignore:3`）。
+
+### ✅ 上述问题的修复结果（2026-09-12 13:40）
+
+> 业务方决策：B2 按「仅建档、课时包后续在财务补录」落地；B1 风险不接受；其余影响上线的问题一并修复。
+
+**已修复（Gate 1 全部 + Gate 2 全部）**
+
+| 编号 | 修复要点 | 关键文件 |
+| --- | --- | --- |
+| **B1** | JWT 密钥缺失即拒绝启动 | **新增** `server/src/config.js`（集中配置 + 启动期校验，require 顺序在建表之前，避免「配置非法却已污染数据库」）；`middleware/auth.js` 改用 `config.jwtSecret`；`docker-compose.yml` 用 `${JWT_SECRET:?...}` 强制注入；`server/package.json` 启用 `--env-file-if-exists=.env`（Node 原生，无需 dotenv） |
+| **B2** | 线索转化明确为「仅建档」 | `docs/api.md` §三 改写为如实语义 + 补录指引；`src/views/recruit/leads/index.vue` 转化弹窗加 `el-alert` 提示、修正恒为空的标题、成功提示补充后续步骤。**前端本就只提交 4 个字段**，与后端一致 |
+| **B3** | 退班不再抹除已消耗收入 | `routes/finance.js` 收入确认去掉 `status IN ('在读','结业')`，改为 `total_hours > 0 AND remain_hours <= total_hours`；`remain_hours` 保留原值作为退款核算依据 |
+| **B4** | 财务边界校验 + 课时变更留流水 | `routes/finance.js` 新增 `parseAmount` / `parseHours`；**手工改 `remain_hours` 在同一事务内自动写 `hour_consumptions`**；退费金额不得超过「已缴 − 已退/在途」 |
+| **H1** | 前端刷新失败不再永久挂起 | `src/utils/http/index.ts` 补 `.catch()` + 401 统一登出 + 错误文案全局提示（此前 25 处 `catch(() => {})` 让错误对用户完全不可见）；`handRefreshToken` 无返回时也 reject；`store/modules/user.ts` 同步 |
+| **H8** | 删除请求体日志 | `src/index.js` 改为只记 `method / path / status / 耗时` |
+| **H7** | 安全加固 | 新增依赖 `helmet` + `express-rate-limit`；CORS 改来源白名单（`CORS_ORIGINS`）；`app.set("trust proxy", 1)` 让限速按真实客户端 IP 计数 |
+| **H6** | **原判定为误报，已更正** —— 审计由全局中间件兜底，覆盖本就完整 | `src/index.js` 加 `SELF_AUDITED` 前缀跳过 5 个「路由内已自行写审计」的模块，消除重复写日志 |
+| **H2** | 凭证可吊销 | **新增迁移 v15** `users.token_version`；Token 带 `tv` 并在鉴权时比对；登出/改密/改角色即时吊销；登出接口由空实现改为真实吊销；前端 `logOut()` 接入 `POST /api/auth/logout`；重置密码增加 ≥8 位校验 |
+
+**顺带完成的低成本加固**：统一错误中间件尊重 `err.status`（M4）、`unhandledRejection`/`uncaughtException` 兜底与优雅停机（M5）、`server/Dockerfile` 改非 root（`USER node`）、`db.js` 支持 `DATA_DIR`（便于测试隔离）、启动自检默认口令告警（H9 缓解）。
+
+**回归验证结果**
+
+| 验证项 | 结果 |
+| --- | --- |
+| 门禁专项脚本 `_verify_test/verify-fixes.mjs`（本次新增，已在 `.gitignore` 忽略目录内） | **35 / 35 通过** |
+| `server/scripts/e2e-lifecycle.mjs`（已支持 `BASE=` 指定地址） | **80 / 80，0 失败**（零回归） |
+| `server/scripts/analytics-smoke.mjs` | **22 / 22 通过**（确认 `data_version = v15`） |
+| ESLint 全量 `{src,mock,build}` | **0 error / 0 warning** |
+| 生产构建 `vite build` | 通过，24 秒，主包 2,040.95 kB / gzip 684.92 kB（再次印证 M11 的 4000kB 阈值掩盖告警） |
+
+**上线前仍需运维执行（代码已就绪）**：① 注入 `JWT_SECRET`；② 重建后端镜像（新增依赖 + 迁移 v15）；③ 重建前端镜像；④ 首次登录改默认口令；⑤ 跑 `docker-verify.sh` + e2e 复核。
+
+**未处理（Gate 3）**：H3、H5、H9、H10、H11、H12、H13、H14 及全部 P2。其中 **H10（销假回补口径，每个学员「最后一课时」必然少 1 课时）/ H11（缺索引，含 P0 签到主路径）/ H9（明文默认口令清理）** 建议紧随上线后处理。
 
 ## pure-admin 合规审计（2026-09-12，对照官方仓库实测）
 

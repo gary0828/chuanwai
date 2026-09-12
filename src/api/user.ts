@@ -45,3 +45,15 @@ export const refreshTokenApi = (data?: object) => {
     data
   });
 };
+
+/**
+ * 登出（服务端递增 token_version，立即吊销该用户全部已签发凭证）
+ * @param authorization 已格式化的 Authorization 头（如 `Bearer xxx`）。
+ *   显式传入而不依赖请求拦截器：登出需要「先发送请求、后清理本地凭证」，
+ *   若依赖拦截器读取已清理的 Cookie 会取不到 token。
+ */
+export const logoutApi = (authorization?: string) => {
+  return http.request<{ success: boolean }>("post", "/api/auth/logout", {
+    headers: authorization ? { Authorization: authorization } : undefined
+  });
+};

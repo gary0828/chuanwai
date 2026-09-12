@@ -5,6 +5,7 @@ const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { canManageClass } = require("../utils/scope");
 const { audit } = require("../utils/audit");
+const { parseDate, parseNumber } = require("../utils/validate");
 
 const router = express.Router();
 
@@ -102,6 +103,16 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
       .status(403)
       .json({ success: false, message: "无权为该班级创建考试" });
   }
+  // 考试日期：提供时必须真实存在；满分：0 < score ≤ 1000（默认 100）
+  let examDate = new Date().toLocaleDateString("sv");
+  if (exam_date !== undefined && exam_date !== null && exam_date !== "") {
+    const dRes = parseDate(exam_date, { field: "考试日期" });
+    if (!dRes.ok) return res.status(400).json({ success: false, message: dRes.message });
+    examDate = dRes.value;
+  }
+  const fsRes = parseNumber(full_score, { field: "满分", min: 1, max: 1000, required: false });
+  if (!fsRes.ok) return res.status(400).json({ success: false, message: fsRes.message });
+  const fullScore = fsRes.value === null ? 100 : fsRes.value;
   const info = db
     .prepare(
       `
@@ -113,9 +124,9 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
       String(name).trim(),
       course_id ? Number(course_id) : null,
       Number(class_id),
-      exam_date || new Date().toLocaleDateString("sv"),
+      examDate,
       type || "单元测",
-      full_score != null && full_score !== "" ? Number(full_score) : 100,
+      fullScore,
       remark || "",
       req.user.id
     );
@@ -142,6 +153,15 @@ router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
     return res
       .status(403)
       .json({ success: false, message: "无权将该考试改到该班级" });
+  }
+  // 考试日期 / 满分：提供时必须合法（空值保留原值）
+  if (exam_date !== undefined && exam_date !== null && exam_date !== "") {
+    const dRes = parseDate(exam_date, { field: "考试日期" });
+    if (!dRes.ok) return res.status(400).json({ success: false, message: dRes.message });
+  }
+  if (full_score !== undefined && full_score !== null && full_score !== "") {
+    const fsRes = parseNumber(full_score, { field: "满分", min: 1, max: 1000 });
+    if (!fsRes.ok) return res.status(400).json({ success: false, message: fsRes.message });
   }
   const info = db
     .prepare(

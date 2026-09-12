@@ -4,6 +4,7 @@ const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { classScopeClause, canManageClass } = require("../utils/scope");
+const { parseText } = require("../utils/validate");
 
 const router = express.Router();
 
@@ -100,6 +101,8 @@ router.get("/:id/students", auth, (req, res) => {
 router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
   const { name, grade = "", head_teacher = "", head_teacher_id = null } = req.body || {};
   if (!name) return res.status(400).json({ success: false, message: "班级名称不能为空" });
+  const nameRes = parseText(name, { field: "班级名称", max: 50, required: true });
+  if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
   const bindId =
     req.user.role === "admin" ? Number(head_teacher_id) || null : req.user.id;
   try {
@@ -122,6 +125,8 @@ router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   const id = Number(req.params.id);
   const { name, grade, head_teacher, head_teacher_id } = req.body || {};
   if (!name) return res.status(400).json({ success: false, message: "班级名称不能为空" });
+  const nameRes = parseText(name, { field: "班级名称", max: 50, required: true });
+  if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
   if (!canManageClass(req, id)) {
     return res.status(403).json({ success: false, message: "无权管理该班级" });
   }

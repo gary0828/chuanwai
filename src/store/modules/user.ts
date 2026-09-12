@@ -11,10 +11,18 @@ import {
   type UserResult,
   type RefreshTokenResult,
   getLogin,
-  refreshTokenApi
+  refreshTokenApi,
+  logoutApi
 } from "@/api/user";
 import { useMultiTagsStoreHook } from "./multiTags";
-import { type DataInfo, setToken, removeToken, userKey } from "@/utils/auth";
+import {
+  type DataInfo,
+  setToken,
+  getToken,
+  formatToken,
+  removeToken,
+  userKey
+} from "@/utils/auth";
 
 export const useUserStore = defineStore("pure-user", {
   state: (): userType => ({
@@ -76,8 +84,13 @@ export const useUserStore = defineStore("pure-user", {
           });
       });
     },
-    /** 前端登出（不调用接口） */
+    /** 登出：通知服务端吊销凭证（best-effort）后清理本地状态 */
     logOut() {
+      // 先读取当前 token 并显式带上，避免清理本地凭证后请求取不到 Authorization
+      const accessToken = getToken()?.accessToken;
+      if (accessToken) {
+        logoutApi(formatToken(accessToken)).catch(() => {});
+      }
       this.username = "";
       this.roles = [];
       this.permissions = [];
@@ -86,14 +99,16 @@ export const useUserStore = defineStore("pure-user", {
       resetRouter();
       router.push("/login");
     },
-    /** 刷新`token` */
+    /** 刷新`token`（失败时 reject，避免调用方永久等待） */
     async handRefreshToken(data) {
       return new Promise<RefreshTokenResult>((resolve, reject) => {
         refreshTokenApi(data)
           .then(data => {
-            if (data) {
+            if (data?.data?.accessToken) {
               setToken(data.data);
               resolve(data);
+            } else {
+              reject(new Error("刷新登录态失败"));
             }
           })
           .catch(error => {

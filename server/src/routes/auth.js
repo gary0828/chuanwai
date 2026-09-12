@@ -3,7 +3,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../db");
-const { auth, signTokens, SECRET } = require("../middleware/auth");
+const { auth, signTokens, revokeTokens, SECRET } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -475,7 +475,7 @@ router.get("/async-routes", auth, (req, res) => {
   res.json({ success: true, data: routes });
 });
 
-/** 刷新 token */
+/** 刷新 token（同时校验 tv：已被吊销的 refreshToken 不可换取新凭证） */
 router.post("/refresh-token", (req, res) => {
   const { refreshToken } = req.body || {};
   if (!refreshToken) {
@@ -491,10 +491,18 @@ router.post("/refresh-token", (req, res) => {
         .json({ success: false, message: "无效的 refreshToken" });
     }
     const user = db
-      .prepare("SELECT id, username, name, role FROM users WHERE id = ?")
+      .prepare(
+        "SELECT id, username, name, role, token_version FROM users WHERE id = ?"
+      )
       .get(payload.id);
     if (!user) {
       return res.status(401).json({ success: false, message: "用户不存在" });
+    }
+    // 吊销校验：登出 / 改密 / 改角色 / 删号后，旧 refreshToken 一律失效
+    if (Number(user.token_version ?? 0) !== Number(payload.tv ?? 0)) {
+      return res
+        .status(401)
+        .json({ success: false, message: "登录状态已失效，请重新登录" });
     }
     res.json({ success: true, data: signTokens(user) });
   } catch {
@@ -504,8 +512,9 @@ router.post("/refresh-token", (req, res) => {
   }
 });
 
-/** 登出（JWT 无状态，前端清除本地凭证即可） */
-router.post("/logout", (_req, res) => {
+/** 登出：递增 token_version，服务端立即吊销该用户全部已签发凭证 */
+router.post("/logout", auth, (req, res) => {
+  revokeTokens(req.user.id);
   res.json({ success: true, data: null });
 });
 

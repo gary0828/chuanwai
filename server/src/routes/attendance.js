@@ -4,6 +4,7 @@ const express = require("express");
 const db = require("../db");
 const { auth } = require("../middleware/auth");
 const { canManageClass, canManageStudent } = require("../utils/scope");
+const { parseDate } = require("../utils/validate");
 
 const router = express.Router();
 
@@ -46,12 +47,19 @@ router.get("/", auth, (req, res) => {
  *  课时联动：状态为 正常/迟到/早退 时扣减该学员匹配课时包的剩余课时；缺勤/请假不扣；
  *  修改既有考勤时按新旧状态差异自动回补/扣减 */
 router.post("/batch", auth, (req, res) => {
-  const { date, course_id, records } = req.body || {};
+  let { date, course_id, records } = req.body || {};
   if (!date || !course_id || !Array.isArray(records) || records.length === 0) {
     return res
       .status(400)
       .json({ success: false, message: "请先选择日期、课程并填写考勤记录" });
   }
+  // 日期必须是真实存在的 YYYY-MM-DD（2026-09-12 全面测试发现：此前任意字符串都会被接受，
+  // 且照常扣减课时，例如 date="2026-99-99" / "xxxx-xx-xx" 均返回 200 并扣 1 课时）
+  const dateRes = parseDate(date, { field: "考勤日期" });
+  if (!dateRes.ok) {
+    return res.status(400).json({ success: false, message: dateRes.message });
+  }
+  date = dateRes.value;
   for (const r of records) {
     if (!STATUSES.includes(r.status)) {
       return res

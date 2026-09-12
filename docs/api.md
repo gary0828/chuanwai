@@ -41,10 +41,11 @@
 | HTTP | 含义 | 典型场景 |
 | --- | --- | --- |
 | 200 | 成功 | — |
-| 400 | 参数错误 / 业务规则拒绝 | 必填缺失、删除时存在外键引用（如「该学员已有报班记录，不能删除」） |
-| 401 | 未登录 / Token 失效 | 无 Token、Token 过期、误用 refreshToken 访问 |
+| 400 | 参数错误 / 业务规则拒绝 | 必填缺失、金额或课时超界、退费超过可退上限、删除时存在外键引用（如「该学员已有报班记录，不能删除」） |
+| 401 | 未登录 / Token 失效 / **凭证已被吊销** | 无 Token、Token 过期、误用 refreshToken 访问、**该账号已登出或已改密/改角色**（token_version 不匹配） |
 | 403 | 无权限 | 教师访问非本班数据、非 admin 访问管理员接口 |
 | 404 | 资源不存在 | 接口路径错误、记录不存在 |
+| 429 | 请求过于频繁 | **登录失败次数超过阈值**（默认 15 分钟内 10 次失败） |
 | 500 | 服务器内部错误 | 未捕获异常（服务端已统一兜底） |
 
 > 注意：本项目**不使用业务错误码 `code` 字段**，一律以 HTTP 状态码 + `success` 布尔表达。
@@ -57,10 +58,23 @@
 | 请求体 | `{ "username": "admin", "password": "admin123456", "type": "password" }` |
 | accessToken 有效期 | 7 天 |
 | refreshToken 有效期 | 30 天 |
-| 刷新接口 | `POST /api/auth/refresh-token`（body: `{ "refreshToken": "..." }`） |
-| Token 载荷 | `{ id, username, role }`，`role ∈ { admin, teacher }` |
+| 刷新接口 | `POST /api/auth/refresh-token`（body: `{ "refreshToken": "..." }`，**需认证**，且校验凭证未被吊销） |
+| 登出接口 | `POST /api/auth/logout`（**需认证**；递增该账号 `token_version`，立即吊销其全部已签发凭证） |
+| Token 载荷 | `{ id, username, role, tv }`，`role ∈ { admin, teacher }`；`tv` = 签发时的 `users.token_version` |
+
+**凭证吊销（v15 新增）**：鉴权时会将 Token 中的 `tv` 与 `users.token_version` 比对，不一致即返回 401。以下操作会递增 `token_version`，**立即让该账号已签发的 accessToken 与 refreshToken 全部失效**（需重新登录）：
+
+- 调用 `POST /api/auth/logout`（登出）
+- `PUT /api/users/:id/password`（重置密码，`users.js`）
+- `PUT /api/users/:id` 且角色发生变化（改角色，避免旧 Token 保留旧权限）
+- 删除该账号（用户不存在，鉴权直接拒绝）
+
+**登录限速**：同一 IP 在 15 分钟窗口内登录**失败**超过 10 次（可用 `LOGIN_RATE_LIMIT_MAX` 调整）将返回 429。成功登录不计数，因此不会误伤正常员工。
 
 **默认账号**：`admin / admin123456`（管理员）、`teacher / teacher123456`（教师）。
+> ⚠️ 初始口令为公开信息，**部署后必须立即修改**。后端启动时会自检并打印安全告警（`[安全告警] 以下账号仍在使用初始默认口令`）。
+
+**部署必配环境变量**：`JWT_SECRET` —— 缺失或长度不足 16 位时后端**拒绝启动**（不会回退到默认密钥）。模板见 `server/.env.example`，生成方式 `openssl rand -hex 32`。
 
 ### 1.5 角色与数据级权限
 
@@ -77,6 +91,32 @@
 
 请求：`?page=1&pageSize=10`（默认 `page=1`、`pageSize=10`）
 响应：`{ "success": true, "data": { "list": [...], "total": 100 } }`
+
+### 1.7 收入口径说明（两个口径并存，勿混用）
+
+系统内存在**两个口径不同、但中文名都含"收入/营收"**的指标，前端展示时必须使用区分性文案：
+
+| 口径 | 指标名 | 公式 | 实现位置 | 语义 |
+| --- | --- | --- | --- | --- |
+| **收付实现制（现金）** | `revenue_total` / `revenue_income` | `SUM(payments.amount) − SUM(refunds.amount WHERE status='通过')` | `routes/analytics.js:69`、`:304-306` | 实际收到的钱 − 实际退出的钱 |
+| **权责发生制（课时确认）** | `revenue_recognized` | `SUM(orders.amount × (total_hours − remain_hours) / total_hours) WHERE total_hours > 0` | `routes/finance.js:765` | 已消耗课时对应的、已确认的收入 |
+
+**两者不相等是正常的**（预收学费尚未消耗部分不计入已确认收入），但**必须向使用者说明差异**，不可在同页面并列展示"营收"而不加注解。
+
+> **退班订单的处理原则（2026-09-12 修正）**：`revenue_recognized` **不按订单状态过滤**。退班订单的已消耗课时是已经真实提供过的教学服务，对应收入应当保留；退费只退「剩余未消耗课时」对应的部分，而 `orders.remain_hours` 会**保留原值**作为退款核算依据。
+> 历史实现为 `status IN ('在读','结业')`，会把退班订单整单收入抹除，导致已上课收入凭空消失且不可追溯（上线评估报告问题 **B3**，已修复）。
+
+### 1.8 财务入参校验与课时流水约定（v15 加固）
+
+| 规则 | 说明 |
+| --- | --- |
+| 金额范围 | 单笔金额须为数字且 ≤ `10,000,000`（1000 万元）；缴费 / 退费须 **> 0**，报班订单金额可 **≥ 0**（允许赠课）。超界返回 400 |
+| 课时范围 | `total_hours` / `remain_hours` 须为 **非负整数** 且 ≤ `100,000`；超界或非整数返回 400 |
+| 课时关系 | 任意时刻须满足 `remain_hours ≤ total_hours`，否则 400 |
+| 退费上限 | 退费金额 ≤ `该订单已缴金额 − 已申请(待审批)/已通过退费合计`，防止超额退款 |
+| 手工改课时必留流水 | `PUT /api/finance/orders/:id` 修改 `remain_hours` 时，会在**同一事务内**自动写入一条 `hour_consumptions` 记录（`type` 按增减取 `扣减`/`回补`，`hours` 为差额绝对值），保证 `orders.remain_hours` 与课时流水始终可对账 |
+
+> 说明：`hour_consumptions.hours` 恒为**正数**，变动方向由 `type`（`扣减`/`回补`）表达。
 
 ---
 
@@ -126,12 +166,13 @@
 | 课表 | GET | `/api/schedules` | 登录 | 课表查询（`class_id` / `day_of_week` 过滤） |
 | 课表 | GET | `/api/schedules/all` | 登录 | 课表全量 |
 | 课表 | POST | `/api/schedules` | admin/teacher | 新增课表（含冲突检测） |
+| 课表 | POST | `/api/schedules/check-conflict` | 登录 | 保存前冲突预览（教师仅本班）。入参 `class_id/course_id/day_of_week/period/exclude_id`，返回 `class_conflict` 与 `teacher_warnings` |
 | 课表 | PUT | `/api/schedules/:id` | admin/teacher | 修改课表条目 |
 | 课表 | DELETE | `/api/schedules/:id` | admin/teacher | 删除课表条目 |
 | 调课 | GET | `/api/schedule-adjustments` | 登录 | 调课申请列表（教师仅本班） |
 | 调课 | POST | `/api/schedule-adjustments` | admin/teacher | 提交调课申请 |
 | 调课 | PUT | `/api/schedule-adjustments/:id/approve` | admin | 审批通过 / 驳回（通过后课表自动同步） |
-| 调课 | DELETE | `/api/schedule-adjustments/:id` | admin/teacher | 撤销申请（仅待审批，撤销后回滚课表） |
+| 调课 | DELETE | `/api/schedule-adjustments/:id` | admin/teacher | 撤销/删除申请。非 admin 仅可撤销**自己提交的待审批**申请；admin 可删除任意状态记录（用于清理历史），**不回滚课表** |
 | 补课 | GET | `/api/makeup-classes` | 登录 | 补课记录列表（教师仅本班） |
 | 补课 | POST | `/api/makeup-classes` | admin/teacher | 登记补课 |
 | 补课 | PUT | `/api/makeup-classes/:id/status` | admin/teacher | 标记完成（扣 1 课时）/ 恢复待安排（回补） |
@@ -161,7 +202,7 @@
 | 财务·订单 | POST | `/api/finance/orders` | 登录 | 新增报班（含 `total_hours` 课时包） |
 | 财务·订单 | PUT | `/api/finance/orders/:id` | 登录 | 修改订单 |
 | 财务·订单 | PUT | `/api/finance/orders/:id/status` | 登录 | 变更状态（结业 / 退班） |
-| 财务·订单 | DELETE | `/api/finance/orders/:id` | admin | 删除订单（级联删缴费 / 退费） |
+| 财务·订单 | DELETE | `/api/finance/orders/:id` | admin | 删除订单（**存在缴费/退费记录时返回 400，禁止删除**；仅课时流水允许级联清理） |
 | 财务·缴费 | GET | `/api/finance/payments` | 登录 | 缴费记录列表 |
 | 财务·缴费 | POST | `/api/finance/payments` | 登录 | 登记缴费 |
 | 财务·缴费 | PUT | `/api/finance/payments/:id` | admin | 修改缴费记录 |
@@ -309,20 +350,32 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| class_id | number | 是 | 转入班级 ID |
-| course_id | number | 否 | 报班课程 ID |
-| student_no | string | 否 | 学号（缺省由后端生成） |
-| gender | string | 否 | `男` / `女` |
-| parent_name | string | 否 | 家长姓名（缺省取线索姓名） |
-| parent_phone | string | 否 | 家长电话（缺省取线索电话） |
+| class_id | number | 是 | 转入班级 ID（须有权限管理该班级） |
+| course_id | number | 否 | 报班课程 ID（缺省取线索的 `intent_course_id`） |
 | amount | number | 否 | 订单金额，默认 0 |
-| total_hours | number | 否 | 课时包总课时，默认 0 |
+| remark | string | 否 | 订单备注，默认 `线索转化建档` |
+
+> ⚠️ **实现与旧版文档不符，以上表为准**（`routes/leads.js:220-320`）。后端**只读取上述 4 个字段**，以下字段**不接受、传入即被忽略**：`student_no`、`gender`、`parent_name`、`parent_phone`、`total_hours`。
+>
+> **业务语义已确认（2026-09-12）：本接口只做「建档」，不完成报班收费。**
+>
+> 转化生成的 `orders` 记录 **`total_hours` 为 0**，而考勤扣减（`attendance.js:81`）与收入确认（`finance.js:765`）均要求 `total_hours > 0`，因此：
+>
+> - **转化后必须到「财务管理 → 报班管理」补录课时包与缴费**，或直接调用 `POST /api/finance/orders` 建一个带 `total_hours` 的正式订单；
+> - 未补录前，该学员的考勤**不会扣减课时**（不会写 `hour_consumptions`），也不会产生已确认收入 —— 这是预期行为，不是缺陷；
+> - 前端转化弹窗已加提示文案，员工按提示操作即可。
+>
+> 详见 `docs/上线评估报告-2026-09-12.md` 问题 **B2**（已按「仅建档」闭环）。
+
+**后端自动填充的字段**：`student_no`（当年年份 + 3 位递增序号）、`gender`（固定 `'男'`）、`parent_name`（`{线索姓名}家长`）、`parent_phone`（取线索电话）、`enroll_date`（当天）、`source_channel`（取线索来源）。
 
 **业务联动**：
 
-- 事务内 `INSERT students`（`source_channel` 写入线索来源，`enroll_date` 写入当天）+ `INSERT orders`，并把 `leads.status` 置为 `已转化`、`leads.converted_student_id` 指向新学员。
+- 事务内 `INSERT students` + `INSERT orders`，并把 `leads.status` 置为 `已转化`、`leads.converted_student_id` 指向新学员。
 - 原子性：任一步失败整体回滚，**不会**出现「建了学员没有订单」或反之。
-- 线索删除（admin）时 `converted_student_id` 置空，不影响已建学员档案。
+- 前置校验：线索已转化/已流失、已生成过学员档案、或线索手机号已存在学员档案时，均返回 400。
+- 线索删除（admin）时已转化线索**禁止删除**（`leads.js:335-343`），避免转化率统计失真。
+- 响应：`{ student_id, student_no }`。
 
 ---
 
@@ -384,20 +437,25 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| list | array | 是 | 待导入行数组（前端解析 Excel 得到） |
-| list[].student_no | string | 是 | 学号（唯一） |
-| list[].name | string | 是 | 姓名 |
-| list[].class_id | number | 是 | 班级 ID |
-| list[].gender | string | 否 | `男` / `女` |
-| list[].parent_name | string | 否 | 家长姓名 |
-| list[].parent_phone | string | 否 | 家长电话 |
-| list[].source_channel | string | 否 | 来源渠道 |
+| records | array | 是 | 待导入行数组（前端解析 Excel 得到）。**非空数组，否则 400** |
+| records[].student_no | string | 是 | 学号（唯一，重复则该行失败） |
+| records[].name | string | 是 | 姓名 |
+| records[].class_id | number | 是 | 班级 ID（教师仅可导入自己管理的班级） |
+| records[].gender | string | 否 | `男` / `女` |
+| records[].phone | string | 否 | 学员手机号 |
+| records[].email | string | 否 | 邮箱 |
+| records[].parent_name | string | 否 | 家长姓名 |
+| records[].parent_phone | string | 否 | 家长电话 |
+| records[].source_channel | string | 否 | 来源渠道 |
 
 **响应示例**：
 
 ```json
-{ "success": true, "data": { "success_count": 3, "fail_count": 1, "failures": [ { "row": 4, "student_no": "S002", "message": "学号已存在" } ] } }
+{ "success": true, "data": { "total": 4, "successCount": 3, "failCount": 1, "fails": [ { "row": 4, "student_no": "S002", "message": "学号已存在" } ] } }
 ```
+
+> ⚠️ **实现与旧版文档不符，以上表为准**（`routes/students.js:164-252`）。字段名由 `list` 更正为 **`records`**；响应字段由 `success_count/fail_count/failures` 更正为 **`successCount/failCount/fails`**，并新增 `total`。
+> 另：本接口**无行数上限**，且**每行一个独立事务**（非整体事务），部分成功不会回滚——前端需按行展示失败明细引导修正后重导。详见上线评估报告问题 **H13**。
 
 ---
 

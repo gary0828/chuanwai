@@ -2,6 +2,7 @@
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
+const { parseText } = require("../utils/validate");
 
 const router = express.Router();
 
@@ -42,6 +43,10 @@ router.post("/", auth, requireRole("admin"), (req, res) => {
   if (!title) {
     return res.status(400).json({ success: false, message: "公告标题不能为空" });
   }
+  const titleRes = parseText(title, { field: "公告标题", max: 100, required: true });
+  if (!titleRes.ok) return res.status(400).json({ success: false, message: titleRes.message });
+  const contentRes = parseText(content, { field: "公告内容", max: 5000 });
+  if (!contentRes.ok) return res.status(400).json({ success: false, message: contentRes.message });
   const result = db
     .prepare("INSERT INTO notices (title, content, creator_id, is_top, status) VALUES (?, ?, ?, ?, ?)")
     .run(title, content, req.user.id, Number(is_top) ? 1 : 0, status === "下架" ? "下架" : "发布");
@@ -55,6 +60,10 @@ router.put("/:id", auth, requireRole("admin"), (req, res) => {
   if (!title) {
     return res.status(400).json({ success: false, message: "公告标题不能为空" });
   }
+  const titleRes = parseText(title, { field: "公告标题", max: 100, required: true });
+  if (!titleRes.ok) return res.status(400).json({ success: false, message: titleRes.message });
+  const contentRes = parseText(content, { field: "公告内容", max: 5000 });
+  if (!contentRes.ok) return res.status(400).json({ success: false, message: contentRes.message });
   const result = db
     .prepare(
       "UPDATE notices SET title = ?, content = ?, is_top = ?, status = ?, updated_at = datetime('now','localtime') WHERE id = ?"

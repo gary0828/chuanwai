@@ -3,7 +3,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const db = require("../db");
-const { auth, requireRole } = require("../middleware/auth");
+const { auth, requireRole, revokeTokens } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -106,6 +106,8 @@ router.put("/:id", auth, requireRole("admin"), (req, res) => {
       phone !== undefined ? phone : user.phone,
       id
     );
+    // 角色变更即吊销该员工已签发凭证，避免旧 token 保留旧角色的权限（H2）
+    if (role && role !== user.role) revokeTokens(id);
     res.json({ success: true, data: null });
   } catch (err) {
     if (String(err.message).includes("UNIQUE")) {
@@ -117,12 +119,17 @@ router.put("/:id", auth, requireRole("admin"), (req, res) => {
   }
 });
 
-/** 重置密码 */
+/** 重置密码（重置后吊销该员工全部已签发凭证，强制重新登录） */
 router.put("/:id/password", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   const { password } = req.body || {};
   if (!password) {
     return res.status(400).json({ success: false, message: "请输入新密码" });
+  }
+  if (String(password).length < 8) {
+    return res
+      .status(400)
+      .json({ success: false, message: "密码长度至少 8 位" });
   }
   const user = db.prepare("SELECT id FROM users WHERE id = ?").get(id);
   if (!user) {
@@ -132,6 +139,8 @@ router.put("/:id/password", auth, requireRole("admin"), (req, res) => {
     bcrypt.hashSync(password, 10),
     id
   );
+  // 改密即吊销旧凭证：防止密码泄露后已签发的 token 继续可用（H2）
+  revokeTokens(id);
   res.json({ success: true, data: null });
 });
 

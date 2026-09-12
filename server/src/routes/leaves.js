@@ -4,6 +4,7 @@ const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { canManageStudent } = require("../utils/scope");
+const { parseDate } = require("../utils/validate");
 
 const router = express.Router();
 
@@ -70,7 +71,14 @@ router.post("/", auth, (req, res) => {
   if (!["病假", "事假", "其他"].includes(type)) {
     return res.status(400).json({ success: false, message: "请假类型不合法" });
   }
-  if (start_date > end_date) {
+  // 先校日期格式：保证随后的字符串比较（start_date > end_date）在规范的 YYYY-MM-DD 上成立
+  const startRes = parseDate(start_date, { field: "开始日期" });
+  if (!startRes.ok)
+    return res.status(400).json({ success: false, message: startRes.message });
+  const endRes = parseDate(end_date, { field: "结束日期" });
+  if (!endRes.ok)
+    return res.status(400).json({ success: false, message: endRes.message });
+  if (startRes.value > endRes.value) {
     return res
       .status(400)
       .json({ success: false, message: "开始日期不能晚于结束日期" });
@@ -90,7 +98,7 @@ router.post("/", auth, (req, res) => {
     .prepare(
       "INSERT INTO leaves (student_id, type, reason, start_date, end_date) VALUES (?, ?, ?, ?, ?)"
     )
-    .run(Number(student_id), type, reason, start_date, end_date);
+    .run(Number(student_id), type, reason, startRes.value, endRes.value);
   res.json({ success: true, data: { id: result.lastInsertRowid } });
 });
 
@@ -134,8 +142,11 @@ router.put(
     }
 
     // v13 联动的预置语句
+    // 注意（2026-09-12 全面测试发现并修复）：回补查询**不能**带 `remain_hours > 0`。
+    // 学员「剩余课时 = 1」时被扣至 0 后申请销假，带该条件会查不到订单 → 课时永久不回补
+    // （考勤已改为「请假」但课时不退）。此处与 attendance.js 的 findRefundOrder 口径保持一致。
     const findOrder = db.prepare(
-      "SELECT id FROM orders WHERE student_id = ? AND course_id = ? AND status = '在读' AND total_hours > 0 AND remain_hours > 0 ORDER BY remain_hours DESC, id LIMIT 1"
+      "SELECT id FROM orders WHERE student_id = ? AND course_id = ? AND status = '在读' AND total_hours > 0 ORDER BY remain_hours DESC, id LIMIT 1"
     );
     const refundOrder = db.prepare(
       "UPDATE orders SET remain_hours = MIN(total_hours, remain_hours + 1), updated_at = datetime('now','localtime') WHERE id = ?"
