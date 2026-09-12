@@ -1,6 +1,8 @@
 // 财务管理：报班订单 / 收费记录 / 退费记录 / 财务统计
-// 权限：admin 全量；teacher 仅可操作本班学生（班级通过 classes.head_teacher_id 绑定）
-// 退费审批、删除记录等敏感操作仅限 admin
+// 权限（2026-09-12 权限收紧）：全部接口仅 admin。
+//   此前订单/缴费/退费/营收/欠费/课消统计对 teacher 开放（本班范围内），
+//   按「教师仅保留授课相关权限、费用与业务运营内容一律不可见」的要求收回。
+//   financeScope / canManageOrder 保留：admin 恒放行，逻辑无副作用，避免大范围改动。
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
@@ -79,7 +81,7 @@ function parseHours(value, { field = "课时" } = {}) {
 // ==================== 报班订单 ====================
 
 /** 订单列表（分页 + 筛选：状态/关键字/班级/低课时） */
-router.get("/orders", auth, requireRole("admin", "teacher"), (req, res) => {
+router.get("/orders", auth, requireRole("admin"), (req, res) => {
   const { status, keyword, class_id, low_hours, page = 1, pageSize = 10 } = req.query;
   const scope = financeScope(req);
   const conds = [];
@@ -115,7 +117,7 @@ router.get("/orders", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 /** 订单详情（含缴费明细与退费记录） */
-router.get("/orders/:id", auth, requireRole("admin", "teacher"), (req, res) => {
+router.get("/orders/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   const row = db.prepare(`
     SELECT o.*, s.student_no, s.name AS student_name, s.phone,
@@ -147,7 +149,7 @@ router.get("/orders/:id", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 /** 新增订单（学员报班） */
-router.post("/orders", auth, requireRole("admin", "teacher"), (req, res) => {
+router.post("/orders", auth, requireRole("admin"), (req, res) => {
   const { student_id, class_id, course_id, enroll_date, amount, total_hours, remark } = req.body;
   if (!student_id) return res.status(400).json({ success: false, message: "请选择学员" });
   if (!canManageStudent(req, student_id)) {
@@ -185,7 +187,7 @@ router.post("/orders", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 /** 变更订单状态（结业 / 退班） */
-router.put("/orders/:id/status", auth, requireRole("admin", "teacher"), (req, res) => {
+router.put("/orders/:id/status", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   const { status } = req.body;
   if (!["在读", "结业", "退班"].includes(status)) {
@@ -204,7 +206,7 @@ router.put("/orders/:id/status", auth, requireRole("admin", "teacher"), (req, re
 
 /** 修改订单信息（班级/课程/金额/课时/备注；未传字段保留原值）
  *  v13：校验 remain_hours <= total_hours */
-router.put("/orders/:id", auth, requireRole("admin", "teacher"), (req, res) => {
+router.put("/orders/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   if (!canManageOrder(req, id)) {
     return res.status(403).json({ success: false, message: "无权操作该订单" });
@@ -316,7 +318,7 @@ router.delete("/orders/:id", auth, requireRole("admin"), (req, res) => {
 // ==================== 收费记录 ====================
 
 /** 缴费记录列表（分页 + 筛选：订单/学员关键字/支付方式/时间范围） */
-router.get("/payments", auth, requireRole("admin", "teacher"), (req, res) => {
+router.get("/payments", auth, requireRole("admin"), (req, res) => {
   const { order_id, keyword, pay_method, start, end, page = 1, pageSize = 10 } = req.query;
   const scope = financeScope(req);
   const conds = [];
@@ -352,7 +354,7 @@ router.get("/payments", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 /** 新增缴费记录（v13：校验订单属于所选学员，避免跨学员挂账） */
-router.post("/payments", auth, requireRole("admin", "teacher"), (req, res) => {
+router.post("/payments", auth, requireRole("admin"), (req, res) => {
   const { order_id, student_id, amount, pay_method, pay_time, remark } = req.body;
   if (!order_id || !student_id) {
     return res.status(400).json({ success: false, message: "请选择订单与学员" });
@@ -426,7 +428,7 @@ router.delete("/payments/:id", auth, requireRole("admin"), (req, res) => {
 // ==================== 退费记录 ====================
 
 /** 退费记录列表（分页 + 筛选：状态/关键字） */
-router.get("/refunds", auth, requireRole("admin", "teacher"), (req, res) => {
+router.get("/refunds", auth, requireRole("admin"), (req, res) => {
   const { status, keyword, page = 1, pageSize = 10 } = req.query;
   const scope = financeScope(req);
   const conds = [];
@@ -457,7 +459,7 @@ router.get("/refunds", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 /** 提交退费申请（v13：校验订单属于所选学员） */
-router.post("/refunds", auth, requireRole("admin", "teacher"), (req, res) => {
+router.post("/refunds", auth, requireRole("admin"), (req, res) => {
   const { order_id, student_id, amount, reason, remark } = req.body;
   if (!order_id || !student_id) {
     return res.status(400).json({ success: false, message: "请选择订单与学员" });
@@ -551,7 +553,7 @@ router.delete("/refunds/:id", auth, requireRole("admin"), (req, res) => {
 // ==================== 财务统计 ====================
 
 /** 营收统计：按天/按月聚合实收金额（pay_time 为收单时间） */
-router.get("/stats/revenue", auth, requireRole("admin", "teacher"), (req, res) => {
+router.get("/stats/revenue", auth, requireRole("admin"), (req, res) => {
   const { start, end, granularity } = req.query;
   const unit = granularity === "month" ? 7 : 10; // substr(pay_time,1,7) 按月 / 1,10 按天
   const conds = [];
@@ -571,7 +573,7 @@ router.get("/stats/revenue", auth, requireRole("admin", "teacher"), (req, res) =
 });
 
 /** 欠费统计：订单金额 > 已缴合计 的在读/结业订单 */
-router.get("/stats/arrears", auth, requireRole("admin", "teacher"), (req, res) => {
+router.get("/stats/arrears", auth, requireRole("admin"), (req, res) => {
   const scope = financeScope(req);
   const rows = db.prepare(`
     SELECT o.id, o.student_id, s.student_no, s.name AS student_name,
@@ -592,7 +594,7 @@ router.get("/stats/arrears", auth, requireRole("admin", "teacher"), (req, res) =
 });
 
 /** 剩余课时不足预警：在读且设了课时包的订单中，剩余课时 ≤ 阈值（教师仅本班） */
-router.get("/stats/low-hours", auth, requireRole("admin", "teacher"), (req, res) => {
+router.get("/stats/low-hours", auth, requireRole("admin"), (req, res) => {
   const { threshold = 5 } = req.query;
   const scope = financeScope(req);
   const rows = db.prepare(`
@@ -703,7 +705,7 @@ router.get("/stats/business", auth, requireRole("admin"), (req, res) => {
 
 /** 课消统计：按维度（teacher|course|student）聚合课时消耗 + 收入确认汇总
  *  教师仅统计本班（s 为 students 别名）；can_see_amount 仅 admin 为 true */
-router.get("/stats/consumption", auth, requireRole("admin", "teacher"), (req, res) => {
+router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
   const { dimension = "teacher", start, end } = req.query;
   const scope = financeScope(req);
   const conds = [];

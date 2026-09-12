@@ -1,5 +1,6 @@
 // 学习报告与成长档案：单学员学习报告（考勤/成绩/课时/订单）与成长档案时间线
 // 权限：admin 全量；teacher 仅本班学生（classes.head_teacher_id 绑定）
+//   （2026-09-12 权限收紧：teacher 可见，但订单摘要剔除 amount/paid、时间线剔除缴费/退费事件）
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
@@ -106,6 +107,9 @@ router.get("/students/:id", auth, requireRole("admin", "teacher"), (req, res) =>
   });
 
   // 在读订单摘要
+  // 权限（2026-09-12 权限收紧）：teacher 不返回 amount / paid（费用对教师不可见，
+  // 保留课程、班级、状态、报名日期等教学信息）
+  const isTeacher = req.user.role === "teacher";
   const orders = db.prepare(`
     SELECT COALESCE(cu.name, '未指定课程') AS course_name, c.name AS class_name,
            o.amount, o.status, o.enroll_date,
@@ -115,14 +119,16 @@ router.get("/students/:id", auth, requireRole("admin", "teacher"), (req, res) =>
     LEFT JOIN classes c ON c.id = o.class_id
     WHERE o.student_id = ? AND o.status = '在读'
     ORDER BY o.id DESC
-  `).all(id).map(r => ({
-    course_name: r.course_name,
-    class_name: r.class_name || "",
-    amount: Number(r.amount),
-    paid: Number(r.paid || 0),
-    status: r.status,
-    enroll_date: r.enroll_date
-  }));
+  `).all(id).map(r => {
+    const base = {
+      course_name: r.course_name,
+      class_name: r.class_name || "",
+      status: r.status,
+      enroll_date: r.enroll_date
+    };
+    if (isTeacher) return base;
+    return { ...base, amount: Number(r.amount), paid: Number(r.paid || 0) };
+  });
 
   res.json({ success: true, data: { student, attendance, scores, hours, orders } });
 });
@@ -158,16 +164,20 @@ router.get("/students/:id/timeline", auth, requireRole("admin", "teacher"), (req
     }
   }
 
-  // 缴费
-  const payRows = db.prepare("SELECT pay_time, amount FROM payments WHERE student_id = ?").all(id);
-  for (const p of payRows) {
-    events.push({ time: p.pay_time, type: "缴费", title: "缴费记录", content: `缴费 ¥${Number(p.amount)}` });
-  }
+  // 缴费 / 退费事件属财务信息：teacher 不返回（2026-09-12 权限收紧，费用对教师不可见）
+  const canSeeFinanceEvents = req.user.role !== "teacher";
+  if (canSeeFinanceEvents) {
+    // 缴费
+    const payRows = db.prepare("SELECT pay_time, amount FROM payments WHERE student_id = ?").all(id);
+    for (const p of payRows) {
+      events.push({ time: p.pay_time, type: "缴费", title: "缴费记录", content: `缴费 ¥${Number(p.amount)}` });
+    }
 
-  // 退费
-  const refundRows = db.prepare("SELECT apply_time, amount FROM refunds WHERE student_id = ?").all(id);
-  for (const r of refundRows) {
-    events.push({ time: r.apply_time, type: "退费", title: "退费记录", content: `退费 ¥${Number(r.amount)}` });
+    // 退费
+    const refundRows = db.prepare("SELECT apply_time, amount FROM refunds WHERE student_id = ?").all(id);
+    for (const r of refundRows) {
+      events.push({ time: r.apply_time, type: "退费", title: "退费记录", content: `退费 ¥${Number(r.amount)}` });
+    }
   }
 
   // 考勤异常

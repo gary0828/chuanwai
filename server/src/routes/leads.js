@@ -1,5 +1,7 @@
 // 招生线索：新增/跟进/状态流转/转化（转化时自动创建学员档案与报班订单）/渠道统计
-// 权限：admin 全量；teacher 仅可操作自己创建的线索（follow_user_id）；删除仅 admin
+// 权限（2026-09-12 权限收紧）：全部接口仅 admin。
+//   线索属销售数据，按「教师仅保留授课相关权限、销售/业务运营内容一律不可见」的要求收回。
+//   leadScope（按 follow_user_id 过滤）保留：admin 恒放行，逻辑无副作用。
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
@@ -35,7 +37,7 @@ function parseRecords(text) {
 }
 
 /** 线索列表（分页 + 状态/渠道/关键字筛选） */
-router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
+router.get("/", auth, requireRole("admin"), (req, res) => {
   const { status, source, keyword, page = 1, pageSize = 10 } = req.query;
   const scope = leadScope(req);
   const conds = [];
@@ -86,7 +88,7 @@ router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 /** 新增线索 */
-router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
+router.post("/", auth, requireRole("admin"), (req, res) => {
   const {
     name,
     phone = "",
@@ -119,7 +121,7 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 /** 修改线索基本信息 */
-router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
+router.put("/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   if (!canManageLead(req, id)) {
     return res.status(403).json({ success: false, message: "无权操作该线索" });
@@ -153,7 +155,7 @@ router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 /** 添加跟进记录（追加到 follow_records JSON） */
-router.put("/:id/follow", auth, requireRole("admin", "teacher"), (req, res) => {
+router.put("/:id/follow", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   if (!canManageLead(req, id)) {
     return res.status(403).json({ success: false, message: "无权操作该线索" });
@@ -192,7 +194,7 @@ router.put("/:id/follow", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 /** 状态流转（新线索/跟进中/已流失） */
-router.put("/:id/status", auth, requireRole("admin", "teacher"), (req, res) => {
+router.put("/:id/status", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   if (!canManageLead(req, id)) {
     return res.status(403).json({ success: false, message: "无权操作该线索" });
@@ -218,7 +220,7 @@ router.put("/:id/status", auth, requireRole("admin", "teacher"), (req, res) => {
 router.put(
   "/:id/convert",
   auth,
-  requireRole("admin", "teacher"),
+  requireRole("admin"),
   (req, res) => {
     const id = Number(req.params.id);
     if (!canManageLead(req, id)) {
@@ -349,7 +351,7 @@ router.delete("/:id", auth, requireRole("admin"), (req, res) => {
 router.get(
   "/stats/channels",
   auth,
-  requireRole("admin", "teacher"),
+  requireRole("admin"),
   (req, res) => {
     const scope = leadScope(req);
     const rows = db

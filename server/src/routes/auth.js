@@ -252,18 +252,6 @@ const ROUTES = {
       ]
     },
     {
-      path: "/recruit",
-      meta: { title: "招生管理", icon: "ep:aim", rank: 3 },
-      children: [
-        {
-          path: "/recruit/leads",
-          component: "recruit/leads/index",
-          name: "RecruitLeads",
-          meta: { title: "线索管理" }
-        }
-      ]
-    },
-    {
       path: "/family",
       meta: { title: "家校管理", icon: "ep:connection", rank: 4 },
       children: [
@@ -296,42 +284,6 @@ const ROUTES = {
           component: "teaching/growth/index",
           name: "TeachingGrowth",
           meta: { title: "成长档案" }
-        }
-      ]
-    },
-    {
-      path: "/finance",
-      meta: { title: "财务管理", icon: "ep:wallet", rank: 6 },
-      children: [
-        {
-          path: "/finance/orders",
-          component: "finance/orders/index",
-          name: "FinanceOrders",
-          meta: { title: "报班管理" }
-        },
-        {
-          path: "/finance/payments",
-          component: "finance/payments/index",
-          name: "FinancePayments",
-          meta: { title: "缴费记录" }
-        },
-        {
-          path: "/finance/refunds",
-          component: "finance/refunds/index",
-          name: "FinanceRefunds",
-          meta: { title: "退费管理" }
-        },
-        {
-          path: "/finance/statistics",
-          component: "finance/statistics/index",
-          name: "FinanceStatistics",
-          meta: { title: "财务统计" }
-        },
-        {
-          path: "/finance/consumption",
-          component: "finance/consumption/index",
-          name: "FinanceConsumption",
-          meta: { title: "课消统计" }
         }
       ]
     },

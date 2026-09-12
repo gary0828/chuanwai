@@ -4,10 +4,15 @@ import { ref, computed } from "vue";
 import { ElMessage } from "element-plus";
 import { getStudentList } from "@/api/attendance";
 import { getStudentReport } from "@/api/teaching";
+import { useUserStoreHook } from "@/store/modules/user";
 
 defineOptions({
   name: "TeachingReports"
 });
+
+/* 金额可见性（2026-09-12 权限收紧）：仅 admin 可见；教师端后端已不返回 amount/paid，
+   此处隐藏对应列，避免把缺失字段渲染成误导性的 ¥0.00 */
+const isAdmin = computed(() => useUserStoreHook().roles.includes("admin"));
 
 /* ---------- 学员选择 ---------- */
 const studentOptions = ref<any[]>([]);
@@ -319,10 +324,20 @@ function handlePrint() {
           <el-table :data="orders" border stripe size="small">
             <el-table-column prop="course_name" label="课程" min-width="140" />
             <el-table-column prop="class_name" label="班级" min-width="120" />
-            <el-table-column label="报名金额" width="110" align="right">
+            <el-table-column
+              v-if="isAdmin"
+              label="报名金额"
+              width="110"
+              align="right"
+            >
               <template #default="{ row }">{{ fmtMoney(row.amount) }}</template>
             </el-table-column>
-            <el-table-column label="已缴金额" width="110" align="right">
+            <el-table-column
+              v-if="isAdmin"
+              label="已缴金额"
+              width="110"
+              align="right"
+            >
               <template #default="{ row }">{{ fmtMoney(row.paid) }}</template>
             </el-table-column>
             <el-table-column label="状态" width="90" align="center">

@@ -195,9 +195,11 @@ async function runAll() {
   const teacherToken = loginTeacher.json.data.accessToken;
 
   // 教师 id：e2e 班级绑定 teacher 为班主任，保证教师可看该班缺勤通知（阶段 4.8）
-  const usersData = await ok("GET", "/users?role=teacher", undefined, adminToken, "查询教师账号列表");
-  const teacherUser = usersData.list.find(u => u.role === "teacher");
-  assert(teacherUser && teacherUser.id, "获取教师账号 id");
+  // 注意：必须按 username 精确匹配 "teacher"——取「第一个 teacher 角色用户」在系统中
+  // 存在多个教师账号（如真实教师 kat）时会绑错人，导致 teacher 查询本班数据全部失败。
+  const usersData = await ok("GET", "/users?role=teacher&pageSize=100", undefined, adminToken, "查询教师账号列表");
+  const teacherUser = usersData.list.find(u => u.username === "teacher");
+  assert(teacherUser && teacherUser.id, "获取教师账号 id（username=teacher）");
   const teacherId = teacherUser.id;
 
   // 预清理：删除上次运行可能遗留的 e2e_ 数据（保证可重复运行）
@@ -409,12 +411,12 @@ async function runAll() {
   assert(typeof consStudent.summary.revenue_recognized === "number" && consStudent.summary.revenue_recognized >= 100, `阶段8.7.课消收入确认 ≥ 100（实际 ${consStudent.summary.revenue_recognized}）`);
   assert(consStudent.summary.can_see_amount === true, "阶段8.7.admin 可见收入金额");
 
-  // teacher：课消统计仅本班可见且不可见金额
-  const consTeacher = await ok("GET", `/finance/stats/consumption?${q({ dimension: "teacher" })}`, undefined, teacherToken, "阶段8.7.教师查询课消统计(按老师)");
-  assert(consTeacher.list.some(r => r.class_name === usedClassName), "阶段8.7.教师可见本班课消");
-  assert(consTeacher.summary.can_see_amount === false, "阶段8.7.teacher 金额不可见");
+  // teacher：财务接口已收紧为仅 admin（2026-09-12 权限收紧，费用对教师不可见）
+  const consTeacher = await api("GET", `/finance/stats/consumption?${q({ dimension: "teacher" })}`, undefined, teacherToken);
+  assert(consTeacher.status === 403, "阶段8.7.teacher 查询课消统计被拒(403，权限收紧)");
   const reportByTeacher = await ok("GET", `/reports/students/${studentId}`, undefined, teacherToken, "阶段8.8.教师查看学习报告(同班)");
   assert(reportByTeacher.student.student_no === studentNo, "阶段8.8.教师可查看同班学员报告");
+  assert(!(reportByTeacher.orders || []).some(o => "amount" in o || "paid" in o), "阶段8.8.教师学习报告订单摘要不包含金额字段(脱敏)");
 
   // 清理课消验证订单（避免影响阶段 6 删除语义断言）
   await ok("DELETE", `/finance/orders/${orderDId}`, undefined, adminToken, "阶段8.7.删除课消验证订单");

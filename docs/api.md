@@ -83,9 +83,12 @@
 | 角色 | 数据范围 |
 | --- | --- |
 | `admin` | 全量数据 + 所有管理功能 |
-| `teacher` | 仅 `classes.head_teacher_id = 当前用户` 的班级 / 学生 / 考勤 / 请假 / 统计 / 考试 / 通知；招生线索仅可见**自己创建**的 |
+| `teacher` | **仅授课相关**：`classes.head_teacher_id = 当前用户` 的班级 / 学生 / 考勤 / 请假 / 补课 / 调课申请 / 课表 / 考试与成绩 / 通知 / 学习报告与成长档案（**金额字段脱敏**）。**费用与销售数据一律不可见**——财务（订单/缴费/退费/统计）与招生线索的全部接口均为 `admin` 专属（2026-09-12 权限收紧） |
 
 实现位置：`server/src/utils/scope.js`（`canManageClass` / `canManageStudent` / `studentScopeWhere` / `classScopeClause`）。
+
+> **教师权限边界（2026-09-12 收紧）**：教师仅保留授课相关权限（课程安排、课表查询、学生名单、出勤记录、教学资料、成绩管理）。
+> 四层同时生效：① 菜单——`/api/auth/async-routes` 不再向 teacher 下发财务管理与招生管理目录；② 接口——`/api/finance/**` 与 `/api/leads/**` 全部 `requireRole("admin")`，teacher 调用一律 403；③ 字段——`/api/reports/students/:id` 对 teacher 剔除订单摘要的 `amount`/`paid`，`/timeline` 剔除缴费/退费事件；④ 导出——`/api/analytics/**` 本就仅 admin，学生导出不包含费用字段。
 
 ### 1.6 分页约定
 
@@ -197,33 +200,33 @@
 | 备份 | POST | `/api/backups/:filename/restore` | admin | 恢复备份（服务自动重启） |
 | 备份 | DELETE | `/api/backups/:filename` | admin | 删除备份 |
 | 审计 | GET | `/api/audit-logs` | admin | 审计日志（分页 + 筛选） |
-| 财务·订单 | GET | `/api/finance/orders` | 登录 | 报班订单列表（分页 + 多条件筛选） |
-| 财务·订单 | GET | `/api/finance/orders/:id` | 登录 | 订单详情（含缴费明细与退费记录） |
-| 财务·订单 | POST | `/api/finance/orders` | 登录 | 新增报班（含 `total_hours` 课时包） |
-| 财务·订单 | PUT | `/api/finance/orders/:id` | 登录 | 修改订单 |
-| 财务·订单 | PUT | `/api/finance/orders/:id/status` | 登录 | 变更状态（结业 / 退班） |
+| 财务·订单 | GET | `/api/finance/orders` | admin | 报班订单列表（分页 + 多条件筛选） |
+| 财务·订单 | GET | `/api/finance/orders/:id` | admin | 订单详情（含缴费明细与退费记录） |
+| 财务·订单 | POST | `/api/finance/orders` | admin | 新增报班（含 `total_hours` 课时包） |
+| 财务·订单 | PUT | `/api/finance/orders/:id` | admin | 修改订单 |
+| 财务·订单 | PUT | `/api/finance/orders/:id/status` | admin | 变更状态（结业 / 退班） |
 | 财务·订单 | DELETE | `/api/finance/orders/:id` | admin | 删除订单（**存在缴费/退费记录时返回 400，禁止删除**；仅课时流水允许级联清理） |
-| 财务·缴费 | GET | `/api/finance/payments` | 登录 | 缴费记录列表 |
-| 财务·缴费 | POST | `/api/finance/payments` | 登录 | 登记缴费 |
+| 财务·缴费 | GET | `/api/finance/payments` | admin | 缴费记录列表 |
+| 财务·缴费 | POST | `/api/finance/payments` | admin | 登记缴费 |
 | 财务·缴费 | PUT | `/api/finance/payments/:id` | admin | 修改缴费记录 |
 | 财务·缴费 | DELETE | `/api/finance/payments/:id` | admin | 删除缴费记录 |
-| 财务·退费 | GET | `/api/finance/refunds` | 登录 | 退费记录列表 |
-| 财务·退费 | POST | `/api/finance/refunds` | 登录 | 提交退费申请 |
+| 财务·退费 | GET | `/api/finance/refunds` | admin | 退费记录列表 |
+| 财务·退费 | POST | `/api/finance/refunds` | admin | 提交退费申请 |
 | 财务·退费 | PUT | `/api/finance/refunds/:id/approve` | admin | 退费审批 |
 | 财务·退费 | DELETE | `/api/finance/refunds/:id` | admin | 删除退费记录 |
-| 财务·统计 | GET | `/api/finance/stats/revenue` | 登录 | 营收统计（`granularity=day\|month`） |
-| 财务·统计 | GET | `/api/finance/stats/arrears` | 登录 | 欠费统计 |
-| 财务·统计 | GET | `/api/finance/stats/low-hours` | 登录 | 低课时预警 |
-| 财务·统计 | GET | `/api/finance/stats/consumption` | 登录 | 课消统计（teacher 金额不可见） |
+| 财务·统计 | GET | `/api/finance/stats/revenue` | admin | 营收统计（`granularity=day\|month`） |
+| 财务·统计 | GET | `/api/finance/stats/arrears` | admin | 欠费统计 |
+| 财务·统计 | GET | `/api/finance/stats/low-hours` | admin | 低课时预警 |
+| 财务·统计 | GET | `/api/finance/stats/consumption` | admin | 课消统计 |
 | 财务·统计 | GET | `/api/finance/stats/business` | admin | 经营报表 |
-| 招生 | GET | `/api/leads` | 登录 | 线索列表（教师仅自己） |
-| 招生 | POST | `/api/leads` | 登录 | 新增线索 |
-| 招生 | PUT | `/api/leads/:id` | 登录 | 修改线索 |
-| 招生 | PUT | `/api/leads/:id/follow` | 登录 | 追加跟进记录 |
-| 招生 | PUT | `/api/leads/:id/status` | 登录 | 状态流转 |
-| 招生 | PUT | `/api/leads/:id/convert` | 登录 | **一键转化**（事务：建档 + 报班） |
+| 招生 | GET | `/api/leads` | admin | 线索列表 |
+| 招生 | POST | `/api/leads` | admin | 新增线索 |
+| 招生 | PUT | `/api/leads/:id` | admin | 修改线索 |
+| 招生 | PUT | `/api/leads/:id/follow` | admin | 追加跟进记录 |
+| 招生 | PUT | `/api/leads/:id/status` | admin | 状态流转 |
+| 招生 | PUT | `/api/leads/:id/convert` | admin | **一键转化**（事务：建档 + 报班） |
 | 招生 | DELETE | `/api/leads/:id` | admin | 删除线索 |
-| 招生 | GET | `/api/leads/stats/channels` | 登录 | 渠道统计 |
+| 招生 | GET | `/api/leads/stats/channels` | admin | 渠道统计 |
 | 通知 | GET | `/api/notifications` | 登录 | 通知记录（教师仅本班学员） |
 | 通知 | PUT | `/api/notifications/:id/read` | 登录 | 单条标记已读 |
 | 通知 | PUT | `/api/notifications/read-all` | 登录 | 全部标记已读 |
@@ -234,8 +237,8 @@
 | 考试 | GET | `/api/exams/:id/scores` | 登录 | 成绩录入表单（考试信息 + 在读学生 + 已有成绩） |
 | 考试 | PUT | `/api/exams/:id/scores` | 登录 | **批量录入成绩**（事务 upsert；新插入时推送成绩通知） |
 | 考试 | GET | `/api/exams/:id/scorecard` | 登录 | 成绩单（排名 + 等级 + 平均分） |
-| 报告 | GET | `/api/reports/students/:id` | 登录 | 学习报告 |
-| 报告 | GET | `/api/reports/students/:id/timeline` | 登录 | 成长档案时间线 |
+| 报告 | GET | `/api/reports/students/:id` | admin/teacher | 学习报告（**teacher 订单摘要剔除 amount/paid**） |
+| 报告 | GET | `/api/reports/students/:id/timeline` | admin/teacher | 成长档案时间线（**teacher 剔除缴费/退费事件**） |
 | 分析 | GET | `/api/analytics/metrics` | admin | 指标定义字典（AI 解析用） |
 | 分析 | GET | `/api/analytics/overview` | admin | 全局经营概览 |
 | 分析 | GET | `/api/analytics/attendance/export` | admin | 考勤数据批量导出 |
@@ -570,4 +573,4 @@ Content-Disposition: attachment; filename="analytics-attendance-2026-09-11.csv"
 2. 需要新表 / 新字段 → **新增迁移脚本**（`server/src/migrations/0NN-*.js`，版本连续递增），同步更新 `server/database.md`。
 3. 在**本文件**「接口总览」表登记，并补写详细小节（路径、方法、权限、参数表、请求 / 响应示例、错误码、业务联动）。
 4. 同步更新 `docs/openapi.yaml`。
-5. 在 `PROGRESS.md` 记录；后端改动跑 `node server/scripts/e2e-lifecycle.mjs`。
+5. 在 `docs/PROGRESS.md` 记录；后端改动跑 `node server/scripts/e2e-lifecycle.mjs`。
