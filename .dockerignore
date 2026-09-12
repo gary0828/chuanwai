@@ -1,0 +1,26 @@
+node_modules
+.DS_Store
+dist
+dist-ssr
+*.local
+.eslintcache
+report.html
+
+yarn.lock
+npm-debug.log*
+.pnpm-error.log*
+.pnpm-debug.log
+tests/**/coverage/
+
+# Editor directories and files
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+tsconfig.tsbuildinfo
+
+# 后端依赖与数据（数据通过 docker-compose 卷挂载）
+server/node_modules
+server/data
+.trae

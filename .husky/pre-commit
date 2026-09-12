@@ -1,0 +1,28 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+. "$(dirname "$0")/common.sh"
+
+[ -n "$CI" ] && exit 0
+
+PATH="/usr/local/bin:$PATH"
+
+# 数据模型评审 gate：新迁移文件必须配套通过评审的 model-review 文档（见 .trae/skills/data-model-review）
+# 约定：评审文档命名 server/docs/<版本号>-<功能名>-model-review.md，且含"结论：通过"
+NEW_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^server/src/migrations/[0-9]{3}-.*\.js$' || true)
+if [ -n "$NEW_MIGRATIONS" ]; then
+  MISSING=""
+  for f in $NEW_MIGRATIONS; do
+    ver=$(basename "$f" | cut -c1-3)   # 版本号 013
+    if ! grep -lq "结论：通过" server/docs/${ver}-*-model-review.md 2>/dev/null; then
+      MISSING="$MISSING $f"
+    fi
+  done
+  if [ -n "$MISSING" ]; then
+    echo "❌ 数据模型评审未通过：以下迁移缺少通过评审的 model-review 文档：$MISSING"
+    echo "   请先运行 .trae/skills/data-model-review 完成建模评审并保存到 server/docs/<版本号>-<功能名>-model-review.md"
+    exit 1
+  fi
+fi
+
+# Perform lint check on files in the staging area through .lintstagedrc configuration
+pnpm exec lint-staged

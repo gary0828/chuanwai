@@ -1,0 +1,41 @@
+# 学生考勤系统 全栈 Docker 部署
+# 启动：docker compose up -d --build
+# 访问：http://localhost:8080 （前端），后端 API：http://localhost:3000/api
+#
+# 显式指定项目名：Compose 默认用「所在目录名」推导项目名，且要求小写字母/数字/-/_。
+# 本项目目录名可能为纯中文（如 教学管理系统），清洗后为空字符串，
+# 会导致 `docker compose up` 直接报错 `project name must not be empty`。
+name: attendance-system
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: attendance-server
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+    ports:
+      - "3000:3000"
+    volumes:
+      # SQLite 数据持久化（首次启动自动建表 + 种子数据）
+      - ./server/data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: attendance-web
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "8080:80"

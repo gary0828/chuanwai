@@ -1,0 +1,55 @@
+node_modules
+.DS_Store
+dist
+dist-ssr
+*.local
+.eslintcache
+report.html
+vite.config.*.timestamp*
+
+yarn.lock
+npm-debug.log*
+.pnpm-error.log*
+.pnpm-debug.log
+tests/**/coverage/
+
+# ============ 项目自定义忽略 ============
+
+# 环境变量（含密钥，严禁入库；只有 .env.example 作为模板提交）
+.env
+.env.*
+!.env.example
+
+# 浏览器验证截图（可能含真实学员姓名 / 家长电话 / 金额）
+evidence/
+
+# Obsidian 工作区配置（插件缓存、本地视图状态）
+.obsidian/
+
+# 本地临时验证目录
+_verify_test/
+
+# WorkBuddy 会话数据与 AI 长期记忆（本机会话日志，含本机绝对路径）
+.workbuddy/
+
+# 日志文件
+*.log
+
+# 内部计划/临时文档（不用提交，完成后删除）
+.trae/*
+# 项目流程 skill（data-model-review）纳入版本控制，其余 .trae 内容保持忽略
+!.trae/skills/
+.trae/skills/*
+!.trae/skills/data-model-review/
+# 本地学习经验（self-improving-agent 记录，不入库）
+.learnings/
+# SQLite 数据文件与备份目录（种子数据由 seed.js 首次启动生成）
+server/data/
+
+# Editor directories and files
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+tsconfig.tsbuildinfo
