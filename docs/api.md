@@ -1,7 +1,7 @@
 # API 权威文档 · 教务管理系统
 
 > **本文件是本项目 REST API 的唯一权威文档。** 每次新增 / 修改接口必须同步更新本文件与 `docs/openapi.yaml`。
-> 生成时间：2026-09-11 ｜ 数据库版本：**v14** ｜ 后端：Express 4 + `node:sqlite`
+> 生成时间：2026-09-11 ｜ 最近同步：2026-09-14 ｜ 数据库版本：**v15** ｜ 后端：Express 4 + `node:sqlite`
 
 ---
 
@@ -478,7 +478,7 @@
       "generated_at": "2026-09-11T10:00:00.000Z",
       "period": { "start": null, "end": null },
       "total_count": 0,
-      "data_version": "v14",
+      "data_version": "v15",
       "dataset": "attendance",
       "dataset_label": "考勤明细"
     }

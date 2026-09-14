@@ -1,12 +1,28 @@
 # 项目进度（PROGRESS）
 
-> 每次会话开始读取本文件，结束更新。最近更新：**2026-09-12**
-> 数据库版本：**v14** ｜ e2e：`server/scripts/e2e-lifecycle.mjs`（80 项断言，全绿）｜ analytics 冒烟：22 项（全绿）｜ P0 浏览器验证：31 项（全绿）
+> 每次会话开始读取本文件，结束更新。最近更新：**2026-09-14**
+> 数据库版本：**v15** ｜ e2e：`server/scripts/e2e-lifecycle.mjs`（80 项断言，全绿）｜ analytics 冒烟：22 项（全绿）｜ P0 浏览器验证：31 项（全绿）
 > 上线倒计时：**用户下周在校区正式使用** —— P0 模块优先于一切。
 
 ---
 
 ## 已完成
+
+- [x] **全仓过度设计审计与清理（ponytail-audit）**（2026-09-14）
+  - 审计报告：`docs/过度设计审计报告-2026-09-14.md`（含 10 项发现、5 处误报排除记录、执行结果）
+  - **净减 1,027 行、5 个依赖**，全部为死代码与不可达分支，零功能影响
+  - 前端 **-963 行**：删 `src/utils/localforage/`（275 行，零引用）、`src/utils/print.ts`（223）、`src/utils/propTypes.ts`（39）、`src/utils/sso.ts`（59）、`src/utils/preventDefault.ts`（28）、`src/utils/globalPolyfills.ts`（7）、`src/directives/{copy,longpress,optimize}`（164）、`mock/`（138）、`src/views/permission/`（空目录）
+  - 后端 **-64 行**：`finance.js` 移除 `financeScope`/`canManageOrder`（19 处路由全 admin，恒定空操作）、`leads.js` 移除 `leadScope`/`canManageLead`、`reports.js` 移除纯委托包装 `canManageStudentReport`、`calcGrade` 从 `exams.js`/`reports.js` 两处重复提取为 `server/src/utils/grade.js`
+  - 依赖 **-5**：`localforage`、`vue-types`、`@pureadmin/descriptions`、`vite-plugin-fake-server`、`@faker-js/faker`
+  - **保留判断**：`auth`/`perms` 指令（后端 `rolePermissions()` 真实下发、前端 store 真实消费，是其唯一展示层消费端）；`exams.js` 的 `examScope`（该路由真的对 teacher 开放，属有效过滤）
+  - **连带修正**：`tsconfig.json`、`build/optimize.ts`、`build/plugins.ts`、`src/router/index.ts`、`package.json` 的 `lint:eslint` glob、`pnpm-lock.yaml`
+  - **锁文件必须同步**：`Dockerfile:12` 用 `pnpm install --frozen-lockfile`，不同步会直接阻断镜像构建。已用 `pnpm@10.15.1 install --lockfile-only` 重生成并以 `--frozen-lockfile` 复验通过
+  - **验证**：ESLint 0 错 ｜ 生产构建通过（29s / 3.53 MB）｜ e2e **80/80** ｜ analytics **22/22** ｜ finance/leads 专项 **45/45** ｜ 浏览器 P0 **31/31**
+  - **顺带修掉**：`server/scripts/ui-p0-verify.py` 改造为「接口登录 + 注入 token」，彻底移除对登录页 canvas 验证码的依赖（此前必须靠 `VITE_LOGIN_CAPTCHA=false` 重新构建才能跑）；`TC-5` 断言反转为「teacher 被拒线索管理」（与 2026-09-12 权限收紧对齐）
+  - **新发现待决策**：顶栏通知铃铛 `src/layout/components/lay-notice/data.ts` 读的是写死的模板演示数据（"小铭 评论了你"等），从未请求后端，而后端 `/api/notices/latest` 已存在 —— 属「演示内容上线」，需产品决策接真实接口还是隐藏
+- [x] **文档清理与归位**（2026-09-14）
+  - 删除 `docs/README.en-US.md`（vue-pure-admin 模板自带的英文 README，与项目无关，根 README 亦未引用）
+  - 同步修正 `docs/00-项目导航.md`（数据库版本 v14→v15、补 ADR-006 索引、更新回归基线、新增「评审报告归档」表）与 `docs/项目地图.md`（源码规模、目录地图去掉 `mock/`、补 `utils/grade.js`、常用命令改为可复现脚本）
 
 - [x] 项目初始化核查：读取 `README.md` / `server/database.md`，确认前后端运行方式（2026-09-11）
 - [x] **e2e 基线确认通过**：`node server/scripts/e2e-lifecycle.mjs` → **PASS 80 / FAIL 0**，退出码 0（2026-09-11）
@@ -186,8 +202,9 @@
     - `attendances(student_id, date)`：`attendance.js:620/646` 缺勤预警用，现有 UNIQUE 仅前缀可用。
     - 建议补跑 `EXPLAIN QUERY PLAN` 确认后新增迁移（**须新迁移脚本 + 同步 `server/database.md`**）。
 
-23. **前端 397 处 `any` + 类型系统失效**（`tsconfig.json:6-7`、`eslint.config.js:80-81`）
-    - `strict: false`、`strictFunctionTypes: false`；ESLint 关闭 `no-explicit-any`、`ban-ts-comment`、`no-debugger`；`@ts-expect-error` 9 处（全在 `utils/print.ts:10-41`）。
+23. **前端 369 处 `any` + 类型系统失效**（`tsconfig.json:6-7`、`eslint.config.js:80-81`）
+    - `strict: false`、`strictFunctionTypes: false`；ESLint 关闭 `no-explicit-any`、`ban-ts-comment`、`no-debugger`。
+    - `@ts-expect-error` 已从 **9 处降为 0 处**（原 9 处全部位于 `utils/print.ts`，该文件 2026-09-14 因零引用被删除）。
     - `src/api/*.ts` 无返回泛型（`routes.ts:5` `data: Array<any>`）→ 后端契约变更无法在编译期暴露。
 
 24. **`xlsx@^0.18.5` 存在已知 CVE**：原型污染 CVE-2023-30533、ReDoS CVE-2024-22363，修复版仅在 SheetJS 官方 CDN，npm 无对应版本。需 `pnpm audit` 复核并评估替代方案。
