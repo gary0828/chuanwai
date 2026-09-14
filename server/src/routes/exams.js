@@ -6,6 +6,7 @@ const { auth, requireRole } = require("../middleware/auth");
 const { canManageClass } = require("../utils/scope");
 const { audit } = require("../utils/audit");
 const { parseDate, parseNumber } = require("../utils/validate");
+const { calcGrade } = require("../utils/grade");
 
 const router = express.Router();
 
@@ -30,15 +31,6 @@ function canManageExam(req, examId) {
   return !!exam && canManageClass(req, exam.class_id);
 }
 
-/** 按得分率计算等级：>=90% 优 / >=80% 良 / >=70% 中 / >=60% 及格 / 否则不及格 */
-function calcGrade(score, fullScore) {
-  const ratio = fullScore > 0 ? score / fullScore : 0;
-  if (ratio >= 0.9) return "优";
-  if (ratio >= 0.8) return "良";
-  if (ratio >= 0.7) return "中";
-  if (ratio >= 0.6) return "及格";
-  return "不及格";
-}
 
 // ==================== 考试管理 ====================
 

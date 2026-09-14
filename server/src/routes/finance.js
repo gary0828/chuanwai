@@ -2,7 +2,8 @@
 // 权限（2026-09-12 权限收紧）：全部接口仅 admin。
 //   此前订单/缴费/退费/营收/欠费/课消统计对 teacher 开放（本班范围内），
 //   按「教师仅保留授课相关权限、费用与业务运营内容一律不可见」的要求收回。
-//   financeScope / canManageOrder 保留：admin 恒放行，逻辑无副作用，避免大范围改动。
+//   随之移除数据范围过滤（financeScope）与订单归属校验（canManageOrder）：
+//   全部接口仅 admin 可达，前者恒返回空串、后者恒为 true，保留只会给 SQL 拼接引入噪声。
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
@@ -12,22 +13,6 @@ const { parseDate, parseDateTime } = require("../utils/validate");
 
 const router = express.Router();
 
-/** 教师范围：财务数据按学生所属班级过滤（s 为 students 表别名） */
-function financeScope(req) {
-  if (req.user.role !== "teacher") return { where: "", params: [] };
-  return {
-    where: " AND s.class_id IN (SELECT id FROM classes WHERE head_teacher_id = ?)",
-    params: [req.user.id]
-  };
-}
-
-/** 校验订单是否属于当前用户可管理的学生 */
-function canManageOrder(req, orderId) {
-  const row = db
-    .prepare("SELECT student_id FROM orders WHERE id = ?")
-    .get(Number(orderId));
-  return row && canManageStudent(req, row.student_id);
-}
 
 // ── 金额 / 课时边界校验（上线门禁 B4）────────────────────────────────
 // 此前金额仅做 Number() 转换、课时完全无校验，可写入负数或超大值污染财务。
@@ -83,15 +68,14 @@ function parseHours(value, { field = "课时" } = {}) {
 /** 订单列表（分页 + 筛选：状态/关键字/班级/低课时） */
 router.get("/orders", auth, requireRole("admin"), (req, res) => {
   const { status, keyword, class_id, low_hours, page = 1, pageSize = 10 } = req.query;
-  const scope = financeScope(req);
   const conds = [];
   const params = [];
   if (status) { conds.push("o.status = ?"); params.push(status); }
   if (keyword) { conds.push("(s.name LIKE ? OR s.student_no LIKE ?)"); params.push(`%${keyword}%`, `%${keyword}%`); }
   if (class_id) { conds.push("o.class_id = ?"); params.push(Number(class_id)); }
   if (low_hours) { conds.push("o.status = '在读' AND o.total_hours > 0 AND o.remain_hours <= ?"); params.push(Number(low_hours)); }
-  const where = (conds.length ? conds.join(" AND ") : "1=1") + scope.where;
-  const allParams = [...params, ...scope.params];
+  const where = conds.length ? conds.join(" AND ") : "1=1";
+  const allParams = params;
 
   const total = db
     .prepare(`SELECT COUNT(*) AS c FROM orders o JOIN students s ON s.id = o.student_id WHERE ${where}`)
@@ -193,9 +177,6 @@ router.put("/orders/:id/status", auth, requireRole("admin"), (req, res) => {
   if (!["在读", "结业", "退班"].includes(status)) {
     return res.status(400).json({ success: false, message: "无效的订单状态" });
   }
-  if (!canManageOrder(req, id)) {
-    return res.status(403).json({ success: false, message: "无权操作该订单" });
-  }
   const info = db.prepare(`
     UPDATE orders SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?
   `).run(status, id);
@@ -208,9 +189,6 @@ router.put("/orders/:id/status", auth, requireRole("admin"), (req, res) => {
  *  v13：校验 remain_hours <= total_hours */
 router.put("/orders/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  if (!canManageOrder(req, id)) {
-    return res.status(403).json({ success: false, message: "无权操作该订单" });
-  }
   const { class_id, course_id, amount, total_hours, remain_hours, remark } = req.body;
   const cur = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
   if (!cur) return res.status(404).json({ success: false, message: "订单不存在" });
@@ -320,7 +298,6 @@ router.delete("/orders/:id", auth, requireRole("admin"), (req, res) => {
 /** 缴费记录列表（分页 + 筛选：订单/学员关键字/支付方式/时间范围） */
 router.get("/payments", auth, requireRole("admin"), (req, res) => {
   const { order_id, keyword, pay_method, start, end, page = 1, pageSize = 10 } = req.query;
-  const scope = financeScope(req);
   const conds = [];
   const params = [];
   if (order_id) { conds.push("p.order_id = ?"); params.push(Number(order_id)); }
@@ -328,8 +305,8 @@ router.get("/payments", auth, requireRole("admin"), (req, res) => {
   if (pay_method) { conds.push("p.pay_method = ?"); params.push(pay_method); }
   if (start) { conds.push("date(p.pay_time) >= ?"); params.push(start); }
   if (end) { conds.push("date(p.pay_time) <= ?"); params.push(end); }
-  const where = (conds.length ? conds.join(" AND ") : "1=1") + scope.where;
-  const allParams = [...params, ...scope.params];
+  const where = conds.length ? conds.join(" AND ") : "1=1";
+  const allParams = params;
 
   const total = db
     .prepare(`SELECT COUNT(*) AS c FROM payments p JOIN students s ON s.id = p.student_id WHERE ${where}`)
@@ -430,13 +407,12 @@ router.delete("/payments/:id", auth, requireRole("admin"), (req, res) => {
 /** 退费记录列表（分页 + 筛选：状态/关键字） */
 router.get("/refunds", auth, requireRole("admin"), (req, res) => {
   const { status, keyword, page = 1, pageSize = 10 } = req.query;
-  const scope = financeScope(req);
   const conds = [];
   const params = [];
   if (status) { conds.push("r.status = ?"); params.push(status); }
   if (keyword) { conds.push("(s.name LIKE ? OR s.student_no LIKE ?)"); params.push(`%${keyword}%`, `%${keyword}%`); }
-  const where = (conds.length ? conds.join(" AND ") : "1=1") + scope.where;
-  const allParams = [...params, ...scope.params];
+  const where = conds.length ? conds.join(" AND ") : "1=1";
+  const allParams = params;
 
   const total = db
     .prepare(`SELECT COUNT(*) AS c FROM refunds r JOIN students s ON s.id = r.student_id WHERE ${where}`)
@@ -560,21 +536,20 @@ router.get("/stats/revenue", auth, requireRole("admin"), (req, res) => {
   const params = [];
   if (start) { conds.push("date(p.pay_time) >= ?"); params.push(start); }
   if (end) { conds.push("date(p.pay_time) <= ?"); params.push(end); }
-  const where = (conds.length ? conds.join(" AND ") : "1=1") + financeScope(req).where;
+  const where = conds.length ? conds.join(" AND ") : "1=1";
   const rows = db.prepare(`
     SELECT substr(p.pay_time, 1, ?) AS period, SUM(p.amount) AS total, COUNT(*) AS cnt
     FROM payments p
     JOIN students s ON s.id = p.student_id
     WHERE ${where}
     GROUP BY period ORDER BY period
-  `).all(unit, ...params, ...financeScope(req).params);
+  `).all(unit, ...params);
   const grand = rows.reduce((sum, r) => sum + r.total, 0);
   res.json({ success: true, data: { list: rows, totalRevenue: grand } });
 });
 
 /** 欠费统计：订单金额 > 已缴合计 的在读/结业订单 */
 router.get("/stats/arrears", auth, requireRole("admin"), (req, res) => {
-  const scope = financeScope(req);
   const rows = db.prepare(`
     SELECT o.id, o.student_id, s.student_no, s.name AS student_name,
            c.name AS class_name, o.enroll_date, o.amount,
@@ -584,11 +559,11 @@ router.get("/stats/arrears", auth, requireRole("admin"), (req, res) => {
     JOIN students s ON s.id = o.student_id
     LEFT JOIN classes c ON c.id = o.class_id
     LEFT JOIN payments p ON p.order_id = o.id
-    WHERE o.status != '退班' AND o.amount > 0 ${scope.where}
+    WHERE o.status != '退班' AND o.amount > 0
     GROUP BY o.id
     HAVING arrears > 0
     ORDER BY arrears DESC
-  `).all(...scope.params);
+  `).all();
   const totalArrears = rows.reduce((sum, r) => sum + r.arrears, 0);
   res.json({ success: true, data: { list: rows, totalArrears } });
 });
@@ -596,7 +571,6 @@ router.get("/stats/arrears", auth, requireRole("admin"), (req, res) => {
 /** 剩余课时不足预警：在读且设了课时包的订单中，剩余课时 ≤ 阈值（教师仅本班） */
 router.get("/stats/low-hours", auth, requireRole("admin"), (req, res) => {
   const { threshold = 5 } = req.query;
-  const scope = financeScope(req);
   const rows = db.prepare(`
     SELECT o.id, o.student_id, s.student_no, s.name AS student_name,
            c.name AS class_name, cu.name AS course_name,
@@ -605,9 +579,9 @@ router.get("/stats/low-hours", auth, requireRole("admin"), (req, res) => {
     JOIN students s ON s.id = o.student_id
     LEFT JOIN classes c ON c.id = o.class_id
     LEFT JOIN courses cu ON cu.id = o.course_id
-    WHERE o.status = '在读' AND o.total_hours > 0 AND o.remain_hours <= ? ${scope.where}
+    WHERE o.status = '在读' AND o.total_hours > 0 AND o.remain_hours <= ?
     ORDER BY o.remain_hours ASC
-  `).all(Number(threshold), ...scope.params);
+  `).all(Number(threshold));
   res.json({ success: true, data: { list: rows, threshold: Number(threshold) } });
 });
 
@@ -707,13 +681,12 @@ router.get("/stats/business", auth, requireRole("admin"), (req, res) => {
  *  教师仅统计本班（s 为 students 别名）；can_see_amount 仅 admin 为 true */
 router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
   const { dimension = "teacher", start, end } = req.query;
-  const scope = financeScope(req);
   const conds = [];
   const params = [];
   if (start) { conds.push("hc.date >= ?"); params.push(start); }
   if (end) { conds.push("hc.date <= ?"); params.push(end); }
-  const where = (conds.length ? conds.join(" AND ") : "1=1") + scope.where;
-  const allParams = [...params, ...scope.params];
+  const where = conds.length ? conds.join(" AND ") : "1=1";
+  const allParams = params;
 
   const consumedExpr = `SUM(CASE WHEN hc.type = '扣减' THEN hc.hours ELSE 0 END)`;
   const refundedExpr = `SUM(CASE WHEN hc.type = '回补' THEN hc.hours ELSE 0 END)`;
@@ -798,8 +771,8 @@ router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
     SELECT COALESCE(SUM(o.amount * (o.total_hours - o.remain_hours) / o.total_hours), 0) AS revenue
     FROM orders o
     JOIN students s ON s.id = o.student_id
-    WHERE o.total_hours > 0 AND o.remain_hours <= o.total_hours ${scope.where}
-  `).get(...scope.params);
+    WHERE o.total_hours > 0 AND o.remain_hours <= o.total_hours
+  `).get();
 
   res.json({
     success: true,

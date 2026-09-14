@@ -5,23 +5,9 @@ const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { canManageStudent } = require("../utils/scope");
+const { calcGrade } = require("../utils/grade");
 
 const router = express.Router();
-
-/** 校验学员是否当前用户可管理（admin 恒 true；teacher 须为本班学生） */
-function canManageStudentReport(req, studentId) {
-  return canManageStudent(req, studentId);
-}
-
-/** 按得分率计算等级：>=90% 优 / >=80% 良 / >=70% 中 / >=60% 及格 / 否则不及格 */
-function calcGrade(score, fullScore) {
-  const ratio = fullScore > 0 ? score / fullScore : 0;
-  if (ratio >= 0.9) return "优";
-  if (ratio >= 0.8) return "良";
-  if (ratio >= 0.7) return "中";
-  if (ratio >= 0.6) return "及格";
-  return "不及格";
-}
 
 /** 学习报告：学员档案 + 近 30 天考勤 + 按课程最近成绩 + 课时包 + 在读订单 */
 router.get("/students/:id", auth, requireRole("admin", "teacher"), (req, res) => {
@@ -34,7 +20,7 @@ router.get("/students/:id", auth, requireRole("admin", "teacher"), (req, res) =>
     WHERE s.id = ?
   `).get(id);
   if (!student) return res.status(404).json({ success: false, message: "学员不存在" });
-  if (!canManageStudentReport(req, id)) {
+  if (!canManageStudent(req, id)) {
     return res.status(403).json({ success: false, message: "无权查看该学员报告" });
   }
 
@@ -138,7 +124,7 @@ router.get("/students/:id/timeline", auth, requireRole("admin", "teacher"), (req
   const id = Number(req.params.id);
   const student = db.prepare("SELECT id FROM students WHERE id = ?").get(id);
   if (!student) return res.status(404).json({ success: false, message: "学员不存在" });
-  if (!canManageStudentReport(req, id)) {
+  if (!canManageStudent(req, id)) {
     return res.status(403).json({ success: false, message: "无权查看该学员档案" });
   }
 

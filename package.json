@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit && vue-tsc --noEmit --skipLibCheck",
     "svgo": "svgo -f . -r",
     "clean:cache": "rimraf .eslintcache && rimraf pnpm-lock.yaml && rimraf node_modules && pnpm store prune && pnpm install",
-    "lint:eslint": "eslint --cache --max-warnings 0  \"{src,mock,build}/**/*.{vue,js,ts,tsx}\" --fix",
+    "lint:eslint": "eslint --cache --max-warnings 0  \"{src,build}/**/*.{vue,js,ts,tsx}\" --fix",
     "lint:prettier": "prettier --write  \"src/**/*.{js,ts,json,tsx,css,scss,vue,html,md}\"",
     "lint:stylelint": "stylelint --cache --fix \"**/*.{html,vue,css,scss}\" --cache-location node_modules/.cache/stylelint/",
     "lint": "pnpm lint:eslint && pnpm lint:prettier && pnpm lint:stylelint",
@@ -48,7 +48,6 @@
     "url": "https://github.com/xiaoxian521"
   },
   "dependencies": {
-    "@pureadmin/descriptions": "^1.2.1",
     "@pureadmin/table": "^3.3.0",
     "@pureadmin/utils": "^2.6.2",
     "@vueuse/core": "^14.0.0",
@@ -59,7 +58,6 @@
     "echarts": "^6.0.0",
     "element-plus": "^2.11.5",
     "js-cookie": "^3.0.5",
-    "localforage": "^1.10.0",
     "mitt": "^3.0.1",
     "nprogress": "^0.2.0",
     "path-browserify": "^1.0.1",
@@ -71,7 +69,6 @@
     "vue": "^3.5.22",
     "vue-router": "^4.6.3",
     "vue-tippy": "^6.7.1",
-    "vue-types": "^6.0.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -79,7 +76,6 @@
     "@commitlint/config-conventional": "^20.0.0",
     "@commitlint/types": "^20.0.0",
     "@eslint/js": "^9.38.0",
-    "@faker-js/faker": "^10.1.0",
     "@iconify/json": "^2.2.400",
     "@iconify/vue": "4.2.0",
     "@tailwindcss/vite": "^4.1.16",
@@ -122,7 +118,6 @@
     "vite": "^7.1.12",
     "vite-plugin-cdn-import": "^1.0.1",
     "vite-plugin-compression": "^0.5.1",
-    "vite-plugin-fake-server": "^2.2.0",
     "vite-plugin-remove-console": "^2.2.0",
     "vite-plugin-router-warn": "^1.0.0",
     "vite-svg-loader": "^5.1.0",

@@ -1,7 +1,8 @@
 // 招生线索：新增/跟进/状态流转/转化（转化时自动创建学员档案与报班订单）/渠道统计
 // 权限（2026-09-12 权限收紧）：全部接口仅 admin。
 //   线索属销售数据，按「教师仅保留授课相关权限、销售/业务运营内容一律不可见」的要求收回。
-//   leadScope（按 follow_user_id 过滤）保留：admin 恒放行，逻辑无副作用。
+//   随之移除数据范围过滤（leadScope）与线索归属校验（canManageLead）：
+//   全部接口仅 admin 可达，前者恒返回空串、后者恒为 true，保留只会给 SQL 拼接引入噪声。
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
@@ -12,20 +13,6 @@ const router = express.Router();
 
 const SOURCES = ["转介绍", "线上", "地推", "广告"];
 
-/** 教师范围：仅自己创建的线索（l 为 leads 别名） */
-function leadScope(req) {
-  if (req.user.role !== "teacher") return { where: "", params: [] };
-  return { where: " AND l.follow_user_id = ?", params: [req.user.id] };
-}
-
-/** 校验线索是否当前用户可操作（admin 恒 true） */
-function canManageLead(req, leadId) {
-  if (req.user.role === "admin") return true;
-  const row = db
-    .prepare("SELECT 1 FROM leads WHERE id = ? AND follow_user_id = ?")
-    .get(Number(leadId), req.user.id);
-  return !!row;
-}
 
 function parseRecords(text) {
   try {
@@ -39,7 +26,6 @@ function parseRecords(text) {
 /** 线索列表（分页 + 状态/渠道/关键字筛选） */
 router.get("/", auth, requireRole("admin"), (req, res) => {
   const { status, source, keyword, page = 1, pageSize = 10 } = req.query;
-  const scope = leadScope(req);
   const conds = [];
   const params = [];
   if (status) {
@@ -54,8 +40,8 @@ router.get("/", auth, requireRole("admin"), (req, res) => {
     conds.push("(l.name LIKE ? OR l.phone LIKE ?)");
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
-  const where = (conds.length ? conds.join(" AND ") : "1=1") + scope.where;
-  const allParams = [...params, ...scope.params];
+  const where = conds.length ? conds.join(" AND ") : "1=1";
+  const allParams = params;
 
   const total = db
     .prepare(`SELECT COUNT(*) AS c FROM leads l WHERE ${where}`)
@@ -123,9 +109,6 @@ router.post("/", auth, requireRole("admin"), (req, res) => {
 /** 修改线索基本信息 */
 router.put("/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  if (!canManageLead(req, id)) {
-    return res.status(403).json({ success: false, message: "无权操作该线索" });
-  }
   const { name, phone, intent_course_id, source, remark } = req.body || {};
   if (!name)
     return res.status(400).json({ success: false, message: "请输入线索姓名" });
@@ -157,9 +140,6 @@ router.put("/:id", auth, requireRole("admin"), (req, res) => {
 /** 添加跟进记录（追加到 follow_records JSON） */
 router.put("/:id/follow", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  if (!canManageLead(req, id)) {
-    return res.status(403).json({ success: false, message: "无权操作该线索" });
-  }
   const { content } = req.body || {};
   if (!content || !String(content).trim()) {
     return res.status(400).json({ success: false, message: "请填写跟进内容" });
@@ -196,9 +176,6 @@ router.put("/:id/follow", auth, requireRole("admin"), (req, res) => {
 /** 状态流转（新线索/跟进中/已流失） */
 router.put("/:id/status", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  if (!canManageLead(req, id)) {
-    return res.status(403).json({ success: false, message: "无权操作该线索" });
-  }
   const { status } = req.body || {};
   if (!["新线索", "跟进中", "已流失"].includes(status)) {
     return res.status(400).json({ success: false, message: "无效的线索状态" });
@@ -223,11 +200,6 @@ router.put(
   requireRole("admin"),
   (req, res) => {
     const id = Number(req.params.id);
-    if (!canManageLead(req, id)) {
-      return res
-        .status(403)
-        .json({ success: false, message: "无权操作该线索" });
-    }
     const { class_id, course_id, amount = 0, remark = "" } = req.body || {};
     if (!class_id)
       return res
@@ -353,7 +325,6 @@ router.get(
   auth,
   requireRole("admin"),
   (req, res) => {
-    const scope = leadScope(req);
     const rows = db
       .prepare(
         `
@@ -362,11 +333,11 @@ router.get(
            SUM(CASE WHEN l.status = '跟进中' THEN 1 ELSE 0 END) AS following,
            SUM(CASE WHEN l.status = '已转化' THEN 1 ELSE 0 END) AS converted
     FROM leads l
-    WHERE 1=1 ${scope.where}
+    WHERE 1=1
     GROUP BY l.source
   `
       )
-      .all(...scope.params);
+      .all();
     const list = rows.map(r => ({
       source: r.source,
       total: Number(r.total || 0),
