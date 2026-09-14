@@ -9,8 +9,9 @@
 选择器说明：Element Plus 2.x 的 el-select 非 filterable 时，占位符是
 .el-select__placeholder 文本而非 input[placeholder]，因此统一通过 .el-select 索引点击。
 """
+import json
 import sys
-from datetime import date as _date, timedelta
+from datetime import date as _date, datetime, timedelta, timezone
 
 sys.stdout.reconfigure(encoding="utf-8")
 import requests
@@ -130,12 +131,59 @@ def pick_option(pg, text=None):
 
 
 def login(pg, username, password):
-    pg.goto(f"{BASE}/#/login", wait_until="networkidle")
-    pg.wait_for_timeout(900)
-    pg.fill('input[placeholder="账号"]', username)
-    pg.fill('input[placeholder="密码"]', password)
-    pg.click("button:has-text('登录')")
-    pg.wait_for_timeout(3200)
+    """接口登录 + 注入凭证，不做 UI 表单登录。
+
+    原因：登录页含 canvas 图形验证码（src/views/login/index.vue 的 captchaEnabled），
+    自动化无法识别；走接口拿 token 后注入 Cookie/localStorage，直接进入已登录态。
+    这样脚本不再依赖登录页 DOM 与验证码开关，登录页改版也不会影响本验证。
+    """
+    r = requests.post(
+        f"{API}/api/auth/login",
+        json={"username": username, "password": password, "type": "password"},
+        timeout=10,
+    )
+    d = r.json()["data"]
+    expires_ms = int(
+        datetime.strptime(d["expires"], "%Y/%m/%d %H:%M:%S")
+        .replace(tzinfo=timezone(timedelta(hours=8)))
+        .timestamp()
+        * 1000
+    )
+    cookie_val = json.dumps(
+        {
+            "accessToken": d["accessToken"],
+            "expires": expires_ms,
+            "refreshToken": d["refreshToken"],
+        }
+    )
+    info_val = json.dumps(
+        {
+            "refreshToken": d["refreshToken"],
+            "expires": expires_ms,
+            "avatar": d.get("avatar", ""),
+            "username": d["username"],
+            "nickname": d.get("nickname", ""),
+            "roles": d.get("roles", []),
+            "permissions": d.get("permissions", []),
+        }
+    )
+    # 先落地一个同源页面，才能写 Cookie / localStorage
+    pg.goto(f"{BASE}/#/login", wait_until="domcontentloaded")
+    pg.evaluate(
+        """([cookieVal, infoVal]) => {
+            document.cookie = 'authorized-token=' + encodeURIComponent(cookieVal) + '; path=/';
+            document.cookie = 'multiple-tabs=true; path=/';
+            // 注意：@pureadmin/utils 的 storageLocal() 不加命名空间前缀，键就是 user-info
+            // （不要写成 responsive-user-info —— 那是 responsive-storage 包的命名空间）
+            localStorage.setItem('user-info', infoVal);
+        }""",
+        [cookie_val, info_val],
+    )
+    # 必须整页重载：store 在应用启动时就读了 localStorage，只改哈希不会重新初始化
+    pg.reload(wait_until="networkidle")
+    pg.wait_for_timeout(800)
+    pg.goto(f"{BASE}/#/welcome", wait_until="networkidle")
+    pg.wait_for_timeout(1200)
 
 
 with sync_playwright() as p:
@@ -354,7 +402,10 @@ with sync_playwright() as p:
         record("TC-4", "teacher 可访问成绩管理", "考试" in body(pg), "")
 
         goto(pg, "/recruit/leads")
-        record("TC-5", "teacher 可访问线索管理", "线索" in body(pg), "")
+        t5 = body(pg)
+        # 2026-09-12 权限收紧：线索属销售数据，教师应被拒
+        leads_blocked = ("403" in t5) or ("权限" in t5) or ("线索" not in t5)
+        record("TC-5", "teacher 被拒「线索管理」（销售数据对教师隐藏）", leads_blocked, t5[:50].replace("\n", " "))
 
         goto(pg, "/finance/business")
         t5 = body(pg)
