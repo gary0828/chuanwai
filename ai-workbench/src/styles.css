@@ -1,0 +1,248 @@
+/* AI 教学助手 · 设计系统（浅色教研风） */
+:root {
+  --c-primary: #2563eb;
+  --c-primary-dark: #1d4ed8;
+  --c-primary-soft: #eff6ff;
+  --c-primary-line: #bfdbfe;
+
+  --c-bg: #f5f6f8;
+  --c-surface: #ffffff;
+  --c-surface-2: #fafbfc;
+  --c-border: #e6e8ec;
+  --c-border-strong: #d5d9e0;
+
+  --c-text: #1f2328;
+  --c-text-2: #5b6472;
+  --c-text-3: #8b95a3;
+
+  --c-success: #16a34a;
+  --c-success-soft: #ecfdf3;
+  --c-warn: #d97706;
+  --c-warn-soft: #fffbeb;
+  --c-danger: #dc2626;
+  --c-danger-soft: #fef2f2;
+  --c-info: #0891b2;
+  --c-info-soft: #ecfeff;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+
+  --el-color-primary: #2563eb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--c-text);
+  background: var(--c-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 通用卡片 */
+.card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.card-body {
+  padding: 18px;
+}
+
+.card-sub {
+  font-size: 12px;
+  color: var(--c-text-3);
+  font-weight: 400;
+}
+
+/* 段落小标题 */
+.sec-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.sec-title::before {
+  content: "";
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--c-primary);
+}
+
+/* 状态标签 */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.tag-blue {
+  color: var(--c-primary-dark);
+  background: var(--c-primary-soft);
+}
+
+.tag-green {
+  color: #15803d;
+  background: var(--c-success-soft);
+}
+
+.tag-amber {
+  color: #b45309;
+  background: var(--c-warn-soft);
+}
+
+.tag-red {
+  color: #b91c1c;
+  background: var(--c-danger-soft);
+}
+
+.tag-gray {
+  color: var(--c-text-2);
+  background: #f1f3f5;
+}
+
+.tag-cyan {
+  color: #0e7490;
+  background: var(--c-info-soft);
+}
+
+/* 数字指标 */
+.metric {
+  padding: 14px 16px;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+}
+
+.metric-label {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.metric-value {
+  margin-top: 4px;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--c-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-value small {
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--c-text-3);
+}
+
+/* AI 产出区 */
+.ai-block {
+  position: relative;
+  padding: 16px 18px;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  border: 1px solid var(--c-primary-line);
+  border-radius: var(--radius);
+}
+
+.ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--c-primary-dark);
+  background: #fff;
+  border: 1px solid var(--c-primary-line);
+  border-radius: 999px;
+}
+
+/* 空状态 */
+.empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--c-text-3);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d8dce3;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #c2c8d2;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 打印：仅输出报告主体 */
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-area {
+    box-shadow: none !important;
+    border: none !important;
+  }
+}

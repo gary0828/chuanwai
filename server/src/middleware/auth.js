@@ -72,6 +72,17 @@ function auth(req, res, next) {
   if (payload.type === "refresh") {
     return res.status(401).json({ success: false, message: "无效的访问凭证" });
   }
+  // AI 教学工作台凭证（type=ai_agent）：只允许访问只读的 agent / ai 接口。
+  // 工作台持有该凭证，但不因此获得调用教务系统写接口的能力（最小权限原则）。
+  if (payload.type === "ai_agent") {
+    const path = String(req.originalUrl || req.url || "").split("?")[0];
+    if (!/^\/api\/(agent|ai)(\/|$)/.test(path)) {
+      return res.status(403).json({
+        success: false,
+        message: "该凭证仅可用于教学工作台的只读接口"
+      });
+    }
+  }
   // 吊销校验：用户不存在、或 token 版本已过期（登出/改密/改角色/删号）即拒绝
   const tv = currentTokenVersion(payload.id);
   if (tv === null || tv !== Number(payload.tv ?? 0)) {

@@ -9,6 +9,11 @@ import LaySidebarTopCollapse from "../lay-sidebar/components/SidebarTopCollapse.
 
 import LogoutCircleRLine from "~icons/ri/logout-circle-r-line";
 import Setting from "~icons/ri/settings-3-line";
+import AiIcon from "~icons/ep/magic-stick";
+
+import { ref } from "vue";
+import { getAiTicket } from "@/api/ai";
+import { message } from "@/utils/message";
 
 const {
   layout,
@@ -21,6 +26,30 @@ const {
   avatarsStyle,
   toggleSideBar
 } = useNav();
+
+const aiLoading = ref(false);
+
+/**
+ * 进入 AI 教学工作台：
+ * 先向教务系统换取 60 秒一次性票据，再由工作台用票据换取自己的会话，
+ * 教师无需二次登录。票据置于 URL hash，不会发往任何服务器。
+ */
+async function openAiWorkbench() {
+  if (aiLoading.value) return;
+  aiLoading.value = true;
+  try {
+    const res = await getAiTicket();
+    if (!res?.success || !res?.data?.url) {
+      message("获取免登票据失败，请稍后重试", { type: "error" });
+      return;
+    }
+    window.open(res.data.url, "_blank", "noopener,noreferrer");
+  } catch {
+    message("无法连接 AI 教学工作台，请确认服务已启动", { type: "error" });
+  } finally {
+    aiLoading.value = false;
+  }
+}
 </script>
 
 <template>
@@ -46,6 +75,16 @@ const {
       <LaySidebarFullScreen id="full-screen" />
       <!-- 消息通知 -->
       <LayNotice id="header-notice" />
+      <!-- AI 教学助手（免登进入独立工作台） -->
+      <span
+        class="ai-entry navbar-bg-hover"
+        :class="{ 'is-loading': aiLoading }"
+        title="进入 AI 教学助手"
+        @click="openAiWorkbench"
+      >
+        <IconifyIconOffline :icon="AiIcon" />
+        <span class="ai-entry-text">AI 助手</span>
+      </span>
       <!-- 退出登录 -->
       <el-dropdown trigger="click">
         <span class="el-dropdown-link navbar-bg-hover select-none">
@@ -113,6 +152,23 @@ const {
         width: 22px;
         height: 22px;
         border-radius: 50%;
+      }
+    }
+
+    .ai-entry {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      height: 48px;
+      padding: 0 10px;
+      font-size: 13px;
+      color: #2563eb;
+      cursor: pointer;
+      user-select: none;
+
+      &.is-loading {
+        cursor: wait;
+        opacity: 0.6;
       }
     }
   }

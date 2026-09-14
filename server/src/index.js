@@ -94,7 +94,8 @@ const AUDIT_MODULES = [
   { re: /^\/api\/reports/, name: "报表" },
   { re: /^\/api\/schedule-adjustments/, name: "调课" },
   { re: /^\/api\/makeup-classes/, name: "补课" },
-  { re: /^\/api\/analytics/, name: "分析" }
+  { re: /^\/api\/analytics/, name: "分析" },
+  { re: /^\/api\/feedback/, name: "使用反馈" }
 ];
 // 路由内已自行写审计的模块前缀（保持与上面注释一致，勿随意增删）
 const SELF_AUDITED = /^\/api\/(finance|leads|exams|schedule-adjustments|makeup-classes)(\/|$)/;
@@ -162,6 +163,9 @@ app.use("/api/reports", require("./routes/reports"));
 app.use("/api/schedule-adjustments", require("./routes/adjustments"));
 app.use("/api/makeup-classes", require("./routes/makeups"));
 app.use("/api/analytics", require("./routes/analytics"));
+app.use("/api/ai", require("./routes/ai"));
+app.use("/api/feedback", require("./routes/feedback"));
+app.use("/api/agent", require("./routes/agent"));
 
 // 404
 app.use((_req, res) => {
