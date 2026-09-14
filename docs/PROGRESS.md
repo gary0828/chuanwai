@@ -1,13 +1,41 @@
 # 项目进度（PROGRESS）
 
-> 每次会话开始读取本文件，结束更新。最近更新：**2026-09-14**
-> 数据库版本：**v15** ｜ e2e：`server/scripts/e2e-lifecycle.mjs`（80 项断言，全绿）｜ analytics 冒烟：22 项（全绿）｜ P0 浏览器验证：31 项（全绿）
+> 每次会话开始读取本文件，结束更新。最近更新：**2026-09-14 晚**
+> 数据库版本：**v16** ｜ e2e **80/80** ｜ analytics **22/22** ｜ docker-verify **9/9** ｜ P0 浏览器 **31/31** ｜ 工作台服务端模型 **8/8**
 > 上线倒计时：**用户下周在校区正式使用** —— P0 模块优先于一切。
 
 ---
 
 ## 已完成
 
+- [x] **AI 教学工作台：真实数据接入 + 使用反馈 + Dify 部署 + Docker 全栈（2026-09-14 下午）**
+  - **数据源接入（只读网关）**：新增 `server/src/routes/agent.js` —— `GET /api/agent/context`（身份 / 可见班级 / 数据能力位）+ `GET /api/agent/classes/:id/overview`（学员 + 考勤/成绩/课时聚合）。复用既有 `utils/scope.js`（teacher 仅本班，非本班 403），**不返回金额、家长姓名与电话**；`capabilities` 如实反映「真实库里已有哪类数据」，避免把「没有数据」渲染成 0 分
+  - **最小权限凭证**：`/api/ai/sso/verify` 增发 `agentToken`（`type=ai_agent`，12 小时），`middleware/auth.js` 按类型做路径校验 —— 该凭证**仅可访问 `/api/agent/*` 与 `/api/ai/*`**，调用学生/财务/经营分析等接口一律 403
+  - **工作台适配层**：新增 `ai-workbench/src/workbench-data.ts`，顶栏可一键切换「演示数据 / 真实教务数据」并选择班级；`engine` / `generators` / 10 个页面全部改为经适配层取数。真实库尚无课评/知识点/题库三类表，界面统一标注「待建设」而非静默显示 0
+  - **使用反馈模块（迁移 v16）**：新增 `feedbacks` 表与 `/api/feedback`（提交 / 我的 / 全量 / 统计 / 处理 / 字典）。首页新增可填写的「使用反馈」卡片：教师提交并看到管理员回复，admin 汇总、回复、跟踪处理。**只记录提交人身份与问题描述，不落任何学员数据**
+  - **家长反馈按机构要求去掉剩余课时**：`templates.parentFeedback` 移除课时块，`ParentFeedback.vue` 简化为单一版式，并在页面明示「不出现剩余课时与任何金额」
+  - **Dify 部署**：`dify/`（官方 docker 配置）+ `.env`（随机 `SECRET_KEY`，端口避让为 **8081**），15 个容器全部启动，实测内存约 **2.2 GB**（Docker 可用 7.6 GB）
+  - **Docker 全栈**：新增 `ai-workbench/Dockerfile` + `nginx.conf`（静态托管 + `/api` 同源反代），`docker-compose.yml` 新增 `ai-workbench` 服务（**8082**，8081 已被 Dify 占用）、`AI_WORKBENCH_URL` 注入、`server/.env.example` 同步。三业务容器 + Dify 共 18 容器，总内存约 **2.38 GB**
+  - **验证**：免登链路 **18/18** ｜ 使用反馈 **20/20** ｜ 只读网关与权限边界 **24/24** ｜ Docker 端到端走查 **11/11** ｜ 回归 e2e **80/80** + analytics **22/22** ｜ 前后端与工作台生产构建均通过 ｜ `openapi.yaml` 解析通过（42 路径）
+  - **修复**：免登换会话后侧边栏身份不刷新的问题（`App.vue` 增加路由变化时重读身份）
+  - **数据现状提醒**：当前库为**种子/测试数据**（29 名学员、86 条考勤，但 `exams` 1 条 / `exam_scores` **0 条**），真实数据接入链路已通，学情分析效果需等实际成绩录入后自然体现
+- [x] **服务端大模型接入 + 端到端闭环（2026-09-14 晚）**
+  - **Key 只在服务端**：工作台不再直连模型，改经 `POST /api/ai/generate` 由后端代理（此前 Key 存在浏览器 localStorage，等于对任何能打开工作台的人公开）
+  - 新增 `server/src/utils/llm.js`（OpenAI 兼容封装）+ `prompts.js`（9 场景提示词）+ `redact.js`（**服务端二次脱敏**，不信任前端）；`config.js` 新增 `llm` 配置；`docker-compose.yml` 只向后端容器注入 `LLM_*`
+  - **修掉 3 个实战问题**：① 脱敏漏掉 `focusStudentNames`（黑名单改为「键名归一化 + 语义规则」）；② 模型名 `deepseek-v4-flash` 不存在（实测可用 `deepseek-flash` / `deepseek-v4-pro`，且传错名也返回 200，容易漏配）；③ **推理型模型思维链吃满输出额度导致正文为空** —— 加 `LLM_REASONING_EFFORT=none`，耗时 46s→12.8s、输出 8192→1897 token、成本 ¥0.075→¥0.0185
+  - **顺带修掉**：工作台硬编码「库版本 v15」（实际已是 v16）→ 改读只读网关实时返回的 `PRAGMA user_version`
+  - **端到端验证 `_verify_test/ui-llm-mode.py`：8/8**（免登进入 → 底座设置识别 `deepseek-flash` → 切服务端模型 → 首页真实生成 → 标注「服务端模型生成」+ 数据依据 + 出网脱敏项）。实测单次 **7.0 秒 / ¥0.011**
+  - 全栈镜像重建 + 回归：e2e **80/80** ｜ analytics **22/22** ｜ docker-verify **9/9** ｜ 工作台 **8/8**
+  - 文档同步：`docs/api.md` §5 更新 `AI_WORKBENCH_URL`（5300→8082）、CORS 同源反代说明、`LLM_MODEL` / `LLM_MAX_TOKENS` 口径；`server/.env.example` 补 AI 配置段；`README.md` 新增「AI 教学工作台与大模型配置」
+  - **已知小瑕疵（P3，待产品决策）**：脱敏把 `weakKps[].name`（知识点名称）也剔了，而 `ROADMAP` §6.4 白名单本意允许知识点名称出网 —— 属过度脱敏，模型已优雅降级但损失报告精度
+- [x] **AI 教学工作台原型（方案 C：逻辑独立、部署统一）**（2026-09-14）
+  - 新增独立子项目 `ai-workbench/`（Vite 7 + Vue 3.5 + Element Plus 2.11，**复用根 node_modules，零新增依赖**），10 个页面覆盖教学全流程：当前单元行动台 / 课程设计 / 备课方案 / 授课流程 / 作业设计 / 作业检查与评价 / 学习分析与报告 / 家长反馈 / AI 知识库 / 底座设置
+  - **AI 能力层**（`ai-workbench/src/ai/`，对应报告"能力内聚"）：`engine.ts` 本地指标引擎（出勤率、成绩趋势、知识点掌握度、同班 Z-score 离群检测）；`redact.ts` 出网白名单脱敏（姓名 / 电话 / 金额一律剔除，学生以内部编号送出）；`provider.ts` 可插拔底座（规则引擎默认 / Dify 工作流，调用失败自动回退并标注原因）；`generators.ts` 9 个场景编排 + 生成记录审计（模式 / 模型 / token / 成本 / 脱敏项 / 数据依据）
+  - **免登链路（服务端）**：新增 `server/src/routes/ai.js` —— `POST /api/ai/sso/ticket`（登录用户签发 60 秒一次性票据）+ `POST /api/ai/sso/verify`（公开校验换会话）；票据置于 URL hash 不落访问日志、带 `jti` 防重放、带 `tv` 随登出/改密即时吊销；`config.js` 新增 `aiWorkbenchUrl` 并把 `http://127.0.0.1:5300` 加入 CORS 白名单
+  - **入口按钮**：`src/layout/components/lay-navbar/index.vue` 顶栏新增「AI 助手」；接口集中在 `src/api/ai.ts`
+  - **新增配置**：`AI_WORKBENCH_URL`（默认 `http://127.0.0.1:5300`）
+  - **验证**：后端三文件语法检查通过 ｜ 免登链路专项 **18/18**（`_verify_test/verify-ai-sso.mjs`：未登录取票 401、票据载荷不含身份字段、重放 401、篡改签名 401、缺票 400、非 JWT 401）｜ 现有前端生产构建通过（24.5s / 3.53 MB）｜ `docs/openapi.yaml` 解析通过（35 个路径，已含 `/api/ai/*`）
+  - **已知边界**：工作台取数仍用内置演示数据集（`ai-workbench/src/mock/`），接真实数据只需实现只读适配层，页面与指标引擎不动；Dify 容器尚未部署，原型走规则引擎，配置后可一键切换
 - [x] **全仓过度设计审计与清理（ponytail-audit）**（2026-09-14）
   - 审计报告：`docs/过度设计审计报告-2026-09-14.md`（含 10 项发现、5 处误报排除记录、执行结果）
   - **净减 1,027 行、5 个依赖**，全部为死代码与不可达分支，零功能影响
@@ -76,7 +104,8 @@
 
 ## 进行中
 
-- [ ] 无（本轮任务已闭环）
+- [ ] **Phase 0 收尾**：4 项 P0 全链路浏览器走查（成绩建考→录分→成绩单→通知 / 销售建线索→跟进→转化→统计 / 学生新增→编辑→导入含错误行→导出 / 签到缺勤→通知生成 + 课时扣减）。API 层已由 e2e 覆盖，**UI 走查待补**
+- [ ] 工作区尚未提交：`ai-workbench/`（31 文件）+ `dify/` + 迁移 v16 + `agent/ai/feedback` 路由未入库，HEAD 仍停在 `8b2b6b1`
 
 ## Git 版本管理（2026-09-12 已建立）
 
