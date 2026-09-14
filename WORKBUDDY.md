@@ -218,9 +218,9 @@ node server/scripts/e2e-lifecycle.mjs
 5. **循环**：完成一个任务后自动进入下一个，不等待用户确认；遇到阻塞记入 `docs/PROGRESS.md` 并跳过。
 6. **决策留痕**：任何「三个月后会被重新质疑」的决定，必须在 `docs/decisions/` 新增 ADR（`ADR-00N-简短标题.md`，格式见已有 ADR），并回链到 `docs/00-项目导航.md` 的 ADR 索引表。**ADR 只追加、不修改**（要改就新增一条并标记取代关系）。典型信号：为什么不做 X、为什么选 A 不选 B、某个口径为什么这么定。
 
-## 十、AI 读取预算与 Token 纪律（2026-09-12 新增）
+## 十、AI 读取预算与 Token 纪律（2026-09-12 新增，2026-09-14 更新）
 
-项目磁盘 **809MB**，但真实源码仅约 **31,000 行 / 5MB（0.6%）**。为避免把依赖与产物读进上下文，遵守以下纪律：
+项目磁盘 **799MB**，但真实源码仅约 **28,500 行 / 4.5MB（0.6%）**。为避免把依赖与产物读进上下文，遵守以下纪律：
 
 ### 10.1 禁止整目录读取
 
@@ -228,9 +228,9 @@ node server/scripts/e2e-lifecycle.mjs
 
 | 路径 | 体积 | 原因 |
 | --- | --- | --- |
-| `node_modules/`、`server/node_modules/` | 791MB | 第三方依赖，与业务逻辑无关 |
+| `node_modules/`、`server/node_modules/` | 775MB | 第三方依赖，与业务逻辑无关 |
 | `server/data/` | 7MB | SQLite 二进制 + WAL + 备份，**且含真实学员数据** |
-| `dist/` | 4MB | 构建产物 |
+| `dist/` | 3.7MB | 构建产物 |
 | `evidence/`、`_verify_test/` | 7MB | 截图 / 测试脚本（需改时按路径显式打开） |
 | `*.db*`、`pnpm-lock.yaml`、`package-lock.json` | — | 二进制与超长锁文件 |
 
@@ -257,13 +257,22 @@ node server/scripts/e2e-lifecycle.mjs
 | --- | --- |
 | 明确的小改动 | 目标文件 + 其直接依赖（通常 ≤ 5 个文件） |
 | 跨模块改动 | 目标模块的路由/视图 + `utils/scope.js` + `docs/api.md` 对应章节 |
-| 全量审查 / 评估 | 允许遍历 `server/src/` 与 `src/`（约 31,000 行），但仍排除依赖与产物 |
+| 全量审查 / 评估 | 允许遍历 `server/src/` 与 `src/`（约 28,500 行），但仍排除依赖与产物 |
 | 不确定读什么 | **先读 `docs/项目地图.md` 第二节/第三节**，再决定 |
 
 ### 10.5 输出纪律
 
 - 不把读取到的源码大段复述给用户（用户看得到文件）。
 - 报错时只贴**关键行 + 根因**，不贴完整堆栈与调试过程。
+
+### 10.6 清理类任务的纪律（2026-09-14 新增）
+
+批量删除文件时，**每批删完立即核对数量**，不要一次性串联多个 `git rm`：
+
+- 一个 Bash 调用里串联 `git rm`，若中途被中断会留下 `.git/index.lock`，且可能造成**远超预期的删除**。
+- 稳妥做法：`rm` 指定路径 → 立刻 `find ... | wc -l` 与预期数量比对 → 再继续下一批。
+- 一旦发现误删：`rm -f .git/index.lock` 清除残留锁，再 `git restore --source=HEAD --staged --worktree -- .` 整体还原（**未跟踪文件不受影响**）。
+- 删除依赖后**必须同步 `pnpm-lock.yaml`**：`Dockerfile` 用的是 `pnpm install --frozen-lockfile`，锁文件不一致会直接阻断镜像构建。本机 `pnpm` 因 corepack 损坏不可用，改用 `npx --yes pnpm@<版本号> install --lockfile-only`（版本号取 `package.json` 的 `packageManager` 字段），最后用 `--frozen-lockfile` 复验。
 
 ---
 
