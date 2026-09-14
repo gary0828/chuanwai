@@ -209,6 +209,9 @@ docker compose up -d --no-build --force-recreate server
 
 > 详细配置项见 `server/.env.example`，接口说明见 `docs/api.md` §5。
 
+> **运维文档**：换机器部署 / 版本升级 / 备份回滚 → `docs/校区部署与升级指南.md`
+> ｜ Dify 什么时候该用、怎么搭第一个 Agent → `docs/Dify上手指南.md`
+
 ## 目录结构
 
 ```text
