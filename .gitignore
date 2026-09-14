@@ -53,3 +53,14 @@ server/data/
 *.njsproj
 *.sln
 tsconfig.tsbuildinfo
+
+# ============ AI 教学工作台（ai-workbench/）============
+# 构建产物与依赖（与根目录同规则）
+ai-workbench/dist/
+ai-workbench/node_modules/
+
+# ============ Dify（dify/）============
+# 运行时数据卷：PostgreSQL / Redis / 向量库 / 上传文件，体量大且含运行时数据
+dify/volumes/
+# 上游源码临时克隆目录（仅用于取 docker 配置，用完即删）
+.dify-src/

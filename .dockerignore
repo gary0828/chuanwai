@@ -24,3 +24,18 @@ tsconfig.tsbuildinfo
 server/node_modules
 server/data
 .trae
+
+# AI 教学工作台：构建阶段重新产出，本地产物不入上下文
+ai-workbench/dist
+ai-workbench/node_modules
+
+# Dify：源码与运行时数据卷体量大，仅在独立部署时使用
+.dify-src
+dify/volumes
+
+# 本地验证与截图（含真实学员信息，绝不进构建上下文）
+evidence
+_verify_test
+.workbuddy
+.git
+
