@@ -28,8 +28,9 @@
 | v13  | 统一用户与联动     | `students` 增 `user_id`（唯一索引，账号↔档案一对一）；存量学生自动补建 student 账号（username=学号，占位密码 123456，学生暂不可登录）；`leaves` 增 `source`（手动/考勤同步），考勤↔请假双向联动（考勤标记请假自动生成待审批同步单，审批通过回写考勤+回补课时+通知家长；驳回回滚考勤为缺勤；改回其他状态撤销同步单及通知）；`notifications.type` CHECK 扩展 '请假审批通过'；清理 `settings.term_id` 僵尸键；删除保护增强（订单有缴费/退费禁删、班级/课程/课表/线索/学生保护） |
 | v14  | 员工端 CRM 定调    | **系统定位调整为纯员工端 CRM**：学生/家长不登录、无账号。`users.role` CHECK 收紧为 `('admin','teacher')`（重建表，清理历史 student/parent 账号数据）；`students` 删除 `user_id` 列及索引（账号关联废弃）；删除 `parent_children` 表（绑定关系回填为 `students.parent_name/parent_phone`）；`notifications` 重建：删除 `target_user_id`，新增 `parent_name` 快照列（通知仅内部留痕）；删除家长管理路由与页面，家长信息统一存于学生档案；线索转化不再建 student/parent 账号      |
 | v15  | JWT 凭证可吊销     | `users` 新增 `token_version INTEGER NOT NULL DEFAULT 0`。签发的 accessToken / refreshToken 均携带 `tv` 声明，`middleware/auth.js` 鉴权时与 `users.token_version` 比对；**登出 / 改密 / 改角色 / 删号**时递增该值即可立即吊销该用户全部已签发凭证（此前 JWT 无状态，登出为空实现、refreshToken 30 天内无法失效）。兼容性：升级前签发的旧 token 无 `tv` 声明，按 0 处理，与本列默认值一致，不会强制已登录员工重新登录 |
+| v16  | 使用反馈           | 新增 `feedbacks` 表（教师 / 管理员在使用系统过程中提交的问题与建议：提交人 `user_id`/`username`/`user_role`、`category`、`content`、`page_path`、`status`、`admin_reply`、`handled_by`/`handled_at`）。支撑首页「使用反馈」模块：教师提交并看到回复，admin 汇总、回复与跟踪处理。**只记录提交人身份与问题描述，不落任何学员数据**，避免反馈成为绕过四层权限的数据出口。建索引 `status` / `user_id` / `created_at` |
 
-当前最新版本：**v15**（`PRAGMA user_version` = 15）
+当前最新版本：**v16**（`PRAGMA user_version` = 16）
 
 ## 表结构
 
@@ -370,6 +371,27 @@
 | created_at / updated_at | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')            | 创建 / 更新时间                |
 
 索引：`idx_makeup_student (student_id)`、`idx_makeup_status (status)`、`idx_makeup_date (makeup_date)`
+
+### feedbacks（使用反馈，v16 新增）
+
+| 字段                    | 类型    | 约束                                              | 说明                                                                              |
+| ----------------------- | ------- | ------------------------------------------------- | --------------------------------------------------------------------------------- |
+| id                      | INTEGER | PK, AUTOINCREMENT                                 | 反馈 ID                                                                           |
+| user_id                 | INTEGER | NOT NULL, REFERENCES users(id)                    | 提交人（员工账号）                                                                |
+| username                | TEXT    | NOT NULL, DEFAULT ''                              | 提交人账号快照                                                                    |
+| user_role               | TEXT    | NOT NULL, DEFAULT ''                              | 提交时角色（admin / teacher），用于定位「谁在什么角色下遇到问题」                 |
+| category                | TEXT    | NOT NULL, DEFAULT '其他'                          | 分类：功能异常 / 操作不便 / 数据不准 / 性能问题 / 功能建议 / 其他；非法值回落「其他」 |
+| content                 | TEXT    | NOT NULL                                          | 问题描述（5–2000 字）                                                             |
+| page_path               | TEXT    | NOT NULL, DEFAULT ''                              | 出现问题时的页面路径（选填，最长 200 字符）                                       |
+| status                  | TEXT    | NOT NULL, DEFAULT '待处理'                        | 处理状态：待处理 / 处理中 / 已处理 / 已忽略（后端白名单校验）                     |
+| admin_reply             | TEXT    | NOT NULL, DEFAULT ''                              | 管理员回复（提交人可见）                                                          |
+| handled_by              | INTEGER | REFERENCES users(id)                              | 处理人                                                                            |
+| handled_at              | TEXT    |                                                   | 处理时间（改状态时写入）                                                          |
+| created_at / updated_at | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')     | 创建 / 更新时间                                                                   |
+
+索引：`idx_feedbacks_status (status)`、`idx_feedbacks_user (user_id)`、`idx_feedbacks_time (created_at)`
+
+> **数据边界**：只记录提交人身份与问题描述，**不落任何学员数据** —— 避免「反馈」成为绕过四层权限的数据出口。教师只能看自己的（`/api/feedback/mine`）；全量列表、统计与处理仅 admin。
 
 ## 辅助表
 

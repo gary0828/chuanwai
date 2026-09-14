@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useECharts } from "@pureadmin/utils";
 import { getDashboardOverview, getLatestNotices } from "@/api/attendance";
+import FeedbackPanel from "./components/FeedbackPanel.vue";
 
 defineOptions({
   name: "Welcome"
@@ -209,6 +210,9 @@ onMounted(loadData);
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- 使用反馈：教师提交使用问题与建议，管理员统一查看与处理 -->
+    <FeedbackPanel />
 
     <!-- 公告详情 -->
     <el-dialog

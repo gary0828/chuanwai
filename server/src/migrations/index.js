@@ -19,7 +19,8 @@ const migrations = [
   require("./012-schedule-makeup"),
   require("./013-user-student-link"),
   require("./014-staff-only-crm"),
-  require("./015-token-version")
+  require("./015-token-version"),
+  require("./016-feedback")
 ];
 
 function migrate(db) {
