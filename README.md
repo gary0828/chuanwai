@@ -164,6 +164,51 @@ pnpm dev
 | 考勤登记 / 考勤记录 / 统计 / 趋势 / 预警 / 请假审批 / 看板 | ✅ 全部     | ✅ 仅本班数据             |
 | 登录                                                       | ✅          | ✅                        |
 
+## AI 教学工作台与大模型配置
+
+工作台是**独立部署**的教学辅助站点（Docker 默认 `http://localhost:8082`），从教务系统顶栏「AI 助手」按钮**免登进入**。
+
+### 不配也能用
+
+**`LLM_API_KEY` 留空时工作台完全可用**：九个场景（课程设计 / 备课方案 / 授课流程 / 作业设计 / 批改反馈 / 学情诊断 / 家长反馈 / 学情报告 …）全部由本地规则引擎生成，页面会标注「规则引擎生成」。所有数字都由本地指标引擎算出，不依赖模型。
+
+### 配置大模型（可选）
+
+在**项目根目录 `.env`**（compose 会自动读取，文件已被 gitignore）里加一行：
+
+```bash
+LLM_API_KEY=sk-xxxxxxxxxxxxxxxx          # DeepSeek 官方 Key，可换任意 OpenAI 兼容端点
+```
+
+然后重建后端容器让环境变量生效：
+
+```bash
+docker build -t attendance-system-server -f server/Dockerfile .
+docker compose up -d --no-build --force-recreate server
+```
+
+生效后：工作台 → **底座设置** → 选「服务端模型」→ 保存，右下角会显示当前模型名（如 `deepseek-flash`）。
+
+### 可调项（全部可选，默认值已是最优）
+
+| 变量 | 默认 | 什么时候要动 |
+| --- | --- | --- |
+| `LLM_MODEL` | `deepseek-flash` | 换更强的 `deepseek-v4-pro`（慢约 3.6 倍、更贵）；**旧别名 `deepseek-chat` / `deepseek-reasoner` 已于 2026-07-24 停用** |
+| `LLM_BASE_URL` | `https://api.deepseek.com` | 换国产模型 / 本地 vLLM、Ollama |
+| `LLM_REASONING_EFFORT` | `none` | **保持 `none`**。DeepSeek 现行模型都是推理型，思维链会先吃满输出额度导致正文为空；想让模型做多步推理才改 `medium`/`high`，同时必须调大额度 |
+| `LLM_MAX_TOKENS` | `8192` | 开启推理后需上调。关闭推理时一份备课方案约 1900 输出 token，8192 余量充足 |
+| `LLM_TIMEOUT_MS` | `60000` | 网络较慢时上调 |
+| `AI_WORKBENCH_URL` | `http://localhost:8082` | 改端口或换域名时，**必须与浏览器实际访问地址完全一致**（不一致会导致免登会话丢失） |
+
+### 安全边界
+
+- **Key 只存在于后端容器**，永远不下发浏览器；工作台通过 `/api/ai/generate` 走后端代理
+- 出网前经服务端二次脱敏（姓名 / 电话 / 金额 / 含金额特征的文本一律剔除），学生以内部编号送出
+- 模型调用失败会自动回退规则引擎并标注原因，**不阻塞教学流程**
+- 实测单次生成约 **7 秒 / ¥0.011**；每天 30 份报告约 ¥10/月
+
+> 详细配置项见 `server/.env.example`，接口说明见 `docs/api.md` §5。
+
 ## 目录结构
 
 ```text

@@ -27,6 +27,19 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080,http://localhost:8848,http://127.0.0.1:8848}
       # 登录失败限速：窗口内最大尝试次数（默认 10 次 / 15 分钟）
       - LOGIN_RATE_LIMIT_MAX=${LOGIN_RATE_LIMIT_MAX:-10}
+      # AI 教学工作台入口地址（用于生成免登跳转链接，必须是浏览器可访问的地址）
+      # 注意：8081 已被 Dify 占用，工作台用 8082
+      - AI_WORKBENCH_URL=${AI_WORKBENCH_URL:-http://localhost:8082}
+      # 大模型（可选）：配置后工作台可切「服务端模型」；留空则一律走规则引擎
+      # Key 只注入后端容器，不下发前端
+      # 实测可用模型：deepseek-flash（快）/ deepseek-v4-pro（慢约 3.6 倍），两者均为推理型
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-deepseek-flash}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.deepseek.com}
+      # 输出额度：推理型模型的思维链先占额度，给不足会导致正文被截断为空
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
+      # 思维链强度：none = 关闭推理（文案类推荐，输出 token 直降约 90%）；可改 minimal/low/medium/high
+      - LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-none}
     ports:
       - "3000:3000"
     volumes:
@@ -50,3 +63,18 @@ services:
         condition: service_healthy
     ports:
       - "8080:80"
+
+  # AI 教学工作台（独立部署，登录态由教务系统统一提供）
+  # 访问：http://localhost:8082 ｜ 从教务系统顶栏「AI 助手」按钮免登进入
+  # 注意：8081 已被 Dify 占用，工作台落到 8082；AI_WORKBENCH_URL 必须与此处保持一致
+  ai-workbench:
+    build:
+      context: .
+      dockerfile: ai-workbench/Dockerfile
+    container_name: attendance-ai-workbench
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "8082:80"

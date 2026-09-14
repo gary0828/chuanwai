@@ -84,9 +84,53 @@ const config = {
     "http://localhost:8080",
     "http://127.0.0.1:8080",
     "http://localhost:8848",
-    "http://127.0.0.1:8848"
+    "http://127.0.0.1:8848",
+    "http://localhost:5300",
+    "http://127.0.0.1:5300"
   ]),
   corsConfigured: Boolean(process.env.CORS_ORIGINS),
+
+  /**
+   * AI 教学工作台地址（免登跳转目标）。
+   * 仅用于拼装跳转 URL；生产环境应指向工作台实际入口。
+   */
+  aiWorkbenchUrl: (
+    process.env.AI_WORKBENCH_URL || "http://127.0.0.1:5300"
+  ).replace(/\/$/, ""),
+
+  /**
+   * 大模型配置（可选）。未配置 apiKey 时 `/api/ai/generate` 返回 503，
+   * 工作台自动回退规则引擎，不阻塞主流程。
+   *
+   * 安全约定：Key 只存服务端环境变量，**绝不下发前端**
+   * （前端存 Key 等于对任何能打开工作台的人公开）。
+   *
+   * 注意（2026-09-14 实测）：
+   * - DeepSeek 旧别名 `deepseek-chat` / `deepseek-reasoner` 已于 2026-07-24 停用；
+   * - 当前 `GET /models` 返回的可用模型为 **`deepseek-flash`** / **`deepseek-v4-pro`**；
+   * - 两者均为**推理型**（响应含 reasoning_content，思维链约占输出 token 的 60%），
+   *   因此 max_tokens 必须给足，否则思维链吃满额度会导致正文为空。
+   */
+  llm: {
+    apiKey: process.env.LLM_API_KEY || process.env.DEEPSEEK_API_KEY || "",
+    baseUrl: process.env.LLM_BASE_URL || "https://api.deepseek.com",
+    model: process.env.LLM_MODEL || "deepseek-flash",
+    /**
+     * 思维链强度。**实测（2026-09-14）**：
+     * - 默认（不传）：推理 token 约占输出的 60–100%，长文案任务会被思维链吃满额度而正文为空；
+     * - `"none"`：完全关闭推理，输出 token 直降约 90%、耗时减半，文案类任务质量无可见下降；
+     * - `"minimal"` / `"low"`：减少但未关闭。
+     * 需要模型做多步推理时可改为 `"medium"` / `"high"`（须同步调大 maxTokens）。
+     */
+    reasoningEffort: process.env.LLM_REASONING_EFFORT ?? "none",
+    /**
+     * 单次输出额度上限。推理型模型的思维链**先**占用输出额度，
+     * 给不足会导致正文被截断为空（finish_reason=length）。
+     * 关闭推理时一份备课方案约 1900 输出 token，8192 余量充足；开启推理后需相应上调。
+     */
+    maxTokens: intOr("LLM_MAX_TOKENS", 8192),
+    timeoutMs: intOr("LLM_TIMEOUT_MS", 60000)
+  },
 
   /** 登录失败限速：15 分钟窗口内同一 IP 允许的失败次数 */
   loginRateLimitMax: intOr("LOGIN_RATE_LIMIT_MAX", 10),

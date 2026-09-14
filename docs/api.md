@@ -245,6 +245,18 @@
 | 分析 | GET | `/api/analytics/finance/export` | admin | 财务数据批量导出 |
 | 分析 | GET | `/api/analytics/leads/export` | admin | 招生线索批量导出 |
 | 分析 | GET | `/api/analytics/scores/export` | admin | 成绩数据批量导出 |
+| AI 工作台 | POST | `/api/ai/sso/ticket` | 登录 | 签发 60 秒一次性免登票据（跳转 AI 教学工作台） |
+| AI 工作台 | POST | `/api/ai/sso/verify` | 公开 | 校验票据换取工作台会话 + **只读凭证**（票据一次性） |
+| AI 工作台 | GET | `/api/ai/llm-status` | 登录 | 服务端模型是否已配置（工作台据此决定是否展示该选项） |
+| AI 工作台 | POST | `/api/ai/generate` | 登录 | **服务端**调用大模型生成文案（Key 不下发前端；未配置返回 503） |
+| AI 只读网关 | GET | `/api/agent/context` | 登录 | 教学上下文：身份 / 可见班级 / 数据能力位 |
+| AI 只读网关 | GET | `/api/agent/classes/:id/overview` | 登录 | 班级概览：学员 + 考勤/成绩/课时聚合（**不含金额**） |
+| 使用反馈 | POST | `/api/feedback` | 登录 | 提交使用中遇到的问题与改进建议 |
+| 使用反馈 | GET | `/api/feedback/mine` | 登录 | 我的反馈（含管理员回复） |
+| 使用反馈 | GET | `/api/feedback` | admin | 全部反馈（分页 + 状态筛选，待处理优先） |
+| 使用反馈 | GET | `/api/feedback/summary` | admin | 反馈统计（各状态计数） |
+| 使用反馈 | PUT | `/api/feedback/:id` | admin | 处理反馈（改状态 / 写回复） |
+| 使用反馈 | GET | `/api/feedback/options` | 登录 | 可选值字典（分类 / 状态） |
 | 健康 | GET | `/api/health` | 公开 | 容器健康检查 |
 
 ---
@@ -567,7 +579,323 @@ Content-Disposition: attachment; filename="analytics-attendance-2026-09-11.csv"
 
 ---
 
-## 五、新增 / 修改 API 的流程（必须遵守）
+## 五、AI 教学工作台接入（`/api/ai`）
+
+### 5.1 背景与链路
+
+AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbench/`），登录态由教务系统统一提供，教师不需要二次登录：
+
+```
+教务系统已登录
+  └─ 顶栏「AI 助手」按钮 → POST /api/ai/sso/ticket（带 Bearer Token）
+       └─ 浏览器打开 <AI_WORKBENCH_URL>/#/sso?ticket=<一次性票据>
+            └─ 工作台 POST /api/ai/sso/verify → 换取工作台会话
+```
+
+> 该模块**只做身份交接**，不读写任何教务业务数据；工作台侧取数走独立的只读适配层（规划中，见 `docs/AI教师助手调研分析报告-2026-09-14.md`）。
+
+### 5.2 POST /api/ai/sso/ticket
+
+签发一次性免登票据。
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | 登录（admin / teacher） |
+| 请求体 | 无 |
+| 响应 | `{ "success": true, "data": { "ticket": "...", "url": "...", "expiresIn": 60 } }` |
+
+```json
+{
+  "success": true,
+  "data": {
+    "ticket": "eyJhbGciOiJIUzI1NiIs...",
+    "url": "http://127.0.0.1:5300/#/sso?ticket=eyJhbGciOiJIUzI1NiIs...",
+    "expiresIn": 60
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `ticket` | 一次性票据（JWT，HS256，复用 `JWT_SECRET`） |
+| `url` | 工作台跳转地址，**票据置于 URL hash 片段**（浏览器不会把它发给服务器） |
+| `expiresIn` | 有效期（秒），固定 60 |
+
+**票据载荷**：`{ id, username, role, tv, type: "ai_sso", jti }` —— 不含姓名、手机号、金额等任何业务字段。
+
+**错误**：`401` 未登录 / Token 失效。
+
+### 5.3 POST /api/ai/sso/verify
+
+校验票据并换取工作台会话。
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | **公开**（票据本身即凭证） |
+| 请求体 | `{ "ticket": "eyJhbGciOiJIUzI1NiIs..." }` |
+| 响应 | `{ "success": true, "data": { "id": 1, "name": "管理员", "role": "admin", "loginAt": "...", "scope": "all", "agentToken": "eyJ..." } }` |
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` / `name` / `role` | 工作台用于展示与判断可生成哪种版式报告 |
+| `scope` | `all`（admin）/ `own`（teacher），工作台据此限制数据范围 |
+| `agentToken` | **工作台只读凭证**（`type = ai_agent`，有效期 12 小时）：仅可访问 `/api/agent/*` 与 `/api/ai/*`，调用其他接口一律 403（见 §六） |
+| `loginAt` | 本次交接时间 |
+
+**错误**：
+
+| HTTP | 场景 |
+| --- | --- |
+| 400 | 缺少 `ticket` 或类型不是字符串 |
+| 401 | 票据无效 / 已过期（>60 秒）/ 已被使用（重放）/ 类型不符 / `token_version` 不匹配（已登出或改密改角色） |
+
+### 5.4 安全约束
+
+| 约束 | 实现 |
+| --- | --- |
+| 一次性 | 票据含 `jti`，校验通过即记入已用集合，重放返回 401 |
+| 短时效 | 60 秒 |
+| 可吊销 | 票据携带 `tv`，与 `users.token_version` 比对；登出 / 改密 / 改角色后票据立即失效（与 §1.4 一致） |
+| 不落日志 | `ticket` 位于 URL hash 片段，不随 HTTP 请求发送，不会进入 nginx / 应用访问日志 |
+| 最小载荷 | 票据只含身份与吊销所需字段，不含姓名、手机号、金额 |
+| 不含写权限 | 票据仅证明「该用户此刻已在教务系统登录」，不能用于调用教务系统任何写接口 |
+
+> **部署注意**：已使用票据记录在**进程内存**中，多实例部署需改用数据库或 Redis 存储。
+
+### 5.5 相关配置
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `AI_WORKBENCH_URL` | 本地开发 `http://127.0.0.1:5300`；**Docker 部署由 compose 注入 `http://localhost:8082`** | 工作台入口地址，仅用于拼装跳转 URL。**必须与浏览器实际访问工作台的 origin 完全一致**（端口或 host 不同会让免登会话落进另一个 origin 的 localStorage 而丢失） |
+| `CORS_ORIGINS` | 默认白名单已含 `http://127.0.0.1:5300` | **Docker 部署无需配置**：工作台由 `ai-workbench/nginx.conf` 同源反代 `/api`，请求以同源发出不触发 CORS。只有「本地 `serve.mjs` 预览 + 浏览器直连 :3000」这种跨域形态才需要把预览地址加入白名单 |
+
+### 5.6 GET /api/ai/llm-status
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | 登录 |
+| 响应 | `{ success, data: { configured: boolean, model: string \| null } }` |
+
+只返回「是否已配置」与**模型名**，**绝不返回 Key**。工作台据此决定是否展示「服务端模型」选项。
+
+### 5.7 POST /api/ai/generate（服务端模型生成）
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | 登录（admin / teacher），亦接受只读凭证 `ai_agent` |
+| 请求体 | `{ "scene": "lesson_plan", "payload": { … }, "extra": "教师补充说明（可选）" }` |
+
+`scene` 白名单：`course_design` / `lesson_plan` / `teaching_flow` / `homework_design` / `grading_feedback` / `student_insight` / `class_diagnosis` / `parent_feedback` / `report_narrative`
+
+**安全设计（本节重点）**
+
+| 约束 | 实现 |
+| --- | --- |
+| **Key 不下发前端** | Key 只存后端环境变量 `LLM_API_KEY`，前端永远拿不到（前端存 Key 等于对任何能打开工作台的人公开） |
+| **服务端二次脱敏** | 载荷经 `utils/redact.js` 硬编码白名单过滤后才出网（姓名 / 电话 / 金额 / 含金额特征的文本一律剔除）。**不信任前端** —— 工作台是独立部署的静态应用，任何人可改其代码后直接调本接口 |
+| 手机号 / 证件号兜底 | 自由文本中的 11 位手机号与 18 位证件号由 `scrubText()` 替换 |
+| 数字不出本地逻辑 | 提示词硬约束「只能使用给定数字，禁止编造」；全部数字由本地指标引擎算出 |
+| 未配置即降级 | `LLM_API_KEY` 为空返回 503，工作台自动回退规则引擎并标注原因，不阻塞教学流程 |
+
+**响应**
+
+```json
+{
+  "success": true,
+  "data": {
+    "scene": "lesson_plan",
+    "sceneLabel": "备课方案",
+    "text": "【本课定位】…",
+    "model": "deepseek-flash",
+    "usage": { "prompt_tokens": 517, "completion_tokens": 3241, "reasoning_tokens": 1980 },
+    "redactedByServer": ["payload.studentName"],
+    "generatedAt": "2026-09-14T08:12:33.101Z"
+  }
+}
+```
+
+**错误**
+
+| HTTP | 场景 |
+| --- | --- |
+| 400 | `scene` 不在白名单 / 缺少 `payload` |
+| 401 | 未登录 |
+| 502 | 模型超时（`LLM_TIMEOUT`）/ HTTP 异常（`LLM_HTTP_ERROR`）/ 返回为空（`LLM_EMPTY`） |
+| 503 | 服务端未配置模型（`LLM_NOT_CONFIGURED`）—— 工作台应回退规则引擎 |
+
+**相关环境变量**
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `LLM_API_KEY`（或 `DEEPSEEK_API_KEY`） | 空 | 为空时模型能力整体不可用，不影响其他功能 |
+| `LLM_BASE_URL` | `https://api.deepseek.com` | 任意 OpenAI 兼容端点 |
+| `LLM_MODEL` | `deepseek-flash` | 实测 `GET /models` 返回的可用模型为 `deepseek-flash` / `deepseek-v4-pro`（旧别名 `deepseek-chat` / `deepseek-reasoner` 已于 2026-07-24 停用；DeepSeek 对未知模型名仍返回 200 而非报错，容易漏配）。**两者均为推理型**：响应同时含 `reasoning_content`，思维链会**先**占用输出额度，故默认已把 `LLM_REASONING_EFFORT` 设为 `none` 关掉推理；若改回 `medium`/`high`，必须同步调大 `LLM_MAX_TOKENS`，否则思维链吃满额度会导致正文为空（`finish_reason=length`） |
+| `LLM_MAX_TOKENS` | `8192` | 单次输出额度上限。关闭推理（`REASONING_EFFORT=none`）时实测生成一份备课方案约 1900 输出 token，`8192` 余量充足；开启推理后思维链会数倍占用，需相应上调 |
+| `LLM_REASONING_EFFORT` | `none` | 思维链强度。**`none` 完全关闭推理**（实测输出 token 直降约 90%、耗时减半，文案类任务质量无可见下降）；可改 `minimal` / `low` / `medium` / `high` |
+| `LLM_TIMEOUT_MS` | `60000` | 单次调用超时 |
+
+---
+
+## 六、AI 只读数据网关（`/api/agent`）
+
+### 6.1 定位与硬约束
+
+教学 AI 工作台（独立部署的 `ai-workbench/`）取数**只走这里**。设计依据：调研报告方案 C —— 教务业务数据留在原库，由原系统只读提供。
+
+| # | 约束 |
+| --- | --- |
+| 1 | 全部为**只读 `GET`**，没有任何写接口 |
+| 2 | 复用既有鉴权与数据范围（`utils/scope.js`）：admin 可取全部班级，**teacher 仅能取自己带的班**（非本班返回 403） |
+| 3 | **不返回金额**（`orders.amount` / `payments` / `refunds`）、不返回家长姓名与电话；学员只保留编号与姓名（教师本来就可见） |
+
+> 该网关只服务教学场景；财务、招生线索、经营分析等接口**不对工作台凭证开放**（见 §6.4）。
+
+### 6.2 GET /api/agent/context
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | 登录（admin / teacher），亦接受只读凭证 `ai_agent` |
+| 请求体 | 无 |
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": { "id": 2, "name": "王老师", "role": "teacher" },
+    "classes": [{ "id": 1, "name": "初二数学强化班 A 班", "grade": "八年级", "student_count": 24 }],
+    "capabilities": {
+      "students": true, "attendance": true, "scores": false, "hours": true,
+      "evaluations": false, "knowledge": false, "questions": false
+    },
+    "data_version": "v16"
+  }
+}
+```
+
+**`capabilities` 的用途**：如实告知工作台「真实库里当前已有哪类数据」，避免把「没有数据」渲染成「0 分」。
+
+| 字段 | 判定方式 |
+| --- | --- |
+| `students` / `attendance` / `scores` / `hours` | 对应表行数是否 > 0 |
+| `evaluations` / `knowledge` / `questions` | 当前库中**尚无对应表**（`class_evaluations` / `knowledge_points` / `questions`），恒为 `false`；工作台据此标注「待建设」并继续展示演示内容 |
+
+`classes` 按当前用户数据范围过滤：teacher 只会看到 `classes.head_teacher_id = 自己` 的班级。
+
+### 6.3 GET /api/agent/classes/:id/overview
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | 登录；admin 可访问全部班级，teacher 仅本班 |
+| 响应 | `{ success, data: { class, summary, students[], capabilities, data_version } }` |
+
+```json
+{
+  "success": true,
+  "data": {
+    "class": { "id": 1, "name": "初二数学强化班 A 班", "grade": "八年级" },
+    "summary": {
+      "student_count": 24, "attendance_sessions": 576, "absent_total": 9,
+      "score_avg": 82.3, "excellent_rate": 25.0, "scored_students": 24
+    },
+    "students": [
+      {
+        "id": 301, "no": "2501", "name": "陈嘉禾", "gender": "男", "status": "在读",
+        "enroll_date": "2026-03-02",
+        "attendance": { "total": 24, "normal": 23, "late": 1, "early": 0, "absent": 0, "leave": 0, "rate": 100 },
+        "exams": [{ "name": "全等三角形单元小测（一）", "date": "2026-09-04", "full": 100, "score": 88, "rate": 88 }],
+        "hours": { "total": 48, "remain": 29 },
+        "avg_rate": 88, "trend": 5
+      }
+    ],
+    "capabilities": { "...": "同上" },
+    "data_version": "v16"
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `attendance.rate` | `(总数 − 缺勤) / 总数 × 100`；**无考勤记录时为 `null`**（区别于「0%」） |
+| `exams[]` | 按 `exam_date` 正序；`rate = score / full_score × 100` |
+| `avg_rate` / `trend` | 无成绩记录时为 `null`；`trend = 最后一次 − 第一次` |
+| `hours` | 仅课时**数量**，来自 `orders`（`status='在读'`），不含任何金额 |
+
+**错误**：
+
+| HTTP | 场景 |
+| --- | --- |
+| 400 | 班级 ID 非正整数 |
+| 403 | teacher 访问非本班 |
+| 404 | 班级不存在 |
+
+### 6.4 凭证类型与权限边界
+
+| 凭证 | 签发方式 | 可访问范围 |
+| --- | --- | --- |
+| `accessToken` | 教务系统正常登录 | 全部接口（按角色与数据范围） |
+| `agentToken` | 工作台用免登票据换取（`type = ai_agent`，12 小时） | **仅 `/api/agent/*` 与 `/api/ai/*`**；调用其他任何接口返回 403 |
+
+路径校验在 `server/src/middleware/auth.js`；两种凭证共用同一套 `token_version` 吊销机制 —— 登出 / 改密 / 改角色后，`agentToken` 与 `accessToken` 同时失效。
+
+---
+
+## 七、使用反馈（`/api/feedback`）
+
+### 7.1 定位与数据边界
+
+教师与管理员在使用系统过程中提交问题与改进建议，admin 汇总查看、回复与跟踪处理。
+
+**数据边界**：只记录提交人身份（`user_id` / `username` / `user_role`）与问题描述，**不落任何学员数据** —— 避免「反馈」成为绕过四层权限的数据出口。
+
+### 7.2 POST /api/feedback
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | 登录（admin / teacher） |
+| 请求体 | `{ "category": "功能异常", "content": "…", "page_path": "/data/students" }` |
+
+| 字段 | 约束 |
+| --- | --- |
+| `category` | 单选：`功能异常` / `操作不便` / `数据不准` / `性能问题` / `功能建议` / `其他`；非法值回落为 `其他` |
+| `content` | **5–2000 字**，超出返回 400 |
+| `page_path` | 选填，最长 200 字符（便于定位问题页面） |
+
+**响应**：`{ "success": true, "data": { "id": 12 } }`
+
+### 7.3 GET /api/feedback/mine
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | 登录 |
+| 响应 | `{ success, data: { list: [...], total } }`，按 id 倒序，最多 100 条 |
+
+每条含 `category / content / page_path / status / admin_reply / handled_at / created_at`，教师据此看到管理员的回复。
+
+### 7.4 GET /api/feedback（admin）
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | **仅 admin**（teacher 返回 403） |
+| 查询参数 | `?page=1&pageSize=20&status=待处理` |
+| 排序 | **待处理优先** → 处理中 → 其他，同组内按 id 倒序 |
+
+### 7.5 GET /api/feedback/summary（admin）
+
+返回各状态计数与总数：`{ total, 待处理, 处理中, 已处理, 已忽略 }`，供首页角标展示。
+
+### 7.6 PUT /api/feedback/:id（admin）
+
+| 项 | 值 |
+| --- | --- |
+| 请求体 | `{ "status": "已处理", "admin_reply": "已定位，下个版本修复" }`（两者均可选） |
+| 状态白名单 | `待处理` / `处理中` / `已处理` / `已忽略`；非法值返回 400 |
+| 错误 | 404 反馈不存在 |
+
+改状态时会同时写入 `handled_by`（处理人）与 `handled_at`（处理时间），`updated_at` 每次更新刷新。
+
+---
+
+## 八、新增 / 修改 API 的流程（必须遵守）
 
 1. 在 `server/src/routes/<module>.js` 中实现，复用 `auth` / `requireRole` / `utils/scope.js`。
 2. 需要新表 / 新字段 → **新增迁移脚本**（`server/src/migrations/0NN-*.js`，版本连续递增），同步更新 `server/database.md`。
