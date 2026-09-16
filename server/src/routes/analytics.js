@@ -127,9 +127,16 @@ function envelope({ records = [], metrics = {}, period = {}, extraMeta = {} }) {
 }
 
 /** 数组 → CSV 文本（带 UTF-8 BOM，Excel 可直接打开） */
-function toCsv(rows) {
-  if (!rows.length) return "\uFEFF";
-  const headers = Object.keys(rows[0]);
+function toCsv(rows, columns) {
+  // 空数据时也要输出表头：导出的 CSV 至少得让人知道有哪些列（也方便当导入模板用）。
+  // 此时无法从首行推断列名，因此由 DATASETS 显式声明 columns。
+  const headers =
+    columns && columns.length
+      ? columns
+      : rows.length
+        ? Object.keys(rows[0])
+        : [];
+  if (!headers.length) return "\uFEFF";
   const escape = v => {
     if (v === null || v === undefined) return "";
     const s = String(v);
@@ -141,7 +148,7 @@ function toCsv(rows) {
 }
 
 /** 按 format 输出：json（默认）或 csv */
-function respond(req, res, payload, filename) {
+function respond(req, res, payload, filename, columns) {
   if ((req.query.format || "").toLowerCase() === "csv") {
     const rows = payload.data.records;
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -149,7 +156,7 @@ function respond(req, res, payload, filename) {
       "Content-Disposition",
       `attachment; filename="${filename}-${new Date().toISOString().slice(0, 10)}.csv"`
     );
-    return res.send(toCsv(rows));
+    return res.send(toCsv(rows, columns));
   }
   return res.json({ success: true, ...payload });
 }
@@ -359,6 +366,18 @@ router.get("/overview", (req, res) => {
 const DATASETS = {
   attendance: {
     label: "考勤明细",
+    columns: [
+      "id",
+      "date",
+      "student_no",
+      "student_name",
+      "class_name",
+      "course_name",
+      "status",
+      "remark",
+      "created_at",
+      "updated_at"
+    ],
     build(period) {
       const where = [];
       const params = [];
@@ -380,6 +399,16 @@ const DATASETS = {
   },
   finance: {
     label: "财务流水",
+    columns: [
+      "time",
+      "type",
+      "student_no",
+      "student_name",
+      "class_name",
+      "amount",
+      "method",
+      "remark"
+    ],
     build(period) {
       const rows = [];
       const payWhere = [];
@@ -425,6 +454,20 @@ const DATASETS = {
   },
   leads: {
     label: "招生线索",
+    columns: [
+      "id",
+      "name",
+      "phone",
+      "intent_course",
+      "source",
+      "status",
+      "follow_user",
+      "converted_student_no",
+      "remark",
+      "created_at",
+      "updated_at",
+      "follow_count"
+    ],
     build(period) {
       const where = [];
       const params = [];
@@ -456,6 +499,19 @@ const DATASETS = {
   },
   scores: {
     label: "考试成绩",
+    columns: [
+      "exam_name",
+      "exam_date",
+      "exam_type",
+      "full_score",
+      "class_name",
+      "course_name",
+      "student_no",
+      "student_name",
+      "score",
+      "remark",
+      "level"
+    ],
     build(period) {
       const where = [];
       const params = [];
@@ -497,7 +553,13 @@ router.get("/:dataset/export", (req, res) => {
   const records = ds.build(period);
 
   // 按 format=csv 输出附件；否则返回统一信封 JSON
-  respond(req, res, envelope({ records, period, extraMeta: { dataset: req.params.dataset, dataset_label: ds.label } }), `analytics-${req.params.dataset}`);
+  respond(
+    req,
+    res,
+    envelope({ records, period, extraMeta: { dataset: req.params.dataset, dataset_label: ds.label } }),
+    `analytics-${req.params.dataset}`,
+    ds.columns
+  );
 });
 
 module.exports = router;

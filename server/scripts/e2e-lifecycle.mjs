@@ -190,7 +190,18 @@ async function runAll() {
   assert(loginAdmin.status === 200 && loginAdmin.json?.success, "登录 admin（admin/admin123456）");
   adminToken = loginAdmin.json.data.accessToken;
 
-  const loginTeacher = await api("POST", "/auth/login", { type: "password", username: "teacher", password: "teacher123456" });
+  // 教师账号：数据库可能是「出厂状态」（仅 admin，见 reset-production-data.mjs），
+  // 因此先尝试登录，失败则用 admin 现场建一个 —— 测试必须自包含，不能依赖种子数据。
+  let loginTeacher = await api("POST", "/auth/login", { type: "password", username: "teacher", password: "teacher123456" });
+  if (!(loginTeacher.status === 200 && loginTeacher.json?.success)) {
+    await api(
+      "POST",
+      "/users",
+      { username: "teacher", password: "teacher123456", role: "teacher", name: "e2e教师" },
+      adminToken
+    );
+    loginTeacher = await api("POST", "/auth/login", { type: "password", username: "teacher", password: "teacher123456" });
+  }
   assert(loginTeacher.status === 200 && loginTeacher.json?.success, "登录 teacher（teacher/teacher123456）");
   const teacherToken = loginTeacher.json.data.accessToken;
 
