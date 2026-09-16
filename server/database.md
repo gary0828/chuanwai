@@ -30,7 +30,9 @@
 | v15  | JWT 凭证可吊销     | `users` 新增 `token_version INTEGER NOT NULL DEFAULT 0`。签发的 accessToken / refreshToken 均携带 `tv` 声明，`middleware/auth.js` 鉴权时与 `users.token_version` 比对；**登出 / 改密 / 改角色 / 删号**时递增该值即可立即吊销该用户全部已签发凭证（此前 JWT 无状态，登出为空实现、refreshToken 30 天内无法失效）。兼容性：升级前签发的旧 token 无 `tv` 声明，按 0 处理，与本列默认值一致，不会强制已登录员工重新登录 |
 | v16  | 使用反馈           | 新增 `feedbacks` 表（教师 / 管理员在使用系统过程中提交的问题与建议：提交人 `user_id`/`username`/`user_role`、`category`、`content`、`page_path`、`status`、`admin_reply`、`handled_by`/`handled_at`）。支撑首页「使用反馈」模块：教师提交并看到回复，admin 汇总、回复与跟踪处理。**只记录提交人身份与问题描述，不落任何学员数据**，避免反馈成为绕过四层权限的数据出口。建索引 `status` / `user_id` / `created_at` |
 
-当前最新版本：**v16**（`PRAGMA user_version` = 16）
+| v17  | AI 配置中心       | 新增 `ai_settings`（AI 配置键值表，**优先级高于环境变量**，改完立即生效，无需重建容器）与 `ai_usage`（每次服务端生成后落一条用量：谁、什么场景、多少 token、多少成本）。支撑「AI 配置中心」页面（仅 admin，不进菜单，凭 `/#/ai-admin` 进入）。解决 2026-09-16 校区部署反馈的「改一个 Key 要重建镜像」问题 |
+
+当前最新版本：**v17**（`PRAGMA user_version` = 17）
 
 ## 表结构
 
@@ -426,3 +428,37 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 | ------- | ------------- | ------- | ------ |
 | admin   | admin123456   | admin   | 管理员 |
 | teacher | teacher123456 | teacher | 教师   |
+
+> **出厂状态**：交付给客户前执行 `node server/scripts/reset-production-data.mjs --confirm`，
+> 会清空全部业务数据并只保留 `admin` 一个账号（教师账号由客户自行创建）。
+> 该脚本执行前会自动备份，且保留 `terms`（当前学期）与 `settings`（系统配置），
+> 因为签到等功能依赖当前学期，清空会导致系统不可用。
+
+## AI 配置相关表（v17 新增）
+
+### ai_settings（AI 配置，优先级高于环境变量）
+
+| 字段       | 类型 | 约束                     | 说明                                                     |
+| ---------- | ---- | ------------------------ | -------------------------------------------------------- |
+| key        | TEXT | PK                       | 配置键，取值受后端白名单约束（未知键写入时忽略）         |
+| value      | TEXT | NOT NULL, DEFAULT ''     | 配置值；**空串或删除该行 = 回退到环境变量**              |
+| updated_by | TEXT | NOT NULL, DEFAULT ''     | 最近修改人                                               |
+| updated_at | TEXT | NOT NULL, DEFAULT ''     | 最近修改时间                                             |
+
+可配置键：`llmApiKey`、`llmBaseUrl`、`llmModel`、`llmMaxTokens`、`llmReasoningEffort`、
+`llmTimeoutMs`、`aiWorkbenchUrl`、`difyEndpoint`、`difyApiKey`、`difyWorkflows`。
+敏感值（Key 类）**永不明文返回前端**，只给 `__masked__sk-****3f2a` 形式的掩码；
+掩码原样回传表示「不修改」。
+
+### ai_usage（AI 用量，配置中心展示本月用量与成本）
+
+| 字段       | 类型    | 约束                 | 说明                                   |
+| ---------- | ------- | -------------------- | -------------------------------------- |
+| id         | INTEGER | PK, AUTOINCREMENT    | 记录 ID                                |
+| username   | TEXT    | NOT NULL, DEFAULT '' | 生成人                                 |
+| scene      | TEXT    | NOT NULL, DEFAULT '' | 场景（备课方案 / 学情报告 …）          |
+| model      | TEXT    | NOT NULL, DEFAULT '' | 实际使用的模型                         |
+| tokens_in  | INTEGER | NOT NULL, DEFAULT 0  | 输入 token                             |
+| tokens_out | INTEGER | NOT NULL, DEFAULT 0  | 输出 token                             |
+| cost       | REAL    | NOT NULL, DEFAULT 0  | 估算成本（元，高峰价，仅供量级参考）   |
+| created_at | TEXT    | NOT NULL, DEFAULT '' | 生成时间；建索引 `created_at`          |

@@ -8,6 +8,13 @@
 
 ## 已完成
 
+- [x] **校区部署反馈修复三连 + 恢复出厂状态（2026-09-16，部署后第一天）**
+  - **修复 A/B：免登跳到「访问者本机的 localhost」**（校区实测：老师用自己电脑访问校区机器时，AI 助手打不开或回落演示身份）。根因是 `ai.js:67` 直接用写死的 `config.aiWorkbenchUrl`（默认 `http://localhost:8082`），而 localhost 指的是打开浏览器的那台电脑。改为：配置非回环地址则尊重配置，仍是 localhost 则**跟随访问者 host**（`POST /api/ai/sso/ticket` 接受 `host`，前端传 `window.location.hostname`）。**只接受合法主机名/IPv4 白名单，防开放重定向**（恶意 host 实测被拦截回退）
+  - **修复：AI 配置中心**（用户反馈「DeepSeek 配置设计有问题，改一次要重建镜像」）。新增迁移 **v17**（`ai_settings` + `ai_usage`）、`utils/aiSettings.js`、`GET/PUT /api/ai/admin/config`、`GET /api/ai/admin/balance`、`GET /api/ai/admin/usage`，**全部 `requireRole("admin")`**（teacher 实测 403）。配置存 DB 优先于环境变量，**改完立即生效无需重启**；敏感值只返回掩码，掩码回传表示不修改。前端新增 `views/ai-admin/index.vue`，挂在 `remaining.ts`（**不参与菜单下发**，只能凭 `/#/ai-admin` 进入）。浏览器验证 **9/9**：凭地址可进、余额 ¥30.20 显示正常、无明文 Key、保存生效、菜单无入口
+  - **修复：一键部署** `deploy.sh` —— 检查 Docker → 自动造 `.env`（JWT 随机生成）→ 优先用离线镜像包（不联网）→ 启动 → 自检 → **打印本机 IP 供其他电脑访问**
+  - **恢复出厂状态**：新增 `server/scripts/reset-production-data.mjs`（先自动备份、默认只预览、`--confirm` 才执行；保留 admin + terms + settings）。已执行：清空 29 学员/86 考勤/1608 审计日志等全部业务数据，仅剩 admin
+  - **顺带修掉真 bug**：`analytics.js` 空数据导出 CSV **连表头都没有**（用户下载得到空文件）。改为由 `DATASETS[].columns` 显式声明列名，空库也输出表头（可当导入模板）。analytics 由 21/22 恢复 **22/22**
+  - **测试自包含改造**：`e2e-lifecycle.mjs` 原先依赖出厂的 teacher 账号，清库后必挂。改为登录失败时用 admin 现场创建，测试不再依赖种子数据 → 清库后仍 **80/80**
 - [x] **AI 教学工作台：真实数据接入 + 使用反馈 + Dify 部署 + Docker 全栈（2026-09-14 下午）**
   - **数据源接入（只读网关）**：新增 `server/src/routes/agent.js` —— `GET /api/agent/context`（身份 / 可见班级 / 数据能力位）+ `GET /api/agent/classes/:id/overview`（学员 + 考勤/成绩/课时聚合）。复用既有 `utils/scope.js`（teacher 仅本班，非本班 403），**不返回金额、家长姓名与电话**；`capabilities` 如实反映「真实库里已有哪类数据」，避免把「没有数据」渲染成 0 分
   - **最小权限凭证**：`/api/ai/sso/verify` 增发 `agentToken`（`type=ai_agent`，12 小时），`middleware/auth.js` 按类型做路径校验 —— 该凭证**仅可访问 `/api/agent/*` 与 `/api/ai/*`**，调用学生/财务/经营分析等接口一律 403
