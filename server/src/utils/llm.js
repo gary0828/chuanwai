@@ -6,17 +6,42 @@
 // 3. 未配置 Key 时抛 `LLM_NOT_CONFIGURED`，由调用方决定降级，不阻塞主流程；
 // 4. 数值一律由本地指标引擎算出，模型只负责措辞，避免幻觉。
 const config = require("../config");
+const aiSettings = require("./aiSettings");
+
+/**
+ * 生效配置 = 数据库配置（AI 配置中心）优先，缺失回退环境变量。
+ * 每次调用实时读取，因此界面上改完立即生效，不必重启容器。
+ */
+function effective() {
+  return aiSettings.resolve();
+}
 
 function isConfigured() {
-  return Boolean(config.llm.apiKey);
+  return Boolean(effective().apiKey);
 }
 
 function currentModel() {
-  return config.llm.model;
+  return effective().model;
 }
 
 function endpoint() {
-  return `${config.llm.baseUrl.replace(/\/$/, "")}/chat/completions`;
+  return `${effective().baseUrl.replace(/\/$/, "")}/chat/completions`;
+}
+
+/**
+ * 成本估算（元）。价格为 2026-08-17 生效的高峰价，取缓存未命中的保守值；
+ * 仅用于界面展示量级，不作为对账依据。
+ */
+const PRICE_PER_MILLION = {
+  "deepseek-flash": { input: 3, output: 9 },
+  "deepseek-v4-pro": { input: 9, output: 27 }
+};
+
+function estimateCost(model, usage) {
+  const p = PRICE_PER_MILLION[model] || PRICE_PER_MILLION["deepseek-flash"];
+  const inCost = (Number(usage?.prompt_tokens || 0) * p.input) / 1_000_000;
+  const outCost = (Number(usage?.completion_tokens || 0) * p.output) / 1_000_000;
+  return Math.round((inCost + outCost) * 100000) / 100000;
 }
 
 /**
@@ -30,11 +55,12 @@ async function chat(messages, options = {}) {
     throw err;
   }
 
+  const cfg = effective();
   const {
     temperature = 0.6,
     // 推理型模型的思维链会先消耗输出额度（实测约占 60%），给不足会导致正文被截断为空
-    maxTokens = config.llm.maxTokens,
-    timeoutMs = config.llm.timeoutMs
+    maxTokens = cfg.maxTokens,
+    timeoutMs = cfg.timeoutMs
   } = options;
 
   const controller = new AbortController();
@@ -45,19 +71,17 @@ async function chat(messages, options = {}) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.llm.apiKey}`
+        Authorization: `Bearer ${cfg.apiKey}`
       },
       body: JSON.stringify({
-        model: config.llm.model,
+        model: cfg.model,
         messages,
         temperature,
         max_tokens: maxTokens,
         stream: false,
         // 抑制思维链：实测 reasoning_effort=none 可完全关闭推理（输出 token 直降约 90%），
         // 对文案生成类任务质量无可见下降；需要多步推理时可改为 medium / high
-        ...(config.llm.reasoningEffort
-          ? { reasoning_effort: config.llm.reasoningEffort }
-          : {})
+        ...(cfg.reasoningEffort ? { reasoning_effort: cfg.reasoningEffort } : {})
       }),
       signal: controller.signal
     });
@@ -93,17 +117,21 @@ async function chat(messages, options = {}) {
       throw err;
     }
 
+    const usedModel = json.model || cfg.model;
+    const usage = {
+      prompt_tokens: Number(json.usage?.prompt_tokens || 0),
+      completion_tokens: Number(json.usage?.completion_tokens || 0),
+      // 推理型模型的思维链 token 单独暴露，便于成本分析
+      reasoning_tokens: Number(
+        json.usage?.completion_tokens_details?.reasoning_tokens || 0
+      )
+    };
+
     return {
       text: String(content).trim(),
-      model: json.model || config.llm.model,
-      usage: {
-        prompt_tokens: Number(json.usage?.prompt_tokens || 0),
-        completion_tokens: Number(json.usage?.completion_tokens || 0),
-        // 推理型模型的思维链 token 单独暴露，便于成本分析
-        reasoning_tokens: Number(
-          json.usage?.completion_tokens_details?.reasoning_tokens || 0
-        )
-      }
+      model: usedModel,
+      cost: estimateCost(usedModel, usage),
+      usage
     };
   } catch (err) {
     if (err.name === "AbortError") {
@@ -117,4 +145,11 @@ async function chat(messages, options = {}) {
   }
 }
 
-module.exports = { isConfigured, chat, currentModel, endpoint };
+module.exports = {
+  isConfigured,
+  chat,
+  currentModel,
+  endpoint,
+  estimateCost,
+  effective
+};

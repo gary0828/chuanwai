@@ -30,6 +30,29 @@ export default [
       showLink: false
     }
   },
+  // AI 配置中心：**不出现在菜单里**，只能凭地址 /ai-admin 进入，且仅 admin 可见。
+  // 放在 remaining（不参与菜单渲染）而非后端下发路由，就是为了保证它永远不会被下发成菜单项。
+  {
+    path: "/ai-admin",
+    component: Layout,
+    meta: {
+      title: "AI 配置中心",
+      showLink: false,
+      roles: ["admin"]
+    },
+    children: [
+      {
+        path: "/ai-admin",
+        name: "AiAdmin",
+        component: () => import("@/views/ai-admin/index.vue"),
+        meta: {
+          title: "AI 配置中心",
+          showLink: false,
+          roles: ["admin"]
+        }
+      }
+    ]
+  },
   {
     path: "/redirect",
     component: Layout,

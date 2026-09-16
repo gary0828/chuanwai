@@ -21,6 +21,7 @@ const { auth, requireRole, SECRET } = require("../middleware/auth");
 const llm = require("../utils/llm");
 const redact = require("../utils/redact");
 const prompts = require("../utils/prompts");
+const aiSettings = require("../utils/aiSettings");
 
 const router = express.Router();
 
@@ -39,6 +40,41 @@ setInterval(() => {
     if (expireAt <= now) usedTickets.delete(jti);
   }
 }, 30 * 1000).unref();
+
+/**
+ * 解析工作台跳转基址。
+ *
+ * 背景（2026-09-16 校区部署实测暴露的缺陷）：
+ * `AI_WORKBENCH_URL` 默认 `http://localhost:8082`，而 **localhost 指的是打开浏览器的
+ * 那台电脑**。老师用自己的电脑访问校区机器上的教务系统时，免登链接会把他们带到
+ * "自己电脑的 8082" —— 必然打不开（表现：页面空白 / 回落到演示身份）。
+ *
+ * 策略：
+ *   - 显式配置了非回环地址（如 http://192.168.1.20:8082）→ 尊重配置，原样返回
+ *   - 配置仍是 localhost / 127.0.0.1 → **跟随访问者当前的 host**，端口沿用配置
+ *
+ * 安全：只接受纯主机名/IPv4，且拒绝 localhost 之外的可疑输入，
+ * 防止被当成开放重定向（open redirect）使用。
+ */
+function resolveWorkbenchUrl(reqHost) {
+  const raw = config.aiWorkbenchUrl;
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return raw;
+  }
+  const loopback = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];
+  if (!loopback.includes(u.hostname)) return raw;
+
+  const host = String(reqHost || "").trim();
+  if (!host || host.length > 253) return raw;
+  if (!/^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$/.test(host)) return raw;
+  if (loopback.includes(host)) return raw;
+
+  const port = u.port || (u.protocol === "https:" ? "443" : "80");
+  return `${u.protocol}//${host}:${port}`;
+}
 
 /** 签发免登票据（需已登录） */
 router.post("/sso/ticket", auth, (req, res) => {
@@ -63,8 +99,10 @@ router.post("/sso/ticket", auth, (req, res) => {
     { expiresIn: TICKET_TTL_SEC }
   );
 
+  // 前端把自己访问教务系统用的 host 传过来，避免跳到「访问者本机的 localhost」
+  const base = resolveWorkbenchUrl(req.body?.host);
   // URL 用 hash 路由承载票据，避免随请求发送到服务器
-  const url = `${config.aiWorkbenchUrl}/#/sso?ticket=${encodeURIComponent(ticket)}`;
+  const url = `${base}/#/sso?ticket=${encodeURIComponent(ticket)}`;
 
   res.json({
     success: true,
@@ -189,6 +227,25 @@ router.post(
 
       const result = await llm.chat(messages);
 
+      // 用量落库供配置中心统计；这里失败绝不能影响生成结果
+      try {
+        db.prepare(
+          `INSERT INTO ai_usage
+             (username, scene, model, tokens_in, tokens_out, cost, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          req.user?.username || "",
+          scene,
+          result.model || "",
+          Number(result.usage?.prompt_tokens || 0),
+          Number(result.usage?.completion_tokens || 0),
+          Number(result.cost || 0),
+          new Date().toISOString()
+        );
+      } catch {
+        /* 忽略：用量统计不是主流程 */
+      }
+
       res.json({
         success: true,
         data: {
@@ -196,6 +253,7 @@ router.post(
           sceneLabel: prompts.sceneLabel(scene),
           text: result.text,
           model: result.model,
+          cost: result.cost,
           usage: result.usage,
           redactedByServer: removed,
           generatedAt: new Date().toISOString()
@@ -220,6 +278,105 @@ router.post(
     }
   }
 );
+
+/* ---------------------- AI 配置中心（仅管理员） ---------------------- */
+
+/**
+ * GET /api/ai/admin/config —— 读取 AI 配置（敏感值只返回掩码）
+ * PUT /api/ai/admin/config —— 保存 AI 配置（立即生效，无需重启容器）
+ * GET /api/ai/admin/balance —— 查询模型账户余额（Key 不出服务端）
+ * GET /api/ai/admin/usage —— 本月用量与成本
+ *
+ * 教师角色一律 403；前端页面也不出现在菜单里，只能凭地址进入。
+ */
+router.get("/admin/config", auth, requireRole("admin"), (_req, res) => {
+  res.json({ success: true, data: aiSettings.readForDisplay() });
+});
+
+router.put("/admin/config", auth, requireRole("admin"), (req, res, next) => {
+  try {
+    const patch = req.body || {};
+    if (Object.prototype.toString.call(patch) !== "[object Object]") {
+      return res.status(400).json({ success: false, message: "请求体应为对象" });
+    }
+    const changed = aiSettings.save(patch, req.user?.username || "");
+    res.json({ success: true, data: { changed, ...aiSettings.readForDisplay() } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/admin/balance", auth, requireRole("admin"), async (_req, res) => {
+  const cfg = llm.effective();
+  if (!cfg.apiKey) {
+    return res
+      .status(503)
+      .json({ success: false, message: "未配置 API Key，无法查询余额" });
+  }
+  try {
+    const base = cfg.baseUrl.replace(/\/$/, "");
+    const r = await fetch(`${base}/user/balance`, {
+      headers: { Authorization: `Bearer ${cfg.apiKey}` }
+    });
+    const text = await r.text();
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+    if (!r.ok) {
+      return res.status(502).json({
+        success: false,
+        message: `余额查询失败：${json?.message || text.slice(0, 120)}`
+      });
+    }
+    // 只回传余额数字，绝不回传 Key 或其它账户信息
+    const infos = Array.isArray(json?.balance_infos) ? json.balance_infos : [];
+    res.json({
+      success: true,
+      data: {
+        available: Boolean(json?.is_available),
+        balances: infos.map(i => ({
+          currency: i.currency,
+          total: i.total_balance,
+          granted: i.granted_balance,
+          toppedUp: i.topped_up_balance
+        }))
+      }
+    });
+  } catch (err) {
+    res.status(502).json({ success: false, message: `余额查询异常：${err.message}` });
+  }
+});
+
+router.get("/admin/usage", auth, requireRole("admin"), (_req, res) => {
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const since = monthStart.toISOString();
+
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) times,
+              COALESCE(SUM(tokens_in), 0) tin,
+              COALESCE(SUM(tokens_out), 0) tout,
+              COALESCE(SUM(cost), 0) cost
+       FROM ai_usage WHERE created_at >= ?`
+    )
+    .get(since);
+  const byScene = db
+    .prepare(
+      `SELECT scene, COUNT(*) times, COALESCE(SUM(cost), 0) cost
+       FROM ai_usage WHERE created_at >= ? GROUP BY scene ORDER BY times DESC`
+    )
+    .all(since);
+
+  res.json({
+    success: true,
+    data: { month: since.slice(0, 7), ...row, byScene }
+  });
+});
 
 /** 模型可用状态（工作台据此决定是否展示「服务端模型」选项） */
 router.get("/llm-status", auth, (_req, res) => {

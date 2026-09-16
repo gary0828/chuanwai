@@ -20,7 +20,8 @@ const migrations = [
   require("./013-user-student-link"),
   require("./014-staff-only-crm"),
   require("./015-token-version"),
-  require("./016-feedback")
+  require("./016-feedback"),
+  require("./017-ai-settings")
 ];
 
 function migrate(db) {
