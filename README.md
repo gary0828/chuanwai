@@ -51,6 +51,29 @@
 | 后端 | Node.js（内置 `node:sqlite`，零原生依赖）、Express 4、JWT（jsonwebtoken）、密码哈希（bcryptjs）                         |
 | 部署 | Docker Compose：前端 nginx + 后端 node:24-alpine + SQLite 数据卷                                                        |
 
+## 界面设计规范
+
+全站视觉统一采用「教务台」方向：结构清晰、边界精确、数字成列对齐、没有一处多余装饰。主色为深靛蓝 `#1F5C99`（替代 Element 出厂的 `#409EFF`），语义色去糖果化，卡片用细边框而非阴影。
+
+> 新页面或改样式前请先读 `docs/前端视觉规范-2026-09-18.md`（设计 token 规格、页面骨架用法、响应式策略、遗留清单）；设计意图见根目录 `.impeccable.md`。
+
+四条硬性约束：
+
+1. 颜色 / 间距 / 圆角 / 阴影 / 动效时长一律引用 `src/style/tokens.scss` 的变量，页面内禁止硬编码色值。
+2. `src/style/element-plus-override.scss` 必须在 `element-plus/dist/index.css` **之后**引入（见 `src/main.ts`）—— 它靠"后加载"取胜，挪到前面会被官方规则覆盖。
+3. 页面骨架统一：`.app-page` 根容器 + `AppPageHeader` 页头 + `.page-card(--flush)` 内容卡 + `.page-toolbar` 筛选条；空状态用 `AppEmpty`。
+4. 登录页与内页共用同一套物料（底色 `--surface-page`、卡片规格对齐 `.page-card`），其背景「教务格栅」是全站表格线条语言的抽象。
+
+浏览器验证请使用生产构建产物，不要用 vite dev server：
+
+```bash
+node ./node_modules/vite/bin/vite.js build          # 先构建
+node _verify_test/serve-dist.mjs                    # 托管 dist/（:8848，含 /api 反代）
+
+python _verify_test/ui-global-sweep.py http://127.0.0.1:8848 http://127.0.0.1:3000   # 全站扫描
+python _verify_test/ui-login-shots.py  http://127.0.0.1:8848                          # 登录页专项
+```
+
 ## 快速开始
 
 ### 方式一：Docker 部署（推荐）
