@@ -1,37 +1,42 @@
-/* AI 教学助手 · 设计系统（浅色教研风） */
+/* AI 教学助手 · 设计系统
+   ⚠️ 2026-09-18 统一：色值全部对齐教务系统主站的 src/style/tokens.scss，
+   使 :8082 工作台与 :8080 教务系统看起来是同一套产品。
+   改色之前先看那份 token —— 它是全站唯一权威源，不要在本文件另立一套。 */
 :root {
-  --c-primary: #2563eb;
-  --c-primary-dark: #1d4ed8;
-  --c-primary-soft: #eff6ff;
-  --c-primary-line: #bfdbfe;
+  /* 品牌色阶（深靛蓝 = 教务系统 --brand-*） */
+  --c-primary: #1f5c99; /* brand-600 */
+  --c-primary-dark: #17456f; /* brand-700 */
+  --c-primary-soft: #e8f0f8; /* brand-100 */
+  --c-primary-line: #c9dcef; /* brand-200 */
 
-  --c-bg: #f5f6f8;
-  --c-surface: #ffffff;
-  --c-surface-2: #fafbfc;
-  --c-border: #e6e8ec;
-  --c-border-strong: #d5d9e0;
+  --c-bg: #f4f7fa; /* --surface-page */
+  --c-surface: #ffffff; /* --surface-card */
+  --c-surface-2: #f6f9fb; /* --ink-50 */
+  --c-border: #dde5ec; /* --ink-200 */
+  --c-border-strong: #c3ceda; /* --ink-300 */
 
-  --c-text: #1f2328;
-  --c-text-2: #5b6472;
-  --c-text-3: #8b95a3;
+  --c-text: #0f1a24; /* --ink-900 */
+  --c-text-2: #4a5c6d; /* --ink-600 */
+  --c-text-3: #64798a; /* --ink-500 */
 
-  --c-success: #16a34a;
-  --c-success-soft: #ecfdf3;
-  --c-warn: #d97706;
-  --c-warn-soft: #fffbeb;
-  --c-danger: #dc2626;
-  --c-danger-soft: #fef2f2;
-  --c-info: #0891b2;
-  --c-info-soft: #ecfeff;
+  /* 语义色（去糖果化 = 教务系统 --status-*）；浅底统一用 color-mix 派生 */
+  --c-success: #2e7d5b;
+  --c-success-soft: color-mix(in srgb, var(--c-success) 10%, #fff);
+  --c-warn: #b7791f;
+  --c-warn-soft: color-mix(in srgb, var(--c-warn) 10%, #fff);
+  --c-danger: #b3453c;
+  --c-danger-soft: color-mix(in srgb, var(--c-danger) 10%, #fff);
+  --c-info: #64798a;
+  --c-info-soft: color-mix(in srgb, var(--c-info) 10%, #fff);
 
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 5px;
+  --radius: 7px;
+  --radius-lg: 10px;
 
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04);
-  --shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 2px rgb(15 26 36 / 5%);
+  --shadow: 0 1px 2px rgb(15 26 36 / 6%), 0 1px 3px rgb(15 26 36 / 4%);
 
-  --el-color-primary: #2563eb;
+  --el-color-primary: #1f5c99;
 }
 
 * {
@@ -128,28 +133,29 @@ body {
   background: var(--c-primary-soft);
 }
 
+/* 标签文字色统一由语义色派生，不再硬编码第二套色板 */
 .tag-green {
-  color: #15803d;
+  color: color-mix(in srgb, var(--c-success) 78%, #000);
   background: var(--c-success-soft);
 }
 
 .tag-amber {
-  color: #b45309;
+  color: color-mix(in srgb, var(--c-warn) 80%, #000);
   background: var(--c-warn-soft);
 }
 
 .tag-red {
-  color: #b91c1c;
+  color: color-mix(in srgb, var(--c-danger) 82%, #000);
   background: var(--c-danger-soft);
 }
 
 .tag-gray {
   color: var(--c-text-2);
-  background: #f1f3f5;
+  background: var(--c-surface-2);
 }
 
 .tag-cyan {
-  color: #0e7490;
+  color: color-mix(in srgb, var(--c-info) 80%, #000);
   background: var(--c-info-soft);
 }
 
@@ -182,11 +188,11 @@ body {
   color: var(--c-text-3);
 }
 
-/* AI 产出区 */
+/* AI 产出区：浅品牌底 + 品牌色描边，用于把「AI 生成」与「人工录入」区分开 */
 .ai-block {
   position: relative;
   padding: 16px 18px;
-  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  background: linear-gradient(180deg, var(--c-primary-soft) 0%, #ffffff 100%);
   border: 1px solid var(--c-primary-line);
   border-radius: var(--radius);
 }
