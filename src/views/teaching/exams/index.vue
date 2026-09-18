@@ -12,6 +12,7 @@ import {
   saveExamScores,
   getExamScorecard
 } from "@/api/teaching";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "TeachingExams"
@@ -302,7 +303,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="成绩管理" description="成绩录入、等级换算与导出" />
     <el-card shadow="never">
       <!-- 筛选 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

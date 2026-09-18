@@ -8,6 +8,7 @@ import {
   deleteCourse
 } from "@/api/attendance";
 import { useUserStoreHook } from "@/store/modules/user";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "Courses"
@@ -115,7 +116,8 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="课程管理" description="课程与课时单价维护" />
     <el-card shadow="never">
       <!-- 搜索 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

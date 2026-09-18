@@ -5,6 +5,7 @@ import {
   getArrearsStatistics,
   getLowHoursStatistics
 } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "FinanceStatistics"
@@ -95,7 +96,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="财务统计" description="收入确认与欠费概览" />
     <el-tabs v-model="activeTab">
       <!-- ================= 营收统计 ================= -->
       <el-tab-pane label="营收统计" name="revenue">

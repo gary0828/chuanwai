@@ -11,6 +11,7 @@ import {
   deleteSchedule,
   createAdjustment
 } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "Schedules"
@@ -236,7 +237,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="课程表" description="按班级与星期编排上课时段" />
     <el-card shadow="never">
       <!-- 筛选 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

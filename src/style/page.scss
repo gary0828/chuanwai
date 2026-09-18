@@ -1,0 +1,242 @@
+/* ============================================================================
+   页面级视觉语法 · 教务管理系统
+   ----------------------------------------------------------------------------
+   34 个页面的公共骨架。目标：让所有页面看起来"是同一个系统做的"，
+   而不是 34 套各写各的 el-card + 内联 margin。
+
+   标准用法：
+     <div class="app-page">
+       <AppPageHeader title="班级管理" description="…">
+         <el-button type="primary">新增</el-button>   ← 主操作放进 slot
+       </AppPageHeader>
+
+       <div class="page-card">
+         <div class="page-toolbar">
+           <el-input … /> <el-button>搜索</el-button>
+         </div>
+         <el-table … />
+       </div>
+     </div>
+
+   所有数值引用 src/style/tokens.scss。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   页面根容器
+   --------------------------------------------------------------------------- */
+.app-page {
+  padding: var(--space-5) var(--space-6) var(--space-8);
+}
+
+@media (width <= 1024px) {
+  .app-page {
+    padding: var(--space-4) var(--space-4) var(--space-6);
+  }
+}
+
+@media (width <= 640px) {
+  .app-page {
+    padding: var(--space-3) var(--space-3) var(--space-5);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   内容卡片
+   ---------------------------------------------------------------------------
+   边界靠 1px 细边框，不靠阴影 —— 白卡在浅灰页面上已有足够对比。 */
+.page-card {
+  padding: var(--space-5);
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+/* 表格/列表专用：内边距归零，让表格与卡片边界贴合 */
+.page-card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+.page-card--flush > .page-toolbar {
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--ink-100);
+}
+
+/* 表格外框交给卡片：避免"卡片边框 + 表格边框"的双层嵌套。
+   表格自身仍保留横向分隔线。 */
+.page-card--flush > .el-table--border {
+  border: none;
+  border-radius: 0;
+}
+
+/* 卡片底部区域（分页、汇总行） */
+.page-card__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--ink-100);
+}
+
+/* ---------------------------------------------------------------------------
+   筛选 / 操作条
+   --------------------------------------------------------------------------- */
+.page-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+
+/* 撑开中间，把"新增"等主操作推到右侧 */
+.page-toolbar__spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 说明性小字：只写用户不知道的信息 */
+.page-hint {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--ink-500);
+}
+
+/* ---------------------------------------------------------------------------
+   数据排版 · 本系统的核心视觉特征
+   ---------------------------------------------------------------------------
+   数字逐位对齐。金额、课时、人数、日期在同一列中右对齐时能精确成列，
+   这是"对数字认真"的视觉信号，也是教务场景最常用的扫读方式。 */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.metric-label {
+  font-size: var(--text-sm);
+  color: var(--ink-500);
+}
+
+.metric-value {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  color: var(--ink-900);
+  letter-spacing: -0.015em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* 表格内的数字列建议配合 .num 使用：<el-table-column align="right"> */
+.el-table .num {
+  display: inline-block;
+}
+
+/* ---------------------------------------------------------------------------
+   自适应栅格
+   ---------------------------------------------------------------------------
+   用 auto-fit + minmax 替代 el-row/el-col 的固定断点：
+   容器多宽就铺几列，平板与桌面自动适配，不需要为每个尺寸写断点。 */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
+/* 图表区：主图 + 侧栏，窄屏自动堆叠 */
+.chart-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+@media (width <= 1024px) {
+  .chart-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   指标卡
+   ---------------------------------------------------------------------------
+   左侧 3px 语义色条 + 大号等宽数字，与侧边栏选中态共用同一视觉语言。
+   色条通过 --stat-accent 注入，由 tone 修饰类决定 —— JS 不需要读取任何色值，
+   深色模式也自动跟随。 */
+.stat-card {
+  position: relative;
+  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-5);
+  overflow: hidden;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  transition: border-color var(--duration-base) var(--ease-out);
+
+  &::before {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    content: "";
+    background: var(--stat-accent, var(--brand-600));
+  }
+
+  &:hover {
+    border-color: var(--border-strong);
+  }
+}
+
+.stat-card--brand {
+  --stat-accent: var(--brand-600);
+}
+
+.stat-card--success {
+  --stat-accent: var(--status-success);
+}
+
+.stat-card--warning {
+  --stat-accent: var(--status-warning);
+}
+
+.stat-card--danger {
+  --stat-accent: var(--status-danger);
+}
+
+.stat-card__top {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stat-card__label {
+  font-size: var(--text-sm);
+  color: var(--ink-500);
+}
+
+.stat-card__icon {
+  display: flex;
+  font-size: 16px;
+  color: var(--stat-accent, var(--brand-600));
+}
+
+/* ---------------------------------------------------------------------------
+   卡片内的区块标题
+   --------------------------------------------------------------------------- */
+.card-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-800);
+}
+
+/* 图表画布容器：高度用 clamp 让平板与桌面各自合适 */
+.chart-box {
+  width: 100%;
+  height: clamp(280px, 36vh, 340px);
+}

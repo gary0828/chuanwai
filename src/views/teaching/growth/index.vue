@@ -4,6 +4,7 @@ import { ref } from "vue";
 import { ElMessage } from "element-plus";
 import { getStudentList } from "@/api/attendance";
 import { getStudentTimeline } from "@/api/teaching";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "TeachingGrowth"
@@ -68,7 +69,8 @@ function handlePrint() {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="成长档案" description="学员在校期间的成绩、出勤与课时轨迹" />
     <!-- 学员选择 -->
     <el-card shadow="never" class="mb-4">
       <div class="flex flex-wrap items-center gap-2">

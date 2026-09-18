@@ -1,0 +1,529 @@
+/* ============================================================================
+   Element Plus 视觉重定义 · 教务管理系统
+   ----------------------------------------------------------------------------
+   ⚠️ 加载顺序：本文件必须在 element-plus/dist/index.css **之后** 引入（见 src/main.ts）。
+      Element 官方规则与本文件大多同特异性，本文件靠"后加载"取胜，
+      因此可以避免大量 !important —— 请勿把本文件挪到官方样式之前。
+
+   ⚠️ 只改「表现」，不改「行为」：不改类名、不改 DOM、不改组件 props、不动任何逻辑。
+      数值一律引用 src/style/tokens.scss，禁止在此硬编码色值。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   1. 品牌色与语义色注入
+   ---------------------------------------------------------------------------
+   主色基准由 public/platform-config.json 的 EpThemeColor 在运行时注入并派生
+   light/dark 变体（inline style，优先级更高）。此处提供 CSS 兜底：
+   保证 JS 就绪前（登录页首帧）也已是品牌色，而非 Element 出厂蓝。 */
+html:root {
+  --el-font-family: var(--font-sans);
+
+  --el-color-primary: var(--brand-600);
+  --el-color-primary-light-3: color-mix(in srgb, var(--brand-600) 70%, var(--mix-toward));
+  --el-color-primary-light-5: color-mix(in srgb, var(--brand-600) 50%, var(--mix-toward));
+  --el-color-primary-light-7: color-mix(in srgb, var(--brand-600) 30%, var(--mix-toward));
+  --el-color-primary-light-8: color-mix(in srgb, var(--brand-600) 20%, var(--mix-toward));
+  --el-color-primary-light-9: color-mix(in srgb, var(--brand-600) 10%, var(--mix-toward));
+  --el-color-primary-dark-2: color-mix(in srgb, var(--brand-600) 80%, #000);
+
+  --el-color-success: var(--status-success);
+  --el-color-success-light-3: color-mix(
+    in srgb,
+    var(--status-success) 70%,
+    var(--mix-toward)
+  );
+  --el-color-success-light-5: color-mix(
+    in srgb,
+    var(--status-success) 50%,
+    var(--mix-toward)
+  );
+  --el-color-success-light-7: color-mix(
+    in srgb,
+    var(--status-success) 30%,
+    var(--mix-toward)
+  );
+  --el-color-success-light-8: color-mix(
+    in srgb,
+    var(--status-success) 20%,
+    var(--mix-toward)
+  );
+  --el-color-success-light-9: color-mix(
+    in srgb,
+    var(--status-success) 10%,
+    var(--mix-toward)
+  );
+  --el-color-success-dark-2: color-mix(
+    in srgb,
+    var(--status-success) 80%,
+    #000
+  );
+
+  --el-color-warning: var(--status-warning);
+  --el-color-warning-light-3: color-mix(
+    in srgb,
+    var(--status-warning) 70%,
+    var(--mix-toward)
+  );
+  --el-color-warning-light-5: color-mix(
+    in srgb,
+    var(--status-warning) 50%,
+    var(--mix-toward)
+  );
+  --el-color-warning-light-7: color-mix(
+    in srgb,
+    var(--status-warning) 30%,
+    var(--mix-toward)
+  );
+  --el-color-warning-light-8: color-mix(
+    in srgb,
+    var(--status-warning) 20%,
+    var(--mix-toward)
+  );
+  --el-color-warning-light-9: color-mix(
+    in srgb,
+    var(--status-warning) 10%,
+    var(--mix-toward)
+  );
+  --el-color-warning-dark-2: color-mix(
+    in srgb,
+    var(--status-warning) 80%,
+    #000
+  );
+
+  --el-color-danger: var(--status-danger);
+  --el-color-danger-light-3: color-mix(in srgb, var(--status-danger) 70%, var(--mix-toward));
+  --el-color-danger-light-5: color-mix(in srgb, var(--status-danger) 50%, var(--mix-toward));
+  --el-color-danger-light-7: color-mix(in srgb, var(--status-danger) 30%, var(--mix-toward));
+  --el-color-danger-light-8: color-mix(in srgb, var(--status-danger) 20%, var(--mix-toward));
+  --el-color-danger-light-9: color-mix(in srgb, var(--status-danger) 10%, var(--mix-toward));
+  --el-color-danger-dark-2: color-mix(in srgb, var(--status-danger) 80%, #000);
+
+  --el-color-info: var(--status-info);
+  --el-color-info-light-3: color-mix(in srgb, var(--status-info) 70%, var(--mix-toward));
+  --el-color-info-light-5: color-mix(in srgb, var(--status-info) 50%, var(--mix-toward));
+  --el-color-info-light-7: color-mix(in srgb, var(--status-info) 30%, var(--mix-toward));
+  --el-color-info-light-8: color-mix(in srgb, var(--status-info) 20%, var(--mix-toward));
+  --el-color-info-light-9: color-mix(in srgb, var(--status-info) 10%, var(--mix-toward));
+
+  /* 文字与边框：接管 Element 的默认灰阶，统一到本项目的冷灰系 */
+  --el-text-color-primary: var(--ink-900);
+  --el-text-color-regular: var(--ink-700);
+  --el-text-color-secondary: var(--ink-500);
+  --el-text-color-placeholder: var(--ink-400);
+  --el-text-color-disabled: var(--ink-400);
+
+  --el-border-color: var(--ink-200);
+  --el-border-color-light: var(--ink-200);
+  --el-border-color-lighter: var(--ink-100);
+  --el-border-color-extra-light: var(--ink-100);
+  --el-border-color-hover: var(--ink-300);
+  --el-border-color-darker: var(--ink-300);
+
+  --el-fill-color: var(--ink-100);
+  --el-fill-color-light: var(--ink-50);
+  --el-fill-color-lighter: var(--ink-50);
+  --el-fill-color-blank: var(--surface-card);
+
+  --el-bg-color: var(--surface-card);
+  --el-bg-color-page: var(--surface-page);
+  --el-bg-color-overlay: var(--surface-card);
+
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+
+  /* Element 默认的通用阴影偏重，统一收紧 */
+  --el-box-shadow-light: var(--shadow-sm);
+  --el-box-shadow: var(--shadow-md);
+  --el-box-shadow-dark: var(--shadow-lg);
+}
+
+/* ---------------------------------------------------------------------------
+   2. 按钮
+   --------------------------------------------------------------------------- */
+.el-button {
+  font-weight: var(--weight-medium);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+/* 次要按钮：白底 + 细边框，不与主按钮争夺注意力 */
+.el-button--default:not(.is-text):not(.is-link) {
+  --el-button-bg-color: var(--surface-card);
+  --el-button-border-color: var(--border-default);
+  --el-button-text-color: var(--ink-700);
+  --el-button-hover-bg-color: var(--ink-50);
+  --el-button-hover-border-color: var(--brand-400);
+  --el-button-hover-text-color: var(--brand-600);
+  --el-button-active-bg-color: var(--ink-100);
+  --el-button-active-border-color: var(--brand-600);
+}
+
+/* 链接按钮（表格操作列高频使用）：去掉下划线感，hover 用品牌色 */
+.el-button.is-link {
+  font-weight: var(--weight-medium);
+}
+
+/* 平板触控：小尺寸按钮热区抬到 28px，常规按钮 32px 已达标 */
+.el-button--small {
+  min-height: 28px;
+}
+
+/* ---------------------------------------------------------------------------
+   3. 输入 / 选择 / 日期
+   --------------------------------------------------------------------------- */
+.el-input__wrapper,
+.el-textarea__inner {
+  transition:
+    box-shadow var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+/* 选择器（Element 2.5+ 的 wrapper 结构） */
+.el-select__wrapper {
+  --el-select-border-color-hover: var(--brand-400);
+  transition: box-shadow var(--duration-fast) var(--ease-out);
+}
+
+/* 日期选择器统一高度，避免与输入框混排时高度不齐 */
+.el-date-editor.el-input,
+.el-date-editor.el-input__wrapper {
+  --el-date-editor-width: 100%;
+}
+
+/* 平板触控：表单控件热区抬到 36px（小尺寸时） */
+.el-input--small .el-input__wrapper,
+.el-select--small .el-select__wrapper {
+  min-height: 30px;
+}
+
+/* ---------------------------------------------------------------------------
+   4. 卡片
+   ---------------------------------------------------------------------------
+   项目原则：边界靠细分隔线，不靠阴影。卡片默认无阴影。 */
+.el-card {
+  --el-card-border-color: var(--border-default);
+  --el-card-border-radius: var(--radius-md);
+
+  box-shadow: none !important;
+
+  /* 消除纯白卡片在浅灰页面上"漂浮"的观感，改用极轻的边框对比 */
+  transition: border-color var(--duration-base) var(--ease-out);
+}
+
+.el-card.is-always-shadow,
+.el-card.is-hover-shadow:focus,
+.el-card.is-hover-shadow:hover {
+  box-shadow: var(--shadow-sm) !important;
+}
+
+/* 卡片头：字重与分隔线统一 */
+.el-card__header {
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-800);
+  border-bottom: 1px solid var(--ink-100);
+}
+
+.el-card__body {
+  padding: var(--space-5);
+}
+
+/* ---------------------------------------------------------------------------
+   5. 表格 ★ 核心
+   ---------------------------------------------------------------------------
+   本项目「让看数字成为视觉特征」的落点：
+   · 只保留横向分隔线，去掉全部竖线（border 属性的竖线在本层被消解）
+   · 表头用 sinken 底 + 600 字重，充当"列标题栏"而非装饰
+   · 斑马纹降到几乎不可见（保留极弱的行长追踪，否则密集表格会串行）
+   · 行高 44px，兼顾信息密度与平板触控 */
+.el-table {
+  --el-table-border-color: var(--ink-100);
+  --el-table-text-color: var(--ink-700);
+  --el-table-header-text-color: var(--ink-600);
+  --el-table-header-bg-color: var(--ink-50);
+  --el-table-row-hover-bg-color: var(--brand-50);
+  --el-table-current-row-bg-color: var(--brand-100);
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-expanded-cell-bg-color: var(--surface-sunken);
+
+  font-size: var(--text-base);
+}
+
+/* 表头：加粗 + 冷灰底，形成稳定的列锚点 */
+.el-table th.el-table__cell {
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.01em;
+}
+
+.el-table th.el-table__cell > .cell {
+  font-weight: var(--weight-semibold);
+}
+
+/* 行高与内边距：44px —— 信息密度与触控热区的平衡点 */
+.el-table th.el-table__cell,
+.el-table td.el-table__cell {
+  padding: 9px 0;
+}
+
+.el-table .cell {
+  padding: 0 var(--space-3);
+  line-height: var(--leading-normal);
+}
+
+/* ★ 消解 border 竖线：页面即便仍写 `border`，视觉上也是"只有横线"的专业表格 */
+.el-table--border {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.el-table--border .el-table__cell {
+  border-right: none;
+}
+
+.el-table--border::after,
+.el-table--group::after {
+  display: none;
+}
+
+/* 消解 stripe 的高对比斑马纹，只留极弱的行追踪 */
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background-color: var(--ink-50);
+}
+
+/* 表头区域的竖线同样去掉 */
+.el-table--border .el-table__header-wrapper th.el-table__cell {
+  border-right: none;
+}
+
+/* 固定列：去掉 EL 默认的投影阴影，改用细分隔线（保留"列被固定"的信号但更克制） */
+.el-table__fixed-right::before,
+.el-table__fixed::before {
+  display: none;
+}
+
+.el-table--border .el-table-fixed-column--right.is-first-column::before,
+.el-table--border .el-table-fixed-column--left.is-last-column::before {
+  box-shadow: none;
+}
+
+/* 空数据：表格空状态与 el-empty 收敛到同一套排版语言。
+   Element 自带的灰阶插画是最强的"模板感"来源之一 —— 直接隐藏，只保留文案。
+   新页面请使用 AppEmpty（图标 + 标题 + 说明 + 可选操作）。 */
+.el-table__empty-text {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink-600);
+}
+
+.el-table__empty-block img,
+.el-table__empty-block svg {
+  display: none;
+}
+
+.el-empty {
+  padding: var(--space-8) var(--space-5);
+}
+
+.el-empty__image {
+  display: none;
+}
+
+.el-empty__description {
+  margin-top: 0;
+}
+
+.el-empty__description p {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-normal);
+  color: var(--ink-600);
+}
+
+/* ---------------------------------------------------------------------------
+   6. 分页
+   --------------------------------------------------------------------------- */
+.el-pagination {
+  --el-pagination-font-size: var(--text-sm);
+  --el-pagination-button-height: 30px;
+  --el-pagination-button-width: 30px;
+  --el-pagination-item-gap: var(--space-1);
+
+  font-weight: var(--weight-normal);
+}
+
+.el-pagination.is-background .el-pager li {
+  border-radius: var(--radius-sm);
+  font-weight: var(--weight-medium);
+}
+
+.el-pagination.is-background .btn-prev,
+.el-pagination.is-background .btn-next {
+  border-radius: var(--radius-sm);
+}
+
+/* ---------------------------------------------------------------------------
+   7. 表单
+   --------------------------------------------------------------------------- */
+/* 项目原有 700 字重过重，改为 500 并统一字色 */
+.el-form-item__label {
+  font-weight: var(--weight-medium);
+  color: var(--ink-600);
+}
+
+.el-form-item__error {
+  font-size: var(--text-xs);
+}
+
+/* ---------------------------------------------------------------------------
+   8. 弹窗 / 抽屉 / 气泡
+   --------------------------------------------------------------------------- */
+.el-dialog {
+  --el-dialog-border-radius: var(--radius-lg);
+
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+
+.el-dialog__header {
+  padding: var(--space-5) var(--space-6) var(--space-3);
+  margin-right: 0;
+  border-bottom: 1px solid var(--ink-100);
+}
+
+.el-dialog__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-900);
+}
+
+.el-dialog__body {
+  padding: var(--space-5) var(--space-6);
+  color: var(--ink-700);
+}
+
+.el-dialog__footer {
+  padding: var(--space-3) var(--space-6) var(--space-5);
+  border-top: 1px solid var(--ink-100);
+}
+
+.el-drawer__header {
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-900);
+  border-bottom: 1px solid var(--ink-100);
+}
+
+.el-popper {
+  --el-popover-border-radius: var(--radius-md);
+}
+
+.el-popper.is-light {
+  border-color: var(--border-default);
+  box-shadow: var(--shadow-md);
+}
+
+/* ---------------------------------------------------------------------------
+   9. 标签 / 徽标
+   --------------------------------------------------------------------------- */
+.el-tag {
+  font-weight: var(--weight-medium);
+  border-color: transparent;
+  border-radius: var(--radius-xs);
+}
+
+.el-tag--large {
+  border-radius: var(--radius-sm);
+}
+
+/* ---------------------------------------------------------------------------
+   10. 描述列表
+   --------------------------------------------------------------------------- */
+.el-descriptions {
+  --el-descriptions-item-bordered-label-background: var(--ink-50);
+}
+
+.el-descriptions__label {
+  font-weight: var(--weight-medium);
+  color: var(--ink-600);
+}
+
+.el-descriptions__content {
+  color: var(--ink-700);
+}
+
+/* ---------------------------------------------------------------------------
+   11. 全局反馈
+   --------------------------------------------------------------------------- */
+.el-message {
+  --el-message-border-radius: var(--radius-md);
+
+  box-shadow: var(--shadow-md);
+}
+
+.el-message-box {
+  --el-messagebox-border-radius: var(--radius-lg);
+}
+
+.el-notification {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ---------------------------------------------------------------------------
+   12. 其他细节
+   --------------------------------------------------------------------------- */
+/* 分段控件 / 单选按钮组：统一为"实心选中块"而非浅色描边 */
+.el-radio-button__inner {
+  font-weight: var(--weight-medium);
+}
+
+/* 面包屑 */
+.el-breadcrumb {
+  font-size: var(--text-sm);
+}
+
+.el-breadcrumb__inner,
+.el-breadcrumb__inner a {
+  font-weight: var(--weight-normal);
+  color: var(--ink-500);
+}
+
+.el-breadcrumb__item:last-child .el-breadcrumb__inner {
+  color: var(--ink-700);
+}
+
+/* 骨架屏：比 v-loading 的转圈更少打断，用于首屏 */
+.el-skeleton__item {
+  background: var(--ink-100);
+}
+
+/* ---------------------------------------------------------------------------
+   13. 响应式兜底
+   ---------------------------------------------------------------------------
+   页面里存在大量写死宽度的弹窗（如 width="480px"）。此处在窄屏统一收口，
+   使**未改版的页面**也能在手机 / 平板竖屏下不溢出。 */
+@media (width <= 640px) {
+  .el-overlay-dialog .el-dialog {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px) !important;
+    margin: 4vh auto !important;
+  }
+
+  .el-dialog__body {
+    padding: var(--space-4);
+  }
+}
+
+/* 平板竖屏：筛选区与表单项允许换行，避免横向滚动 */
+@media (width <= 1024px) {
+  .el-form--inline .el-form-item {
+    margin-right: var(--space-4);
+  }
+}

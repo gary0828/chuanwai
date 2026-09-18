@@ -11,6 +11,7 @@ import {
   getAllClasses,
   getAllCourses
 } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "Makeups"
@@ -190,7 +191,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="补课管理" description="缺课的补课安排与销课" />
     <el-card shadow="never">
       <!-- 筛选 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

@@ -14,6 +14,7 @@ import {
   getAllClasses
 } from "@/api/attendance";
 import { useUserStoreHook } from "@/store/modules/user";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "RecruitLeads"
@@ -296,7 +297,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="线索管理" description="招生线索跟进与转化" />
     <el-tabs
       v-model="activeTab"
       @tab-change="n => (n === 'channels' ? loadChannels() : null)"

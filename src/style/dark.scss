@@ -27,7 +27,8 @@ html.dark {
 
   .app-main,
   .app-main-nofixed-header {
-    background: #020409 !important;
+    /* 原为 #020409（近纯黑）。深色页面底改用带蓝调的深灰，与浅色模式共用同一语义变量 */
+    background: var(--surface-page) !important;
   }
 
   /* 标签页 */

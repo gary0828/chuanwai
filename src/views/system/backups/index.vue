@@ -7,6 +7,7 @@ import {
   restoreBackup,
   deleteBackup
 } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "SysBackups"
@@ -87,7 +88,8 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="数据备份" description="数据库备份、下载与恢复" />
     <el-card shadow="never">
       <template #header>
         <div class="flex items-center justify-between">

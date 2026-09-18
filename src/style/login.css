@@ -1,96 +1,219 @@
-.wave {
-  position: fixed;
-  height: 100%;
-  width: 80%;
-  left: 0;
-  bottom: 0;
-  z-index: -1;
+/* ============================================================================
+   登录页样式 · 教务管理系统
+   ----------------------------------------------------------------------------
+   ⚠️ 本文件经 `<style scoped> @import` 引入。@import 的内容**不会**经过 scoped
+      转换，因此这里的类名一律带 `.login-` 前缀，避免污染全站其他页面。
+   ⚠️ 数值引用 src/style/tokens.scss（tokens 先于本文件加载）。
+
+   设计意图：左侧回答"这是谁的系统、我能不能用"，右侧才是登录动作。
+   不用波浪背景与插画 —— 教务系统的第一印象应当是"可靠"，不是"活泼"。
+   ============================================================================ */
+
+/* 登录框居中于「整个页面」，而不是居中于右侧分栏 —— 所以品牌区用绝对定位贴在
+   左侧，登录面板占满整页。品牌区宽度取 36% 与「卡片左边缘」的较小值，
+   保证卡片在任何视口下都不会压到品牌区（卡片宽 380px，居中后左边缘 = 50vw - 190px）。 */
+.login-page {
+  position: relative;
+  min-height: 100vh;
+  background: var(--surface-page);
 }
 
-.login-container {
-  width: 100vw;
-  height: 100vh;
-  max-width: 100%;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  grid-gap: 18rem;
-  padding: 0 2rem;
-}
-
-.img {
+/* ---------------------------------------------------------------------------
+   品牌侧
+   --------------------------------------------------------------------------- */
+.login-brand {
+  position: absolute;
+  inset: 0 auto 0 0;
   display: flex;
-  justify-content: flex-end;
-  align-items: center;
-}
-
-.img img {
-  width: 500px;
-}
-
-.login-box {
-  display: flex;
-  align-items: center;
-  text-align: center;
+  flex-direction: column;
+  justify-content: space-between;
+  width: min(36%, calc(50vw - 230px));
+  padding: var(--space-12) var(--space-10);
   overflow: hidden;
+  color: #fff;
+  background: var(--brand-800);
+}
+
+/* 细网格纹理：呼应"表格与秩序"的系统性格。极淡（4% 白）且向右下渐隐，
+   不参与信息传达，因此对辅助技术隐藏（aria-hidden 见模板）。 */
+.login-brand__grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 6%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 6%) 1px, transparent 1px);
+  background-size: 32px 32px;
+  -webkit-mask-image: radial-gradient(
+    ellipse at 25% 12%,
+    #000 0%,
+    transparent 72%
+  );
+  mask-image: radial-gradient(ellipse at 25% 12%, #000 0%, transparent 72%);
+}
+
+.login-brand__content {
+  position: relative;
+  max-width: 34rem;
+}
+
+.login-brand__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: rgb(255 255 255 / 10%);
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: var(--radius-sm);
+}
+
+.login-brand__name {
+  margin: var(--space-5) 0 0;
+  font-size: 26px;
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.015em;
+}
+
+.login-brand__slogan {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  color: rgb(255 255 255 / 68%);
+}
+
+.login-brand__foot {
+  position: relative;
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: rgb(255 255 255 / 45%);
+}
+
+/* ---------------------------------------------------------------------------
+   表单侧
+   --------------------------------------------------------------------------- */
+.login-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--space-8) var(--space-6);
+}
+
+.login-panel__theme {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-5);
 }
 
 .login-form {
-  width: 360px;
+  width: 100%;
+  max-width: 380px;
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
-.avatar {
-  width: 350px;
-  height: 80px;
+.login-form__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-900);
+  letter-spacing: -0.01em;
 }
 
-.login-form h2 {
-  text-transform: uppercase;
-  margin: 15px 0;
-  color: #999;
-  font:
-    bold 200% Consolas,
-    Monaco,
-    monospace;
+.login-form__subtitle {
+  margin: var(--space-1) 0 var(--space-6);
+  font-size: var(--text-sm);
+  color: var(--ink-500);
 }
 
-@media screen and (max-width: 1180px) {
-  .login-container {
-    grid-gap: 9rem;
+/* 多端登录占位（本期不实现） */
+.login-form__alt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: var(--space-5);
+  font-size: var(--text-xs);
+}
+
+.login-form__alt span {
+  color: var(--ink-400);
+  cursor: not-allowed;
+  user-select: none;
+}
+
+.login-panel__foot {
+  margin: var(--space-5) 0 0;
+  font-size: var(--text-xs);
+  color: var(--ink-400);
+}
+
+/* ---------------------------------------------------------------------------
+   响应式 · 1280px 及以下
+   ---------------------------------------------------------------------------
+   窄屏下品牌区放不下 slogan 与页脚，且会与居中的卡片抢空间，
+   因此改为上下布局：品牌侧压缩成顶部横条（只留标记与系统名）。
+   阈值取 1280 而非 1024 —— 1024~1280 区间品牌区已窄到无法承载正文。 */
+@media (width <= 1280px) {
+  .login-page {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .login-brand {
+    position: relative;
+    inset: auto;
+    flex: none;
+    flex-direction: row;
+    gap: var(--space-3);
+    align-items: center;
+    justify-content: flex-start;
+    width: auto;
+    padding: var(--space-5) var(--space-6);
+  }
+
+  .login-brand__grid,
+  .login-brand__slogan,
+  .login-brand__foot {
+    display: none;
+  }
+
+  .login-brand__name {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  .login-brand__mark {
+    width: 32px;
+    height: 32px;
+    font-size: var(--text-xs);
+  }
+
+  .login-panel {
+    flex: 1;
+    min-height: 0;
+    padding: var(--space-8) var(--space-5);
+  }
+}
+
+/* 手机：表单占满宽度但仍保持卡片外观 */
+@media (width <= 640px) {
+  .login-panel {
+    justify-content: flex-start;
+    padding: var(--space-5) var(--space-4) var(--space-8);
   }
 
   .login-form {
-    width: 290px;
-  }
-
-  .login-form h2 {
-    font-size: 2.4rem;
-    margin: 8px 0;
-  }
-
-  .img img {
-    width: 360px;
-  }
-
-  .avatar {
-    width: 280px;
-    height: 80px;
-  }
-}
-
-@media screen and (max-width: 968px) {
-  .wave {
-    display: none;
-  }
-
-  .img {
-    display: none;
-  }
-
-  .login-container {
-    grid-template-columns: 1fr;
-  }
-
-  .login-box {
-    justify-content: center;
+    padding: var(--space-6) var(--space-5);
   }
 }

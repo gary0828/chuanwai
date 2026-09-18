@@ -10,6 +10,7 @@ import {
   getStudentList
 } from "@/api/attendance";
 import { useUserStoreHook } from "@/store/modules/user";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "FinancePayments"
@@ -229,7 +230,8 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="缴费记录" description="收款流水与导出" />
     <el-card shadow="never">
       <!-- 筛选 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

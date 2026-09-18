@@ -1,13 +1,16 @@
-/* 亮白色 */
+/* 亮白色 · 本项目默认主题
+   菜单配色接管为品牌深靛蓝系（原为 Element 模板灰 + #4091f7 蓝）。
+   其余预设（道奇蓝 / 深紫罗兰 / 深粉 / 猩红 / 橙红 / 绿宝石 / 酸橙绿）
+   保持模板原样：它们是设置面板里的可选风格，非默认路径，不在此处改动。 */
 html[data-theme="light"] {
-  --pure-theme-sub-menu-active-text: #000000d9;
+  --pure-theme-sub-menu-active-text: var(--brand-700);
   --pure-theme-menu-bg: #fff;
-  --pure-theme-menu-hover: #f6f6f6;
+  --pure-theme-menu-hover: var(--brand-50);
   --pure-theme-sub-menu-bg: #fff;
-  --pure-theme-menu-text: rgb(0 0 0 / 60%);
+  --pure-theme-menu-text: var(--ink-600);
   --pure-theme-sidebar-logo: #fff;
-  --pure-theme-menu-title-hover: #000;
-  --pure-theme-menu-active-before: #4091f7;
+  --pure-theme-menu-title-hover: var(--brand-700);
+  --pure-theme-menu-active-before: var(--brand-600);
 }
 
 /* 道奇蓝 */

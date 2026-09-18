@@ -7,6 +7,7 @@ import {
   deleteFinanceRefund
 } from "@/api/attendance";
 import { useUserStoreHook } from "@/store/modules/user";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "FinanceRefunds"
@@ -107,7 +108,8 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="退费管理" description="退费申请与审批；通过后退班" />
     <el-card shadow="never">
       <!-- 筛选 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

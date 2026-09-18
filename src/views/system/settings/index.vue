@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import { getSettings, updateSettings } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "SysSettings"
@@ -49,7 +50,8 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="系统参数" description="机构信息与业务参数维护" />
     <el-card v-loading="loading" shadow="never" class="max-w-3xl">
       <template #header>
         <span class="font-medium">缺勤预警参数</span>

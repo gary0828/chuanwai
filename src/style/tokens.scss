@@ -1,0 +1,260 @@
+/* ============================================================================
+   设计 Token · 教务管理系统
+   ----------------------------------------------------------------------------
+   方向：专业信赖（Institutional Trust）
+   定位：培训机构员工端 CRM —— admin / teacher，台式机 + 平板
+   原则：信息密度优先于装饰；边界靠留白与细分隔线，不靠重阴影；
+        数字逐位对齐（tabular-nums）是本系统的核心视觉特征。
+
+   ★ 本文件是全站视觉的唯一权威源。
+     页面与组件不得硬编码颜色、阴影、圆角、动效时长，一律引用此处变量。
+   ★ 浏览器基线：Chrome 111+ / Edge 111+ / Safari 16.2+ / Firefox 113+
+     （仅语义色的派生变体依赖 color-mix，见 element-plus.scss）
+   ========================================================================== */
+
+/* 响应式断点：CSS 变量无法用于 @media，故以 SCSS 变量提供，供页面 @use 引用 */
+$bp-sm: 640px;   /* 手机 */
+$bp-md: 768px;   /* 平板竖屏 */
+$bp-lg: 1024px;  /* 平板横屏 / 小笔记本 */
+$bp-xl: 1440px;  /* 桌面 */
+
+html:root {
+  /* ── 0. 混合基色 ────────────────────────────────────────────────────────
+     Element 的 light-x 变体（如 --el-color-primary-light-9）在浅色模式下需
+     向白混合、深色模式下需向黑混合。用一个变量切换混合方向，
+     省去为深浅两套模式重复书写近 30 条 color-mix。 */
+  --mix-toward: #fff;
+
+  /* ── 1. 品牌色阶 · 深靛蓝 ────────────────────────────────────────────────
+     比 Element 出厂蓝 (#409EFF) 更沉、饱和度更低：传达"可信赖的机构"，
+     而非"通用科技产品"。600 为基准色，由 platform-config.json 的
+     EpThemeColor 注入，运行时自动派生 light-3/5/7/8/9 与 dark-2。 */
+  --brand-50: #f2f7fb;
+  --brand-100: #e8f0f8;
+  --brand-200: #c9dcef;
+  --brand-300: #9dbfd9;
+  --brand-400: #5e93bf;
+  --brand-500: #2a6eae; /* hover */
+  --brand-600: #1f5c99; /* 基准 = --el-color-primary */
+  --brand-700: #17456f; /* active */
+  --brand-800: #103350;
+
+  /* ── 2. 中性色阶 · 冷灰 ─────────────────────────────────────────────────
+     全部向品牌色微偏（非纯灰）——纯灰在浅底上会显"廉价"，偏蓝灰则显得精确。 */
+  --ink-900: #0f1a24; /* 主标题 */
+  --ink-800: #1b2a38;
+  --ink-700: #2c3d4d; /* 正文强调 */
+  --ink-600: #4a5c6d; /* 正文 / 表头 */
+  --ink-500: #64798a; /* 次要说明 */
+  --ink-400: #8b9ca9; /* placeholder / 禁用文字 */
+  --ink-300: #c3ceda; /* 强边框 / 禁用底 */
+  --ink-200: #dde5ec; /* 默认边框 */
+  --ink-100: #edf2f6; /* 分割线 / 表头底 */
+  --ink-50: #f6f9fb; /* 页面底 / 行 hover */
+
+  /* ── 3. 表面与边框 ───────────────────────────────────────────────────── */
+  --surface-page: #f4f7fa;
+  --surface-card: #ffffff;
+  --surface-sunken: #f8fafc;
+  --surface-hover: #f6f9fb;
+  --border-default: var(--ink-200);
+  --border-strong: var(--ink-300);
+
+  /* ── 4. 语义状态色 · 去糖果化 ───────────────────────────────────────────
+     考勤口径：正常 / 迟到 / 早退 / 缺勤 / 请假
+     财务口径：涨红跌绿（中国市场约定），单独定义为 --finance-up / down */
+  --status-success: #2e7d5b; /* 正常 · 已通过 · 在读 */
+  --status-warning: #b7791f; /* 迟到 · 早退 · 待处理 */
+  --status-danger: #b3453c; /* 缺勤 · 驳回 · 异常 */
+  --status-info: #64798a; /* 请假 · 中性态 */
+
+  --finance-up: #b3453c; /* 收入增长 / 正向差额 —— 中国约定：涨为红 */
+  --finance-down: #2e7d5b; /* 收入下降 / 负向差额 —— 中国约定：跌为绿 */
+
+  /* ── 4b. 图表色板 ──────────────────────────────────────────────────────
+     ECharts 在 canvas 上绘制，无法消费 var()，需由 JS 读取实际色值
+     （见 src/views/welcome/index.vue 的 token() 辅助函数）。
+     考勤五态的顺序与后端 dashboard.js 的 statusDist 保持一致：
+     正常 / 迟到 / 早退 / 缺勤 / 请假。
+     迟到与早退同属"轻微异常"，用同色系不同明度区分，避免五色各自为政。 */
+  --chart-attendance-normal: #2e7d5b;
+  --chart-attendance-late: #b7791f;
+  --chart-attendance-early: #d9a545;
+  --chart-attendance-absent: #b3453c;
+  --chart-attendance-leave: #64798a;
+
+  --chart-axis-line: var(--ink-200);
+  --chart-split-line: var(--ink-100);
+  --chart-axis-label: var(--ink-500);
+
+  /* ── 5. 排版 ─────────────────────────────────────────────────────────── */
+  /* 中文场景不引入 Web 字体（中文子集动辄数 MB，得不偿失），
+     改用系统字体栈：在 Windows / macOS / iPadOS 上均落到高质量中文字体。 */
+  --font-sans:
+    "PingFang SC", "HarmonyOS Sans SC", "Source Han Sans SC",
+    "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", "Helvetica Neue",
+    sans-serif;
+
+  /* 数字对齐策略：不换等宽字体，只开启比例字体的等宽数字特性。
+     这样金额、课时、日期、统计数字能逐位对齐，而中文与数字的视觉比例不变。 */
+  --font-numeric-feature: tabular-nums;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px; /* 全站正文基准 */
+  --text-md: 16px;
+  --text-lg: 20px; /* 页面标题 */
+  --text-xl: 26px; /* 关键指标 */
+  --text-2xl: 32px;
+
+  --leading-tight: 1.3;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.75;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* ── 6. 间距 · 4px 基数 ──────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── 7. 圆角 · 克制（不做大圆角卡片） ───────────────────────────────── */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* ── 8. 阴影 · 极克制（边界主要靠边框与留白，不靠阴影） ─────────────── */
+  --shadow-xs: 0 1px 2px rgb(15 26 36 / 5%);
+  --shadow-sm: 0 1px 2px rgb(15 26 36 / 6%), 0 1px 3px rgb(15 26 36 / 4%);
+  --shadow-md: 0 4px 12px rgb(15 26 36 / 8%);
+  --shadow-lg: 0 8px 24px rgb(15 26 36 / 12%);
+
+  /* ── 9. 动效 · 只动 opacity / transform / 颜色，不动布局属性 ────────── */
+  --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94); /* ease-out-quad */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 240ms;
+
+  /* ── 10. 触控热区（平板适配硬性下限） ───────────────────────────────── */
+  --touch-target: 40px;
+  --touch-target-comfortable: 44px;
+}
+
+/* ---------------------------------------------------------------------------
+   深色模式 · 同一套语义变量的深色取值
+   ---------------------------------------------------------------------------
+   深色不是简单反色：
+   · 表面用带蓝调的深灰而非纯黑（纯黑 + 高饱和色 = 刺眼的"电竞风"）
+   · 前景色阶整体反转语义 —— --ink-900 始终表示"与背景对比最强的前景色"
+   · 品牌色提亮到在深底上仍满足白字 4.5:1 对比度
+   · 阴影换成更重的黑：深色下轻盈的浅阴影根本不可见
+   --------------------------------------------------------------------------- */
+html.dark:root {
+  /* 混合方向反转为向黑混合 */
+  --mix-toward: #000;
+
+  /* 品牌色阶 · 深色取值（600 与白字对比 4.67:1） */
+  --brand-50: #152430;
+  --brand-100: #1b3245;
+  --brand-200: #24455f;
+  --brand-300: #7fb2dc;
+  --brand-400: #5b99cf;
+  --brand-500: #3f87c6;
+  --brand-600: #3478b4;
+  --brand-700: #2a6598;
+  --brand-800: #1f4e77;
+
+  /* 前景色阶（深色下反转：900 = 最亮） */
+  --ink-900: #e9eef3;
+  --ink-800: #dce3ea;
+  --ink-700: #c2ccd6;
+  --ink-600: #9baab8;
+  --ink-500: #7d8d9c;
+  --ink-400: #61717f;
+  --ink-300: #3f4e5b;
+  --ink-200: #2c3946;
+  --ink-100: #212d38;
+  --ink-50: #18222c;
+
+  /* 表面 */
+  --surface-page: #0e161d;
+  --surface-card: #151f28;
+  --surface-sunken: #111a22;
+  --surface-hover: #1b2733;
+
+  /* 语义状态色 · 深底上提亮以保证可读 */
+  --status-success: #57b98a;
+  --status-warning: #d9a545;
+  --status-danger: #de7265;
+  --status-info: #7d8d9c;
+
+  --finance-up: #de7265;
+  --finance-down: #57b98a;
+
+  /* 图表色板 · 深色取值（在深底上提亮，保持曲线可辨识） */
+  --chart-attendance-normal: #57b98a;
+  --chart-attendance-late: #d9a545;
+  --chart-attendance-early: #e8c37a;
+  --chart-attendance-absent: #de7265;
+  --chart-attendance-leave: #7d8d9c;
+
+  /* 阴影 */
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%), 0 1px 3px rgb(0 0 0 / 30%);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 50%);
+  --shadow-lg: 0 8px 24px rgb(0 0 0 / 60%);
+}
+
+/* ============================================================================
+   全局基础层
+   ========================================================================== */
+
+/* 数字逐位对齐：全站默认开启。表格、金额、课时、统计数字因此天然对齐，
+   且无需为每个数字元素单独声明。 */
+html {
+  font-variant-numeric: var(--font-numeric-feature);
+  font-feature-settings: "tnum";
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--ink-700);
+  background: var(--surface-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizelegibility;
+}
+
+/* 键盘可达性：仅在键盘导航时显示焦点环，鼠标点击不显示（避免噪音） */
+:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+}
+
+/* 尊重系统的"减少动态效果"偏好（WCAG 2.1 / a11y 要求） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* stylelint-disable-next-line declaration-no-important */
+    animation-duration: 0.01ms !important;
+    /* stylelint-disable-next-line declaration-no-important */
+    animation-iteration-count: 1 !important;
+    /* stylelint-disable-next-line declaration-no-important */
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

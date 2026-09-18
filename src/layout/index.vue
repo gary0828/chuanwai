@@ -93,19 +93,20 @@ useResizeObserver(appWrapperRef, entries => {
   useAppStoreHook().setViewportSize({ width, height });
   width <= 760 ? setTheme("vertical") : setTheme(useAppStoreHook().layout);
   /** width app-wrapper类容器宽度
-   * 0 < width <= 760 隐藏侧边栏
-   * 760 < width <= 990 折叠侧边栏
-   * width > 990 展开侧边栏
+   * 0 < width <= 760     隐藏侧边栏
+   * 760 < width <= 1200  折叠侧边栏（覆盖平板横屏 1024：把横向空间优先让给内容区，
+   *                      避免宽表格出现横向滚动）
+   * width > 1200         展开侧边栏
    */
   if (width > 0 && width <= 760) {
     toggle("mobile", false);
     isAutoCloseSidebar = true;
-  } else if (width > 760 && width <= 990) {
+  } else if (width > 760 && width <= 1200) {
     if (isAutoCloseSidebar) {
       toggle("desktop", false);
       isAutoCloseSidebar = false;
     }
-  } else if (width > 990 && !set.sidebar.isClickCollapse) {
+  } else if (width > 1200 && !set.sidebar.isClickCollapse) {
     toggle("desktop", true);
     isAutoCloseSidebar = true;
   } else {

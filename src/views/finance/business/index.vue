@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { getBusinessStatistics } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "FinanceBusiness"
@@ -38,7 +39,8 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="经营报表" description="营收、招生与课消的经营口径汇总" />
     <div class="mb-4 flex items-center gap-2">
       <span class="text-sm text-gray-500"
         >机构经营总览：招生转化 / 营收 / 续班 / 在读</span

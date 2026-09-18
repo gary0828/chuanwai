@@ -4,6 +4,7 @@ import { ref, reactive, computed, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import { getConsumptionStats } from "@/api/teaching";
 import { useUserStoreHook } from "@/store/modules/user";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "FinanceConsumption"
@@ -74,7 +75,8 @@ onMounted(query);
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="课消统计" description="课时消耗明细与汇总" />
     <!-- 筛选 -->
     <el-card shadow="never" class="mb-4">
       <div class="flex flex-wrap items-center gap-2">

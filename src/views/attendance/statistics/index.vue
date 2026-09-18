@@ -13,6 +13,7 @@ import {
   getAttendanceWarnings,
   getMonthlyStatistics
 } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "Statistics"
@@ -289,7 +290,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="统计报表" description="出勤与课时的多维统计" />
     <el-tabs v-model="activeTab">
       <!-- ================= 出勤明细 ================= -->
       <el-tab-pane label="出勤明细" name="detail">

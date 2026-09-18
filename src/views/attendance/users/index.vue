@@ -9,6 +9,7 @@ import {
   deleteUser
 } from "@/api/attendance";
 import { useUserStoreHook } from "@/store/modules/user";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "Users"
@@ -185,7 +186,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="员工账号" description="教务管理员与任课教师的账号、角色与数据权限" />
     <el-card shadow="never">
       <!-- 搜索 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

@@ -5,6 +5,7 @@ import { ElMessage } from "element-plus";
 import { getStudentList } from "@/api/attendance";
 import { getStudentReport } from "@/api/teaching";
 import { useUserStoreHook } from "@/store/modules/user";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "TeachingReports"
@@ -110,7 +111,8 @@ function handlePrint() {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="学习报告" description="按学员生成阶段性学习报告" />
     <!-- 学员选择 -->
     <el-card shadow="never" class="mb-4">
       <div class="flex flex-wrap items-center gap-2">

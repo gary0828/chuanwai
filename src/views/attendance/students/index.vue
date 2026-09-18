@@ -11,6 +11,7 @@ import {
   updateStudent,
   deleteStudent
 } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "Students"
@@ -289,7 +290,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="学生管理" description="学员档案、分班与批量导入" />
     <el-card shadow="never">
       <!-- 搜索 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

@@ -3,7 +3,7 @@ import Motion from "./utils/motion";
 import { useRouter } from "vue-router";
 import { message } from "@/utils/message";
 import { createLoginRules } from "./utils/rule";
-import { ref, reactive, toRaw } from "vue";
+import { ref, reactive } from "vue";
 import { debounce } from "@pureadmin/utils";
 import { useNav } from "@/layout/hooks/useNav";
 import { useEventListener } from "@vueuse/core";
@@ -11,7 +11,6 @@ import type { FormInstance } from "element-plus";
 import { useLayout } from "@/layout/hooks/useLayout";
 import { useUserStoreHook } from "@/store/modules/user";
 import { initRouter, getTopMenu } from "@/router/utils";
-import { bg, avatar, illustration } from "./utils/static";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { useDataThemeChange } from "@/layout/hooks/useDataThemeChange";
 import { ReImageVerify } from "@/components/ReImageVerify";
@@ -122,132 +121,142 @@ useEventListener(document, "keydown", ({ code }) => {
 </script>
 
 <template>
-  <div class="select-none">
-    <img :src="bg" class="wave" />
-    <div class="flex-c absolute right-5 top-3">
-      <!-- 主题 -->
-      <el-switch
-        v-model="dataTheme"
-        inline-prompt
-        :active-icon="dayIcon"
-        :inactive-icon="darkIcon"
-        @change="dataThemeChange"
-      />
-    </div>
-    <div class="login-container">
-      <div class="img">
-        <component :is="toRaw(illustration)" />
+  <div class="login-page select-none">
+    <!-- 品牌侧：先回答"这是谁的系统、我能不能用"，再让用户处理登录动作 -->
+    <aside class="login-brand">
+      <div class="login-brand__grid" aria-hidden="true" />
+
+      <div class="login-brand__content">
+        <span class="login-brand__mark">教务</span>
+        <h1 class="login-brand__name">{{ title }}</h1>
+        <p class="login-brand__slogan">
+          考勤、成绩、课表、学员档案与财务，都在同一处。
+        </p>
       </div>
-      <div class="login-box">
-        <div class="login-form">
-          <avatar class="avatar" />
-          <Motion>
-            <h2 class="outline-hidden">{{ title }}</h2>
+
+      <p class="login-brand__foot">
+        仅限本校员工使用 · 账号由教务管理员分配
+      </p>
+    </aside>
+
+    <!-- 表单侧 -->
+    <main class="login-panel">
+      <div class="login-panel__theme">
+        <el-tooltip content="切换明暗主题" placement="bottom">
+          <el-switch
+            v-model="dataTheme"
+            inline-prompt
+            :active-icon="dayIcon"
+            :inactive-icon="darkIcon"
+            @change="dataThemeChange"
+          />
+        </el-tooltip>
+      </div>
+
+      <div class="login-form">
+        <h2 class="login-form__title">登录</h2>
+        <p class="login-form__subtitle">使用管理员分配的账号与密码</p>
+
+        <el-form
+          ref="ruleFormRef"
+          :model="ruleForm"
+          :rules="loginRules"
+          size="large"
+        >
+          <Motion :delay="100">
+            <el-form-item
+              :rules="[
+                {
+                  required: true,
+                  message: '请输入账号',
+                  trigger: 'blur'
+                }
+              ]"
+              prop="username"
+            >
+              <el-input
+                v-model="ruleForm.username"
+                clearable
+                placeholder="账号"
+                :prefix-icon="useRenderIcon(User)"
+              />
+            </el-form-item>
           </Motion>
 
-          <el-form
-            ref="ruleFormRef"
-            :model="ruleForm"
-            :rules="loginRules"
-            size="large"
-          >
-            <Motion :delay="100">
-              <el-form-item
-                :rules="[
-                  {
-                    required: true,
-                    message: '请输入账号',
-                    trigger: 'blur'
-                  }
-                ]"
-                prop="username"
+          <Motion :delay="150">
+            <el-form-item prop="password">
+              <el-input
+                v-model="ruleForm.password"
+                clearable
+                show-password
+                placeholder="密码"
+                :prefix-icon="useRenderIcon(Lock)"
+              />
+            </el-form-item>
+          </Motion>
+
+          <Motion v-if="captchaEnabled" :delay="200">
+            <el-form-item prop="verifyCode">
+              <el-input
+                v-model="ruleForm.verifyCode"
+                clearable
+                placeholder="验证码"
+                :prefix-icon="useRenderIcon(Keyhole)"
               >
-                <el-input
-                  v-model="ruleForm.username"
-                  clearable
-                  placeholder="账号"
-                  :prefix-icon="useRenderIcon(User)"
-                />
-              </el-form-item>
-            </Motion>
+                <template v-slot:append>
+                  <ReImageVerify
+                    ref="verifyRef"
+                    v-model:code="imgCode"
+                    title="看不清？点击图片换一张"
+                  />
+                </template>
+              </el-input>
+            </el-form-item>
+          </Motion>
 
-            <Motion :delay="150">
-              <el-form-item prop="password">
-                <el-input
-                  v-model="ruleForm.password"
-                  clearable
-                  show-password
-                  placeholder="密码"
-                  :prefix-icon="useRenderIcon(Lock)"
-                />
-              </el-form-item>
-            </Motion>
+          <Motion :delay="250">
+            <el-button
+              class="w-full mt-2!"
+              type="primary"
+              size="large"
+              :loading="loading"
+              :disabled="disabled"
+              @click="onLogin(ruleFormRef)"
+            >
+              登录
+            </el-button>
+          </Motion>
 
-            <Motion v-if="captchaEnabled" :delay="200">
-              <el-form-item prop="verifyCode">
-                <el-input
-                  v-model="ruleForm.verifyCode"
-                  clearable
-                  placeholder="验证码"
-                  :prefix-icon="useRenderIcon(Keyhole)"
-                >
-                  <template v-slot:append>
-                    <ReImageVerify
-                      ref="verifyRef"
-                      v-model:code="imgCode"
-                      title="看不清？点击图片换一张"
-                    />
-                  </template>
-                </el-input>
-              </el-form-item>
-            </Motion>
-
-            <Motion :delay="250">
-              <el-button
-                class="w-full mt-4!"
-                size="default"
-                type="primary"
-                :loading="loading"
-                :disabled="disabled"
-                @click="onLogin(ruleFormRef)"
+          <!--
+            预留多端登录入口（UI 占位，本期不实现）：
+            1. 手机号登录：后端已预留 POST /api/auth/sms-code（发验证码），接入时调用
+               POST /api/auth/login，body 传 { type: 'phone', phone, code }；
+            2. 微信扫码登录：后端已预留 POST /api/auth/wechat（code 换 token），
+               与微信小程序共用 user_oauth 表绑定 openid/unionid。
+            接入时移除 disabled 占位并调用对应接口即可。
+          -->
+          <Motion :delay="300">
+            <div class="login-form__alt">
+              <el-tooltip
+                content="手机号登录功能开发中，敬请期待"
+                placement="bottom"
               >
-                登录
-              </el-button>
-            </Motion>
-
-            <!--
-              预留多端登录入口（UI 占位，本期不实现）：
-              1. 手机号登录：后端已预留 POST /api/auth/sms-code（发验证码），接入时调用
-                 POST /api/auth/login，body 传 { type: 'phone', phone, code }；
-              2. 微信扫码登录：后端已预留 POST /api/auth/wechat（code 换 token），
-                 与微信小程序共用 user_oauth 表绑定 openid/unionid。
-              接入时移除 disabled 占位并调用对应接口即可。
-            -->
-            <Motion :delay="300">
-              <div class="mt-5 flex items-center justify-center text-[12px]">
-                <el-tooltip
-                  content="手机号登录功能开发中，敬请期待"
-                  placement="bottom"
-                >
-                  <span class="cursor-not-allowed select-none opacity-60"
-                    >手机号登录</span
-                  >
-                </el-tooltip>
-                <el-divider direction="vertical" />
-                <el-tooltip
-                  content="微信扫码登录功能开发中，敬请期待"
-                  placement="bottom"
-                >
-                  <span class="cursor-not-allowed select-none opacity-60"
-                    >微信扫码登录</span
-                  >
-                </el-tooltip>
-              </div>
-            </Motion>
-          </el-form>
-        </div>
+                <span>手机号登录</span>
+              </el-tooltip>
+              <el-divider direction="vertical" />
+              <el-tooltip
+                content="微信扫码登录功能开发中，敬请期待"
+                placement="bottom"
+              >
+                <span>微信扫码登录</span>
+              </el-tooltip>
+            </div>
+          </Motion>
+        </el-form>
       </div>
-    </div>
+
+      <p class="login-panel__foot">忘记密码请联系教务管理员重置</p>
+    </main>
   </div>
 </template>
 

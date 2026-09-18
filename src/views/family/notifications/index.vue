@@ -6,6 +6,7 @@ import {
   markNotificationRead,
   markAllNotificationsRead
 } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "FamilyNotifications"
@@ -91,7 +92,8 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="通知记录" description="已发送的家校通知存档" />
     <el-card shadow="never">
       <div class="mb-4 flex flex-wrap items-center gap-2">
         <el-input

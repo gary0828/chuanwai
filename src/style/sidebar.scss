@@ -181,17 +181,18 @@
 
     .el-menu-item.is-active.nest-menu > * {
       z-index: 1;
-      color: #fff;
+      color: var(--brand-700);
     }
 
     .el-menu-item.is-active.nest-menu::before {
       position: absolute;
-      inset: 0 8px;
+      inset: 2px 8px 2px 0;
       clear: both;
       margin: 4px 0;
       content: "";
-      background: var(--el-color-primary) !important;
-      border-radius: 3px;
+      background: var(--brand-100) !important;
+      border-left: 3px solid var(--brand-600);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     }
 
     .el-menu .el-menu--inline .el-sub-menu__title,
@@ -230,17 +231,18 @@
     /* 无子集的激活菜单背景 */
     .is-active.submenu-title-noDropdown.outer-most > * {
       z-index: 1;
-      color: #fff;
+      color: var(--brand-700);
     }
 
     .is-active.submenu-title-noDropdown.outer-most::before {
       position: absolute;
-      inset: 0 8px;
+      inset: 2px 8px 2px 0;
       clear: both;
       margin: 4px 0;
       content: "";
-      background: var(--el-color-primary) !important;
-      border-radius: 3px;
+      background: var(--brand-100) !important;
+      border-left: 3px solid var(--brand-600);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     }
   }
 
@@ -294,16 +296,17 @@
 
     .el-menu-item.is-active.nest-menu > * {
       z-index: 1;
-      color: #fff;
+      color: var(--brand-700);
     }
 
     .el-menu-item.is-active.nest-menu::before {
       position: absolute;
-      inset: 0 8px;
+      inset: 2px 8px 2px 0;
       clear: both;
       content: "";
-      background: var(--el-color-primary) !important;
-      border-radius: 3px;
+      background: var(--brand-100) !important;
+      border-left: 3px solid var(--brand-600);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     }
 
     .el-menu-item,
@@ -382,7 +385,7 @@
 
     .el-menu-item.is-active.nest-menu > * {
       z-index: 1;
-      color: #fff;
+      color: var(--brand-700);
     }
 
     .el-menu-item.is-active.nest-menu::before {
@@ -390,8 +393,9 @@
       inset: 0 5px;
       clear: both;
       content: "";
-      background: var(--el-color-primary) !important;
-      border-radius: 3px;
+      background: var(--brand-100) !important;
+      border-left: 3px solid var(--brand-600);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     }
   }
 

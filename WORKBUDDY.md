@@ -80,6 +80,15 @@ export const getStudentList = (params?: object) => {
 - 需要覆盖 Element Plus 样式时，使用官方主题变量或 `:deep()`。
 - 响应式布局使用 Tailwind 断点类（`sm:` / `md:` / `lg:` / `xl:`）。
 
+**视觉规范（2026-09-18 全站改版后新增，优先级等同于官方规范）**
+
+全站视觉规范见 `docs/前端视觉规范-2026-09-18.md`，设计意图见根目录 `.impeccable.md`。四条硬性约束：
+
+1. **颜色 / 间距 / 圆角 / 阴影 / 动效时长一律引用 `src/style/tokens.scss` 的变量**；页面内禁止出现硬编码色值（`#xxxxxx` 即为缺陷）。
+2. **`src/style/element-plus-override.scss` 的引入位置不可挪动** —— 它必须在 `element-plus/dist/index.css` **之后**引入（见 `src/main.ts`）。Element 官方规则与本文件大多同特异性，本文件靠「后加载」取胜；一旦挪到前面就会被覆盖，只能靠堆 `!important` 补救。
+3. **变量覆盖统一用 `html:root`**（而非 `:root`），深色覆盖用 `html.dark:root`（特异性更高，不受加载顺序影响）。
+4. **页面骨架统一**：`.app-page` 根容器 + `AppPageHeader` 页头 + `.page-card(--flush)` 内容卡 + `.page-toolbar` 筛选条；空状态用 `AppEmpty`（文案须说清「为什么空 / 下一步做什么」）；数字列加 `.num` 并右对齐；弹窗宽度用 `min(480px, calc(100vw - 32px))` 形态，避免窄屏溢出。
+
 #### F. 环境变量
 
 - 所有自定义环境变量必须以 `VITE_` 开头。

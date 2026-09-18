@@ -7,6 +7,7 @@ import {
   updateNotice,
   deleteNotice
 } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
 
 defineOptions({
   name: "SysNotices"
@@ -152,7 +153,8 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="app-page">
+    <AppPageHeader title="通知公告" description="面向员工的通知发布与置顶" />
     <el-card shadow="never">
       <!-- 搜索 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

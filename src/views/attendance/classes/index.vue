@@ -9,7 +9,10 @@ import {
   getClassStudents,
   getUserList
 } from "@/api/attendance";
+import { AppPageHeader } from "@/components/AppPageHeader";
+import { AppEmpty } from "@/components/AppEmpty";
 import { useUserStoreHook } from "@/store/modules/user";
+import PlusIcon from "~icons/ep/plus";
 
 defineOptions({
   name: "Classes"
@@ -170,13 +173,24 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4">
-    <el-card shadow="never">
-      <!-- 搜索 -->
-      <div class="mb-4 flex flex-wrap items-center gap-2">
+  <div class="app-page">
+    <AppPageHeader title="班级管理" description="班级、班主任与在读人数">
+      <el-button
+        v-if="canManage"
+        type="primary"
+        :icon="PlusIcon"
+        @click="openAdd"
+      >
+        新增班级
+      </el-button>
+    </AppPageHeader>
+
+    <div class="page-card page-card--flush">
+      <!-- 筛选条独立于表格：不占据表格的横向空间，窄屏可自动换行 -->
+      <div class="page-toolbar">
         <el-input
           v-model="searchForm.name"
-          placeholder="请输入班级名称"
+          placeholder="搜索班级名称"
           clearable
           class="!w-56"
           @keyup.enter="handleSearch"
@@ -184,13 +198,8 @@ onMounted(() => {
         />
         <el-button type="primary" @click="handleSearch">搜索</el-button>
         <el-button @click="handleReset">重置</el-button>
-        <div class="flex-1" />
-        <el-button v-if="canManage" type="primary" @click="openAdd">
-          新增班级
-        </el-button>
       </div>
 
-      <!-- 表格 -->
       <el-table v-loading="loading" :data="dataList" border stripe>
         <el-table-column type="index" label="#" width="60" align="center" />
         <el-table-column prop="name" label="班级名称" min-width="160" />
@@ -200,17 +209,21 @@ onMounted(() => {
             {{ row.head_teacher_name || row.head_teacher || "未指定" }}
           </template>
         </el-table-column>
-        <el-table-column
-          prop="student_count"
-          label="在读人数"
-          width="100"
-          align="center"
-        />
-        <el-table-column prop="created_at" label="创建时间" min-width="170" />
+        <!-- 人数右对齐并启用等宽数字：一列数字能逐位对齐，便于纵向核对 -->
+        <el-table-column label="在读人数" width="110" align="right">
+          <template #default="{ row }">
+            <span class="num">{{ row.student_count }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" min-width="170">
+          <template #default="{ row }">
+            <span class="num">{{ row.created_at }}</span>
+          </template>
+        </el-table-column>
         <el-table-column
           v-if="canManage"
           label="操作"
-          width="200"
+          width="190"
           align="center"
           fixed="right"
         >
@@ -226,10 +239,17 @@ onMounted(() => {
             >
           </template>
         </el-table-column>
+
+        <!-- 空状态说清"为什么空"与"下一步做什么"，而非一句"暂无数据" -->
+        <template #empty>
+          <AppEmpty
+            title="还没有班级"
+            description="新增班级后，学生、课表与考勤都会挂在班级下"
+          />
+        </template>
       </el-table>
 
-      <!-- 分页 -->
-      <div class="mt-4 flex justify-end">
+      <div class="page-card__footer">
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.pageSize"
@@ -241,10 +261,14 @@ onMounted(() => {
           @current-change="loadData"
         />
       </div>
-    </el-card>
+    </div>
 
     <!-- 新增/编辑弹窗 -->
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="480px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="dialogTitle"
+      width="min(480px, calc(100vw - 32px))"
+    >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="班级名称" prop="name">
           <el-input v-model="form.name" placeholder="请输入班级名称" />
@@ -284,28 +308,40 @@ onMounted(() => {
     <el-dialog
       v-model="detailVisible"
       :title="detail ? `班级名单：${detail.class.name}` : '班级名单'"
-      width="720px"
+      width="min(720px, calc(100vw - 32px))"
     >
       <div v-loading="detailLoading">
         <template v-if="detail">
-          <el-descriptions :column="4" border class="mb-3">
-            <el-descriptions-item label="年级">
-              {{ detail.class.grade || "-" }}
-            </el-descriptions-item>
-            <el-descriptions-item label="班主任">
-              {{ detail.class.head_teacher || "未指定" }}
-            </el-descriptions-item>
-            <el-descriptions-item label="在读人数">
-              {{ detail.student_total }}
-            </el-descriptions-item>
-            <el-descriptions-item label="今日实到">
-              {{ detail.today.present }} / 缺勤 {{ detail.today.absent }} / 请假
-              {{ detail.today.leave_count }}
-            </el-descriptions-item>
-          </el-descriptions>
+          <!-- 概况用无边框键值对，靠留白分区，比嵌套一个描述表格更轻 -->
+          <dl class="detail-facts">
+            <div>
+              <dt>年级</dt>
+              <dd>{{ detail.class.grade || "—" }}</dd>
+            </div>
+            <div>
+              <dt>班主任</dt>
+              <dd>{{ detail.class.head_teacher || "未指定" }}</dd>
+            </div>
+            <div>
+              <dt>在读人数</dt>
+              <dd class="num">{{ detail.student_total }}</dd>
+            </div>
+            <div>
+              <dt>今日出勤</dt>
+              <dd class="num">
+                实到 {{ detail.today.present }} · 缺勤
+                {{ detail.today.absent }} · 请假 {{ detail.today.leave_count }}
+              </dd>
+            </div>
+          </dl>
+
           <el-table :data="detail.students" border stripe max-height="420">
             <el-table-column type="index" label="#" width="55" align="center" />
-            <el-table-column prop="student_no" label="学号" min-width="110" />
+            <el-table-column prop="student_no" label="学号" min-width="110">
+              <template #default="{ row }">
+                <span class="num">{{ row.student_no }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="name" label="姓名" min-width="90" />
             <el-table-column
               prop="gender"
@@ -313,16 +349,49 @@ onMounted(() => {
               width="70"
               align="center"
             />
-            <el-table-column prop="phone" label="手机号" min-width="130" />
+            <el-table-column prop="phone" label="手机号" min-width="130">
+              <template #default="{ row }">
+                <span class="num">{{ row.phone }}</span>
+              </template>
+            </el-table-column>
             <el-table-column
               prop="email"
               label="邮箱"
               min-width="170"
               show-overflow-tooltip
             />
+            <template #empty>
+              <AppEmpty
+                title="这个班还没有学生"
+                description="在「学生管理」里把学生分配到该班级"
+              />
+            </template>
           </el-table>
         </template>
       </div>
     </el-dialog>
   </div>
 </template>
+
+<style lang="scss" scoped>
+/* 班级概况：自适应键值对栅格，窄屏自动折行 */
+.detail-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-4);
+  padding: 0 0 var(--space-5);
+  margin: 0 0 var(--space-4);
+  border-bottom: 1px solid var(--ink-100);
+
+  dt {
+    font-size: var(--text-xs);
+    color: var(--ink-500);
+  }
+
+  dd {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-sm);
+    color: var(--ink-800);
+  }
+}
+</style>

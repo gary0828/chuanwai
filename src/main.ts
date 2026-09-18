@@ -17,6 +17,9 @@ import "./style/index.scss";
 // 一定要在main.ts中导入tailwind.css，防止vite每次hmr都会请求src/style/index.scss整体css文件导致热更新慢的问题
 import "./style/tailwind.css";
 import "element-plus/dist/index.css";
+// Element Plus 视觉重定义：必须晚于官方样式加载。
+// 两者规则特异性相同，本文件靠"后加载"取胜，从而避免 !important 泛滥。
+import "./style/element-plus-override.scss";
 // 导入字体图标
 import "./assets/iconfont/iconfont.js";
 import "./assets/iconfont/iconfont.css";
