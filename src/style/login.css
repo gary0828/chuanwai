@@ -2,120 +2,142 @@
    登录页样式 · 教务管理系统
    ----------------------------------------------------------------------------
    ⚠️ 本文件经 `<style scoped> @import` 引入。@import 的内容**不会**经过 scoped
-      转换，因此这里的类名一律带 `.login-` 前缀，避免污染全站其他页面。
+      转换，因此类名一律带 `.login-` 前缀，避免污染其他页面。
    ⚠️ 数值引用 src/style/tokens.scss（tokens 先于本文件加载）。
 
-   设计意图：左侧回答"这是谁的系统、我能不能用"，右侧才是登录动作。
-   不用波浪背景与插画 —— 教务系统的第一印象应当是"可靠"，不是"活泼"。
+   背景方案：「教务格栅」
+   ----------------------------------------------------------------------------
+   登录页是全站唯一**没有数据**的页面，所以它的背景要替系统说话。
+
+   系统其余 34 个页面的共同视觉语言是「浅灰底 + 白卡 + 只有横线的表格」——
+   本质是**规则线条**。这里把线条抽象成坐标纸式的格栅：
+     · 主网格 128px（13% 品牌色）—— 对应页面的分区层级
+     · 次网格  32px（ 6% 品牌色）—— 对应表格的行线
+     · 径向遮罩让中心渐隐，为卡片留出干净的呼吸区
+   结果是完全对称、与全站同底色、且不引入任何新的视觉语言。
    ============================================================================ */
 
-/* 登录框居中于「整个页面」，而不是居中于右侧分栏 —— 所以品牌区用绝对定位贴在
-   左侧，登录面板占满整页。品牌区宽度取 36% 与「卡片左边缘」的较小值，
-   保证卡片在任何视口下都不会压到品牌区（卡片宽 380px，居中后左边缘 = 50vw - 190px）。 */
 .login-page {
+  /* 格栅线色：浅色下品牌色需要更低的透明度才不会抢戏，
+     深色下底色暗、线色需提亮才看得见 —— 因此抽成变量便于分模式取值。 */
+  --grid-fine: color-mix(in srgb, var(--brand-600) 6%, transparent);
+  --grid-major: color-mix(in srgb, var(--brand-600) 13%, transparent);
+
   position: relative;
+  display: grid;
+  place-items: center;
   min-height: 100vh;
+  padding: var(--space-8) var(--space-5);
   background: var(--surface-page);
 }
 
-/* ---------------------------------------------------------------------------
-   品牌侧
-   --------------------------------------------------------------------------- */
-.login-brand {
-  position: absolute;
-  inset: 0 auto 0 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  width: min(36%, calc(50vw - 230px));
-  padding: var(--space-12) var(--space-10);
-  overflow: hidden;
-  color: #fff;
-  background: var(--brand-800);
+html.dark .login-page {
+  --grid-fine: color-mix(in srgb, var(--brand-400) 9%, transparent);
+  --grid-major: color-mix(in srgb, var(--brand-400) 18%, transparent);
 }
 
-/* 细网格纹理：呼应"表格与秩序"的系统性格。极淡（4% 白）且向右下渐隐，
-   不参与信息传达，因此对辅助技术隐藏（aria-hidden 见模板）。 */
-.login-brand__grid {
+/* ---------------------------------------------------------------------------
+   背景格栅
+   ---------------------------------------------------------------------------
+   四条 linear-gradient 叠出两级网格（先画细的，后画粗的压在上面）。
+   遮罩中间 38% 完全透明 —— 登录卡片与品牌文字周围不留任何线条干扰。 */
+.login-page__grid {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(to right, rgb(255 255 255 / 6%) 1px, transparent 1px),
-    linear-gradient(to bottom, rgb(255 255 255 / 6%) 1px, transparent 1px);
-  background-size: 32px 32px;
+    linear-gradient(to right, var(--grid-fine) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-fine) 1px, transparent 1px),
+    linear-gradient(to right, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-major) 1px, transparent 1px);
+  background-position: center center;
+  background-size:
+    32px 32px,
+    32px 32px,
+    128px 128px,
+    128px 128px;
+  /* 遮罩里的 #000 只表示「不透明」，不是设计用色，故不引用 token */
   -webkit-mask-image: radial-gradient(
-    ellipse at 25% 12%,
-    #000 0%,
-    transparent 72%
+    ellipse 58% 54% at 50% 46%,
+    transparent 0%,
+    transparent 38%,
+    #000 88%
   );
-  mask-image: radial-gradient(ellipse at 25% 12%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(
+    ellipse 58% 54% at 50% 46%,
+    transparent 0%,
+    transparent 38%,
+    #000 88%
+  );
 }
 
-.login-brand__content {
+.login-page__theme {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-5);
+  z-index: 2;
+}
+
+/* ---------------------------------------------------------------------------
+   纵向骨架
+   ---------------------------------------------------------------------------
+   品牌 → 表单卡 → 页脚 作为一个整体在页面中居中，
+   三者的水平轴都是页面中轴，因此整个页面上下左右完全对称。 */
+.login-shell {
   position: relative;
-  max-width: 34rem;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 400px;
+}
+
+/* ---------------------------------------------------------------------------
+   品牌区：为「这是什么系统」提供上下文，是卡片的标题而非装饰
+   --------------------------------------------------------------------------- */
+.login-brand {
+  margin-bottom: var(--space-8);
+  text-align: center;
 }
 
 .login-brand__mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
-  letter-spacing: 0.02em;
-  color: #fff;
-  background: rgb(255 255 255 / 10%);
-  border: 1px solid rgb(255 255 255 / 16%);
+  letter-spacing: 0.04em;
+  color: var(--on-brand);
+  background: var(--brand-600);
   border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
 }
 
 .login-brand__name {
-  margin: var(--space-5) 0 0;
-  font-size: 26px;
+  margin: var(--space-4) 0 0;
+  font-size: 24px;
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
+  color: var(--ink-900);
   letter-spacing: -0.015em;
 }
 
 .login-brand__slogan {
-  margin: var(--space-3) 0 0;
-  font-size: var(--text-base);
+  max-width: 30ch;
+  margin: var(--space-2) auto 0;
+  font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
-  color: rgb(255 255 255 / 68%);
-}
-
-.login-brand__foot {
-  position: relative;
-  margin: 0;
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-  color: rgb(255 255 255 / 45%);
+  color: var(--ink-500);
 }
 
 /* ---------------------------------------------------------------------------
-   表单侧
+   表单卡：与全站 .page-card 同规格（白底 / 1px 边框 / 无重阴影），
+   让登录页的卡片与内页的卡片看起来是同一个系统的同一种物件。
    --------------------------------------------------------------------------- */
-.login-panel {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  padding: var(--space-8) var(--space-6);
-}
-
-.login-panel__theme {
-  position: absolute;
-  top: var(--space-4);
-  right: var(--space-5);
-}
-
 .login-form {
   width: 100%;
-  max-width: 380px;
   padding: var(--space-8) var(--space-6) var(--space-6);
   background: var(--surface-card);
   border: 1px solid var(--border-default);
@@ -125,7 +147,7 @@
 
 .login-form__title {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   color: var(--ink-900);
   letter-spacing: -0.01em;
@@ -152,68 +174,50 @@
   user-select: none;
 }
 
-.login-panel__foot {
-  margin: var(--space-5) 0 0;
+/* ---------------------------------------------------------------------------
+   页脚：与品牌区共同构成上下对称的收口
+   --------------------------------------------------------------------------- */
+.login-foot {
+  margin-top: var(--space-6);
   font-size: var(--text-xs);
   color: var(--ink-400);
+  text-align: center;
 }
 
 /* ---------------------------------------------------------------------------
-   响应式 · 1280px 及以下
+   响应式
    ---------------------------------------------------------------------------
-   窄屏下品牌区放不下 slogan 与页脚，且会与居中的卡片抢空间，
-   因此改为上下布局：品牌侧压缩成顶部横条（只留标记与系统名）。
-   阈值取 1280 而非 1024 —— 1024~1280 区间品牌区已窄到无法承载正文。 */
-@media (width <= 1280px) {
+   窄屏收紧纵向节奏；格栅保留（它是背景的主体，不需要为小屏降级）。 */
+@media (width <= 640px) {
   .login-page {
-    display: flex;
-    flex-direction: column;
+    padding: var(--space-6) var(--space-4);
   }
 
   .login-brand {
-    position: relative;
-    inset: auto;
-    flex: none;
-    flex-direction: row;
-    gap: var(--space-3);
-    align-items: center;
-    justify-content: flex-start;
-    width: auto;
-    padding: var(--space-5) var(--space-6);
-  }
-
-  .login-brand__grid,
-  .login-brand__slogan,
-  .login-brand__foot {
-    display: none;
-  }
-
-  .login-brand__name {
-    margin: 0;
-    font-size: 18px;
+    margin-bottom: var(--space-6);
   }
 
   .login-brand__mark {
-    width: 32px;
-    height: 32px;
-    font-size: var(--text-xs);
+    width: 38px;
+    height: 38px;
   }
 
-  .login-panel {
-    flex: 1;
-    min-height: 0;
-    padding: var(--space-8) var(--space-5);
-  }
-}
-
-/* 手机：表单占满宽度但仍保持卡片外观 */
-@media (width <= 640px) {
-  .login-panel {
-    justify-content: flex-start;
-    padding: var(--space-5) var(--space-4) var(--space-8);
+  .login-brand__name {
+    font-size: 20px;
   }
 
   .login-form {
-    padding: var(--space-6) var(--space-5);
+    padding: var(--space-6) var(--space-5) var(--space-5);
+  }
+}
+
+/* 视口很矮时（如笔记本横屏 720p）收紧品牌区，避免出现滚动条 */
+@media (height <= 720px) {
+  .login-brand__slogan {
+    display: none;
+  }
+
+  .login-brand {
+    margin-bottom: var(--space-5);
   }
 }

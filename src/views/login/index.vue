@@ -122,38 +122,32 @@ useEventListener(document, "keydown", ({ code }) => {
 
 <template>
   <div class="login-page select-none">
-    <!-- 品牌侧：先回答"这是谁的系统、我能不能用"，再让用户处理登录动作 -->
-    <aside class="login-brand">
-      <div class="login-brand__grid" aria-hidden="true" />
+    <!-- 背景：全屏对称的教务格栅（主 128px / 次 32px 两级坐标线，中心渐隐） -->
+    <div class="login-page__grid" aria-hidden="true" />
 
-      <div class="login-brand__content">
+    <div class="login-page__theme">
+      <el-tooltip content="切换明暗主题" placement="bottom">
+        <el-switch
+          v-model="dataTheme"
+          inline-prompt
+          :active-icon="dayIcon"
+          :inactive-icon="darkIcon"
+          @change="dataThemeChange"
+        />
+      </el-tooltip>
+    </div>
+
+    <!-- 品牌 → 表单卡 → 页脚：三者同轴居中，整个页面因此上下左右完全对称 -->
+    <div class="login-shell">
+      <header class="login-brand">
         <span class="login-brand__mark">教务</span>
         <h1 class="login-brand__name">{{ title }}</h1>
         <p class="login-brand__slogan">
           考勤、成绩、课表、学员档案与财务，都在同一处。
         </p>
-      </div>
+      </header>
 
-      <p class="login-brand__foot">
-        仅限本校员工使用 · 账号由教务管理员分配
-      </p>
-    </aside>
-
-    <!-- 表单侧 -->
-    <main class="login-panel">
-      <div class="login-panel__theme">
-        <el-tooltip content="切换明暗主题" placement="bottom">
-          <el-switch
-            v-model="dataTheme"
-            inline-prompt
-            :active-icon="dayIcon"
-            :inactive-icon="darkIcon"
-            @change="dataThemeChange"
-          />
-        </el-tooltip>
-      </div>
-
-      <div class="login-form">
+      <main class="login-form">
         <h2 class="login-form__title">登录</h2>
         <p class="login-form__subtitle">使用管理员分配的账号与密码</p>
 
@@ -253,10 +247,12 @@ useEventListener(document, "keydown", ({ code }) => {
             </div>
           </Motion>
         </el-form>
-      </div>
+      </main>
 
-      <p class="login-panel__foot">忘记密码请联系教务管理员重置</p>
-    </main>
+      <footer class="login-foot">
+        仅限本校员工使用 · 忘记密码请联系教务管理员重置
+      </footer>
+    </div>
   </div>
 </template>
 
