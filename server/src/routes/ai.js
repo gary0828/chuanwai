@@ -81,26 +81,41 @@ function resolveWorkbenchUrl(origin) {
   }
   // 显式配了真实地址（非回环）→ 尊重配置。
   // 若配置里已自带子路径（如 http://10.0.0.5/ai）则不再叠加，避免 /ai/ai。
-  if (!LOOPBACK_HOSTS.includes(u.hostname)) {
-    const hasOwnPath = u.pathname && u.pathname !== "/";
-    return hasOwnPath ? raw : raw + config.aiWorkbenchBasePath;
-  }
+  if (!LOOPBACK_HOSTS.includes(u.hostname)) return withBasePath(raw);
 
   // 配置是回环地址 → 跟随访问者当前 origin
   const originStr = String(origin || "").trim();
-  if (!originStr) return raw;
+  if (!originStr) return withBasePath(raw);
 
   let o;
   try {
     o = new URL(originStr);
   } catch {
-    return raw;
+    return withBasePath(raw);
   }
-  if (o.protocol !== "http:" && o.protocol !== "https:") return raw;
-  if (!isSafeHost(o.hostname)) return raw;
-  if (LOOPBACK_HOSTS.includes(o.hostname)) return raw;
+  if (o.protocol !== "http:" && o.protocol !== "https:") return withBasePath(raw);
+  if (!isSafeHost(o.hostname)) return withBasePath(raw);
 
+  // 访问者自己就在 localhost（本机调试、SSH 隧道、反代回环等）也照常跟随：
+  // 回环地址只对「正在访问的那台机器」有意义，而它正是访问者本人，
+  // 所以 o.origin 恰恰是正确的。关键是**必须补上子路径**——
+  // 早期实现这里直接 return raw，得到 http://localhost（无 /ai），同源部署下必 404。
   return o.origin + config.aiWorkbenchBasePath;
+}
+
+/** 兜底路径也要带上子路径前缀，否则同源部署下会落到教务系统的 404 */
+function withBasePath(base) {
+  const s = String(base || "");
+  const path = config.aiWorkbenchBasePath || "";
+  if (!path) return s;
+  try {
+    const u = new URL(s);
+    // 配置里已自带路径就不叠加，避免 /ai/ai
+    const hasOwnPath = u.pathname && u.pathname !== "/";
+    return hasOwnPath ? s : s + path;
+  } catch {
+    return s;
+  }
 }
 
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];

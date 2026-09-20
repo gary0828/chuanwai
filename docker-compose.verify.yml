@@ -1,0 +1,7 @@
+# 仅供本机验收用的覆盖文件：把容器名与端口错开，避免与正在运行的主栈冲突。
+# 用法：docker compose -f docker-compose.unified.yml -f docker-compose.verify.yml up -d
+services:
+  server:
+    container_name: attendance-server-verify
+  unified:
+    container_name: attendance-unified-verify
