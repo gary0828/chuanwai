@@ -8,6 +8,7 @@ import IconClock from "~icons/ep/clock";
 import IconCollection from "~icons/ep/collection";
 import IconEdit from "~icons/ep/edit-pen";
 import IconFiles from "~icons/ep/files";
+import IconOdometer from "~icons/ep/odometer";
 import IconSetting from "~icons/ep/setting";
 import IconTickets from "~icons/ep/tickets";
 import IconTrend from "~icons/ep/trend-charts";
@@ -49,6 +50,7 @@ const ICONS: Record<string, unknown> = {
   "/course": IconFiles,
   "/lesson": IconEdit,
   "/teaching": IconClock,
+  "/growth": IconOdometer,
   "/homework": IconTickets,
   "/evaluation": IconCheck,
   "/report": IconTrend,
@@ -71,7 +73,7 @@ watch(
 );
 
 const providerLabel = computed(() =>
-  cfg.value.mode === "dify" ? "Dify 工作流" : "规则引擎（未启用模型）"
+  cfg.value.mode === "server" ? "服务端模型" : "规则引擎（零配置）"
 );
 
 const activePath = computed(() => route.path);

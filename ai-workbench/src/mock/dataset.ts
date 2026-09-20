@@ -420,3 +420,124 @@ export const UNIT_PROGRESS = [
   { goal: "角平分线性质与判定", status: "需复教", evidence: "专项检测得分率 61%，反向判定薄弱" },
   { goal: "辅助线构造解决证明题", status: "未开始", evidence: "第 7 课时内容" }
 ];
+
+/* ─────────────────────── 成长路径演示数据（demo 模式） ───────────────────────
+   为什么需要：成长路径页在真实模式下才有数据，而 demo 模式下整页空白 ——
+   第一次打开的人（或拿去给老师看时）完全看不出这个功能长什么样。
+   这里给一份虚构的成长轨迹，让页面在任何环境下都完整可见、可讲清楚。
+
+   注意：demo 数据只用于走查界面，**demo 模式下采集动作不会落库**
+   （Teaching.vue 里有明确分支与标注）。 */
+
+/** 整班课堂表现曲线（每次课一个点） */
+export const DEMO_CLASS_EVAL_SERIES = [
+  { eval_date: "2026-07-05", n: 24, focus: 3.6, participation: 3.5, mastery: 3.2 },
+  { eval_date: "2026-07-09", n: 24, focus: 3.7, participation: 3.6, mastery: 3.3 },
+  { eval_date: "2026-07-13", n: 23, focus: 3.9, participation: 3.8, mastery: 3.4 },
+  { eval_date: "2026-07-17", n: 24, focus: 4.0, participation: 3.9, mastery: 3.6 },
+  { eval_date: "2026-07-22", n: 24, focus: 4.1, participation: 4.0, mastery: 3.7 },
+  { eval_date: "2026-08-05", n: 24, focus: 4.2, participation: 4.1, mastery: 3.9 },
+  { eval_date: "2026-08-09", n: 23, focus: 4.2, participation: 4.2, mastery: 4.0 },
+  { eval_date: "2026-08-13", n: 24, focus: 4.3, participation: 4.2, mastery: 4.0 },
+  { eval_date: "2026-08-19", n: 24, focus: 4.3, participation: 4.1, mastery: 4.1 },
+  { eval_date: "2026-09-06", n: 24, focus: 4.4, participation: 4.3, mastery: 4.2 },
+  { eval_date: "2026-09-11", n: 24, focus: 4.4, participation: 4.4, mastery: 4.3 },
+  { eval_date: "2026-09-17", n: 24, focus: 4.5, participation: 4.4, mastery: 4.4 }
+];
+
+/** 整班知识点掌握度 */
+export const DEMO_CLASS_KP = [
+  { kpId: 1, code: "12-1", name: "全等图形与对应关系", unitNo: 12, seq: 1, assessed: 24, mastered: 23, masteryRate: 95.8 },
+  { kpId: 2, code: "12-2", name: "SSS 判定", unitNo: 12, seq: 2, assessed: 24, mastered: 22, masteryRate: 91.7 },
+  { kpId: 3, code: "12-3", name: "SAS 判定", unitNo: 12, seq: 3, assessed: 24, mastered: 20, masteryRate: 83.3 },
+  { kpId: 4, code: "12-4", name: "ASA 与 AAS 判定", unitNo: 12, seq: 4, assessed: 24, mastered: 17, masteryRate: 70.8 },
+  { kpId: 5, code: "12-5", name: "HL 判定（直角三角形）", unitNo: 12, seq: 5, assessed: 24, mastered: 19, masteryRate: 79.2 },
+  { kpId: 6, code: "12-6", name: "角平分线的性质", unitNo: 12, seq: 6, assessed: 24, mastered: 16, masteryRate: 66.7 },
+  { kpId: 7, code: "12-7", name: "角平分线的判定（反向）", unitNo: 12, seq: 7, assessed: 24, mastered: 13, masteryRate: 54.2 },
+  { kpId: 8, code: "12-8", name: "线段垂直平分线", unitNo: 12, seq: 8, assessed: 22, mastered: 15, masteryRate: 68.2 },
+  { kpId: 9, code: "13-1", name: "等腰三角形性质", unitNo: 13, seq: 1, assessed: 16, mastered: 12, masteryRate: 75.0 },
+  { kpId: 10, code: "13-2", name: "倍长中线法", unitNo: 13, seq: 2, assessed: 12, mastered: 5, masteryRate: 41.7 }
+];
+
+/**
+ * 采集页的可评定知识点（演示用）。
+ *
+ * **与真实库同构**：只列叶子知识点（可打勾对象），单元名放在 unit_name 里
+ * —— 真实 `/api/growth/eval-form` 也是这个形状（单元节点被后端过滤掉，
+ * 只把单元名带下来做分组标题）。
+ *
+ * 编号体系说明：本节用 `U1-x / U2-x / U3-x`（三个单元），
+ * 与上面 `DEMO_CLASS_KP` 的 `12-x / 13-x`（章节号）**不统一，这是故意的** ——
+ * 两者服务于不同演示场景（前者=采集打勾，后者=掌握度排行），
+ * 且真实机构的教材章节号本来就与"单元序号"不同。
+ * 若要统一，请连真实 `knowledge_points` 的口径一起改，不要只改这里。
+ */
+export const DEMO_KP_FORM = [
+  { id: 1, code: "U1-1", name: "全等图形与对应关系", unit_no: 1, unit_name: "第一单元 · 全等三角形", seq: 1, difficulty: 1 },
+  { id: 2, code: "U1-2", name: "SSS 判定", unit_no: 1, unit_name: "第一单元 · 全等三角形", seq: 2, difficulty: 2 },
+  { id: 3, code: "U1-3", name: "SAS 判定", unit_no: 1, unit_name: "第一单元 · 全等三角形", seq: 3, difficulty: 3 },
+  { id: 4, code: "U1-4", name: "ASA 与 AAS 判定", unit_no: 1, unit_name: "第一单元 · 全等三角形", seq: 4, difficulty: 3 },
+  { id: 5, code: "U2-1", name: "角平分线的性质", unit_no: 2, unit_name: "第二单元 · 角平分线与垂直平分线", seq: 5, difficulty: 2 },
+  { id: 6, code: "U2-2", name: "垂直平分线", unit_no: 2, unit_name: "第二单元 · 角平分线与垂直平分线", seq: 6, difficulty: 2 },
+  { id: 7, code: "U2-3", name: "尺规作图", unit_no: 2, unit_name: "第二单元 · 角平分线与垂直平分线", seq: 7, difficulty: 3 },
+  { id: 8, code: "U3-1", name: "等腰三角形的性质", unit_no: 3, unit_name: "第三单元 · 等腰三角形", seq: 8, difficulty: 2 },
+  { id: 9, code: "U3-2", name: "等边三角形", unit_no: 3, unit_name: "第三单元 · 等腰三角形", seq: 9, difficulty: 2 },
+  { id: 10, code: "U3-3", name: "含 30° 角的直角三角形", unit_no: 3, unit_name: "第三单元 · 等腰三角形", seq: 10, difficulty: 4 }
+];
+
+/** 单学员成长画像（演示：以「陈嘉禾」为样本，体现一个从弱到强的上升轨迹） */
+export const DEMO_STUDENT_GROWTH = {
+  attendance: { attended: 23, absent: 1, leave: 0, rate: 95.8 },
+  evalTrend: DEMO_CLASS_EVAL_SERIES.map((r, i) => ({
+    // 该学员起点低于班级均值，逐步追平并反超 —— 这正是「从 0 到成功」的演示意图
+    date: r.eval_date,
+    focus: Math.min(5, Math.round((r.focus - 0.9 + i * 0.11) * 10) / 10),
+    participation: Math.min(5, Math.round((r.participation - 1.0 + i * 0.12) * 10) / 10),
+    mastery: Math.min(5, Math.round((r.mastery - 1.2 + i * 0.14) * 10) / 10)
+  })),
+  examSeries: [
+    { date: "2026-07-12", name: "入学摸底", rate: 58 },
+    { date: "2026-07-24", name: "小测（一）", rate: 66 },
+    { date: "2026-08-14", name: "小测（二）", rate: 74 },
+    { date: "2026-09-04", name: "阶段检测", rate: 83 },
+    { date: "2026-09-11", name: "专项检测", rate: 88 }
+  ],
+  kpProgress: [
+    { kpId: 1, name: "全等图形与对应关系", from: "部分掌握", to: "已掌握", fromDate: "2026-07-05", toDate: "2026-07-22", delta: 1, attempts: 6, jumps: [{ date: "2026-07-22", from: "部分掌握", to: "已掌握" }] },
+    { kpId: 2, name: "SSS 判定", from: "部分掌握", to: "已掌握", fromDate: "2026-07-05", toDate: "2026-08-05", delta: 1, attempts: 8, jumps: [{ date: "2026-08-05", from: "部分掌握", to: "已掌握" }] },
+    { kpId: 3, name: "SAS 判定", from: "未掌握", to: "已掌握", fromDate: "2026-07-09", toDate: "2026-08-19", delta: 2, attempts: 9, jumps: [{ date: "2026-07-22", from: "未掌握", to: "部分掌握" }, { date: "2026-08-19", from: "部分掌握", to: "已掌握" }] },
+    { kpId: 4, name: "ASA 与 AAS 判定", from: "未掌握", to: "已掌握", fromDate: "2026-07-13", toDate: "2026-09-06", delta: 2, attempts: 10, jumps: [{ date: "2026-08-05", from: "未掌握", to: "部分掌握" }, { date: "2026-09-06", from: "部分掌握", to: "已掌握" }] },
+    { kpId: 6, name: "角平分线的性质", from: "未掌握", to: "部分掌握", fromDate: "2026-08-09", toDate: "2026-09-17", delta: 1, attempts: 7, jumps: [{ date: "2026-09-17", from: "未掌握", to: "部分掌握" }] },
+    { kpId: 7, name: "角平分线的判定（反向）", from: "未掌握", to: "未掌握", fromDate: "2026-08-19", toDate: "2026-09-17", delta: 0, attempts: 4, jumps: [] },
+    { kpId: 10, name: "倍长中线法", from: "未掌握", to: "部分掌握", fromDate: "2026-09-06", toDate: "2026-09-17", delta: 1, attempts: 3, jumps: [{ date: "2026-09-17", from: "未掌握", to: "部分掌握" }] }
+  ],
+  milestones: [
+    { date: "2026-07-22", title: "全等图形与对应关系 由「部分掌握」提升至「已掌握」", kind: "kp_progress" },
+    { date: "2026-07-22", title: "SAS 判定 由「未掌握」提升至「部分掌握」", kind: "kp_progress" },
+    { date: "2026-07-28", title: "连续 4 次课全勤且按时到课", kind: "attendance_streak" },
+    { date: "2026-08-05", title: "SSS 判定 由「部分掌握」提升至「已掌握」", kind: "kp_progress" },
+    { date: "2026-08-19", title: "SAS 判定 由「部分掌握」提升至「已掌握」", kind: "kp_progress" },
+    { date: "2026-09-06", title: "ASA 与 AAS 判定 由「部分掌握」提升至「已掌握」", kind: "kp_progress" },
+    { date: "2026-09-17", title: "倍长中线法 由「未掌握」提升至「部分掌握」", kind: "kp_progress" }
+  ],
+  breakdown: { attendance: 24, exam: 5, classEval: 12, kpAssessment: 47, total: 88 },
+  eventCount: 88
+};
+
+/** 单学员时间轴（演示，最近若干条） */
+export const DEMO_STUDENT_TIMELINE = [
+  { type: "class_eval", label: "课堂表现", date: "2026-07-05", summary: "专注 3 · 参与 3 · 掌握 2 · 对应关系找不准，需提示" },
+  { type: "kp_assessment", label: "知识点掌握", date: "2026-07-05", summary: "全等图形与对应关系：部分掌握" },
+  { type: "exam_score", label: "成绩", date: "2026-07-12", summary: "入学摸底 58/100（58%）" },
+  { type: "class_eval", label: "课堂表现", date: "2026-07-13", summary: "专注 3 · 参与 3 · 掌握 3 · 开始能自己找对应角" },
+  { type: "kp_assessment", label: "知识点掌握", date: "2026-07-22", summary: "全等图形与对应关系：已掌握（部分掌握 → 已掌握）" },
+  { type: "attendance", label: "出勤", date: "2026-07-28", summary: "正常" },
+  { type: "milestone", label: "成长里程碑", date: "2026-07-28", summary: "连续 4 次课全勤且按时到课" },
+  { type: "kp_assessment", label: "知识点掌握", date: "2026-08-05", summary: "SSS 判定：已掌握（部分掌握 → 已掌握）" },
+  { type: "exam_score", label: "成绩", date: "2026-08-14", summary: "小测（二）74/100（74%）" },
+  { type: "kp_assessment", label: "知识点掌握", date: "2026-08-19", summary: "SAS 判定：已掌握（部分掌握 → 已掌握）" },
+  { type: "class_eval", label: "课堂表现", date: "2026-09-06", summary: "专注 4 · 参与 4 · 掌握 4 · 主动上黑板讲辅助线思路" },
+  { type: "kp_assessment", label: "知识点掌握", date: "2026-09-06", summary: "ASA 与 AAS 判定：已掌握（部分掌握 → 已掌握）" },
+  { type: "exam_score", label: "成绩", date: "2026-09-11", summary: "专项检测 88/100（88%）" },
+  { type: "kp_assessment", label: "知识点掌握", date: "2026-09-17", summary: "倍长中线法：部分掌握（未掌握 → 部分掌握）" }
+];

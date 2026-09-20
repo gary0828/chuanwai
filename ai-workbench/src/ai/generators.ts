@@ -56,7 +56,11 @@ export interface AiOutput {
   meta: AiMeta;
 }
 
-const DATA_VERSION = "v15";
+/**
+ * 数据版本：真实模式下取教务库的 PRAGMA user_version（由 /api/agent/context 下发），
+ * 演示模式回落到当前代码所对齐的版本。**不要写死** —— 迁移后忘了改会误导排查。
+ */
+const DEMO_DATA_VERSION = "v18";
 
 /** 通用出口：脱敏 → 生成 → 记录 */
 async function compose(
@@ -77,12 +81,7 @@ async function compose(
     text: sectionsToText(out.sections),
     payloadPreview: safe,
     meta: {
-      mode:
-        out.mode === "server"
-          ? "服务端模型"
-          : out.mode === "dify"
-            ? "Dify 工作流"
-            : "规则引擎",
+      mode: out.mode === "server" ? "服务端模型" : "规则引擎",
       model: out.model,
       tokensIn: out.tokensIn,
       tokensOut: out.tokensOut,
@@ -92,7 +91,7 @@ async function compose(
       fallbackReason: out.fallbackReason,
       generatedAt: new Date().toISOString(),
       operator: operator.name,
-      dataVersion: DATA_VERSION,
+      dataVersion: dataVersion.value || DEMO_DATA_VERSION,
       sourceRows
     }
   };

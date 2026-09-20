@@ -1,13 +1,53 @@
 # 项目进度（PROGRESS）
 
-> 每次会话开始读取本文件，结束更新。最近更新：**2026-09-18**
-> 数据库版本：**v17** ｜ e2e **80/80** ｜ analytics **22/22** ｜ docker-verify **9/9** ｜ P0 浏览器 **31/31** ｜ 前端全站扫描 **29/29（0 控制台错误）**
+> 每次会话开始读取本文件，结束更新。最近更新：**2026-09-20**
+> 数据库版本：**v18** ｜ e2e **80/80** ｜ analytics **22/22** ｜ docker-verify **9/9** ｜ P0 浏览器 **31/31** ｜ 前端全站扫描 **29/29（0 控制台错误）**
 > 上线倒计时：**用户下周在校区正式使用** —— P0 模块优先于一切。
 
 ---
 
 ## 已完成
 
+- [x] **学生成长路径 · 数据地基（2026-09-20）** —— 迁移 v18 + 造数 + 9 个 API，**既有业务表一张未动**
+  - **产品定位升级**（用户拍板）：AI 工作台不止于「一份当前状态报告」，而是要做成**见证学生每一步成长的载体** —— 多维度数据支撑，看到孩子如何从 0 到成功。操作者是老师，因此必须尽可能减少老师工作量
+  - **关键认知澄清**：**成长路径不存 DB**。事实记录存 DB（结构化、要准确）；成长路径是「实时算 + AI 写文案」的视图。因此**只需 1 张时间轴表**（payload 为 JSON，加维度不改表结构），而非「每维度一张表」—— 这是「数据库不会越来越复杂」的关键
+  - **迁移 v18**（`018-growth-timeline.js`，5 张表）：`student_timeline`（成长时间轴，**只增不改**，核心）、`knowledge_points`（知识点体系，两级：单元 / 知识点）、`class_evaluations`（课堂评价，3 维 1–5 分）、`kp_assessments`（知识点掌握评定，三档）、`growth_thresholds`（成长阈值 8 条，admin 可调、立即生效、不重建镜像）
+  - **★ 分工铁律（实测缺陷后确立）**：出勤 / 成绩 / 课时由**既有表**承载，读取时 UNION 合并，**绝不再写入 `student_timeline`**；时间轴只装既有表装不下的 `class_eval` / `kp_assessment` / `milestone` / `note`。`appendEvent` 对既有表维度直接抛错拦截，读取层另按 `(type, date)` 去重兜底。详见 `server/database.md`
+  - **服务层** `server/src/utils/timeline.js`：`appendEvent`（含兜底脱敏 `scrubPayload`，金额/电话一律剔除）/ `studentTimeline`（三表 UNION + 新事件）/ `classGrowth`（整班概览）/ `studentGrowth`（单学员「起点 vs 现在」画像）/ `thresholds`
+  - **路由** `server/src/routes/growth.js`（9 端点，前缀 `/api/growth`）：采集端 3 个（`eval-form` 预填 / `class-eval` 老师 10 秒 / `kp-assessment` 老师 1 分钟）+ 查询端 6 个。权限全部复用 `utils/scope.js`
+  - **老师工作量分层设计**：第 0 层零操作自动采集（签到/录分/扣课时，系统已有）｜ 第 1 层 10 秒课堂随手记（3 维点选 + 可选备注）｜ 第 2 层 1 分钟知识点打勾（全班同状态 + 个别覆盖）。**永远不强制**，采集入口嵌在**已有页面**（授课流程页），不新增表单
+  - **造数脚本** `server/scripts/seed-growth.mjs`（可重复执行）：1 个班 8 名学员 × 12 周，**刻意埋入四类典型画像**（进步型 / 优秀型 / 波动型 / 需关注型），确保「需支持 / 可拓展 / 离群 / 里程碑」四个功能都能被触发。实测产出：96 考勤 / 91 课堂评价 / 673 知识点评定 / 24 成绩 / 88 课时消耗 / **764 条时间轴事件**
+  - **★ 实测发现并修掉 3 个真实缺陷**（正是「先造数据跑通」的价值）：
+    ① **既有表与新时间轴重复计数** —— 表现为「12 次课算成 24 次」「一次考试显示两条成绩」。根因是造数脚本对 attendance/exam_score 也写了 timeline 事件，读取又 UNION 一份。修法：`appendEvent` 拦截 + 读取去重 + 脚本删写入 + 清理 120 行脏数据；
+    ② **知识点过程记录被压缩** —— 里程碑从 8 个掉到 1 个、进步型学员显示「已掌握 → 已掌握」delta=0。根因是脚本跳过「等级未变」的评定，导致每个知识点只剩一条记录。修法：**每次课都写评定**（这条记录本身就是过程证据），数据从 116 → 673 条，里程碑恢复；
+    ③ **里程碑口径错误** —— 原用「首末差值」识别，无法反映「什么时候突破的」。修法：改取**过程中的真实跃迁点**，另补「连续 N 次课全勤」里程碑；
+    ④ **造数班级未绑定班主任** —— 教师账号访问成长接口返回 403，**「成长路径」对老师完全不可用**。根因是脚本按 `username='teacher'` 找用户，而 e2e 测试跑过后该账号已被重建。修法：改为按 `role='teacher'` 查找（不依赖用户名）+ 复用班级时补绑 `head_teacher_id` + 找不到账号直接报错退出
+  - **这四个缺陷的共同启示**：它们**都是「先造数据跑通」才能发现的** —— 纯写代码时都不报错，只有真实数据流过才暴露。这印证了「先造骨架数据打通管道」这一步的必要性
+  - **验证**：空库迁移 v18 全通过（18 个迁移 + 外键校验）｜ 造数后 `/api/agent/context` 的 `evaluations`/`knowledge`/`timeline`/`kpAssessments` **全部由 false 翻为 true** ｜ 单学员画像四类分化正确（陈嘉禾 trend=+25.3 / 里程碑 5 个；黄子涵 trend=-21.4、课时余 8、出勤率 66.7%、里程碑仅 1 个）｜ `/api/growth/*` 九个端点全通过 ｜ server 镜像已重建
+  - **工具分工拍板**：知识库（Dify）只管「让 AI 说得专业」，延后到数据跑通之后｜**MCP 明确不做**（固定流程用 REST 更可控，MCP 属过度设计）｜Skill 用于固化周期性流程（给我自己用，非运行时）
+  - **设计决策**：知识点粒度取**课时级**（一个课时 2–4 个：章节级太粗看不出进步，知识点级太细老师会放弃）｜课堂评价**砍到 3 维**（专注度/参与度/掌握度，砍掉「作业」——应由作业模块独立记录）｜成长路径**先做整班视角**（老师的使用动机），单学生视角天然会被用起来
+  - **下一步**：工作台接通 `/api/growth/*` → 成长路径页（学期 / 单元 / 事件三视图）→ 授课流程页加采集入口 → 跑一周真实数据后调阈值 → C1 收口（Dify Key 服务端代持）
+- [x] **成长路径落地 · 采集入口迁入 AI 工作台（2026-09-18，第二轮收口）** —— 工作台第 11 个菜单 + 授课页原地升级为采集入口
+  - **★ 用户关键纠偏（推翻上一轮方案）**：**教务系统与 AI 工作台是不同人群使用的**。教务系统给**校区负责人 / 非一线教学人员**用；AI 工作台给**一线老师**用。因此「老师要用的功能尽可能少出现在教务系统，需要在一线教学端使用的功能一定出现在工作台上」——才能真正做到**老师专注上课，而不是在多个地方找功能**。上一轮「采集入口放教务系统签到页」的方案因此作废
+  - **三条追问定案**：① 采集入口 → **授课流程页原地升级**（不新增页面）；② 成长路径页 → **整班 + 单学员都要**，放「教学闭环」组末尾；③ 教务端「成长档案」→ 与教师端**同步并存**，但更新源在教师端，教务端**自动更新、用于查看**
+  - **后端 3 处**：① `middleware/auth.js` —— `ai_agent` 凭证放行 `/api/growth`，`PUT /thresholds` 仍挡（管理动作）；② `index.js` —— `AUDIT_MODULES` 补「成长记录」；③ `routes/growth.js` —— 头注释改为「采集端 · 入口在 AI 工作台」
+  - **★★ 本轮最重要的教训：读写权限必须同权**。第一版只放行采集端（写）、挡住查询端（读），理由是"不扩大读范围"。**后果：老师能往班里写数据，却看不到自己写的数据，成长路径页整页 403，浏览器验证 13 项 FAIL。** 正确认识：①「挡住读」保护不了任何东西，只制造一个打不开的页面；② 真正的安全边界是 **`canManageClass` / `canManageStudent`**（老师只能碰自己带的班，跨班 403）；③ 判断标准 —— **老师在工作台需要这个功能，读写都该放行**，只有**管理动作**才该单独挡
+  - **工作台 8 个文件**：`workbench-data.ts`（Capability 补 `timeline`/`kpAssessments`、6 个新取数函数、`growthCapabilities` 出口、新增 `effectiveClassId`）｜ `views/Teaching.vue`（「快速标记」→ **正式课后采集入口**：双 tab 三维评价 + 知识点打勾 + 个别覆盖 + 一键填全班）｜ `views/GrowthPath.vue`（**新增**，整班 5 区块 + 单学员 6 区块）｜ `components/LineChart.vue`（**新增**轻量 SVG 折线图，不引图表库）｜ `mock/dataset.ts`（补演示成长数据 + `DEMO_KP_FORM`）｜ `router.ts` / `App.vue`（注册 `/growth` + 图标）｜ `ai/generators.ts`（`DATA_VERSION` 不再写死 v15）｜ `views/Dashboard.vue`（模块级调用 → `computed`，修切换班级不刷新）
+  - **修复的 4 个缺陷**：① 读写权限不对称（见上）；② 时间范围漏哨兵值（界面显示「至 9999-12-31」→ 未传 from/to 时取时间轴真实最早/最晚）；③ 量程压缩趋势（数据都在 3.5~4.5，折线几乎水平 → `LineChart` 加 `fitData` + `minSpan` 下限跨度）；④ demo 模式页面空白（补演示数据，demo 也渲染完整页并标「演示轨迹」）
+  - **未粉饰的问题（已标注）**：班级均值曲线**参评人数不一致**（09-18 只评 3 人 / 09-13 评满 8 人）→ 加「各次课明细」表暴露人数，并提示"人数不一致的课时之间不宜直接比较"
+
+- [x] **知识点采集列表混入单元节点（2026-09-20 修复）** —— `eval-form` 未过滤分组节点
+  - **现象**：采集页「知识点打勾」列出老师无法操作的行（如「第一单元 · 全等三角形」），且**真知识点被截断**
+  - **根因**：`knowledge_points` 是两级结构（单元 `seq=0`/`parent_id IS NULL` + 知识点 `seq>0`），`eval-form` 未过滤单元节点，且 `LIMIT 12` 恰好把第 10 个真知识点 `U3-3 含 30° 角的直角三角形` 挤出结果集（13 条中 3 条是单元节点）
+  - **修法**：过滤条件用 **`parent_id IS NOT NULL`**（语义准：有父节点才是叶子）而非 `seq > 0`；`LIMIT` 提到 40；把单元名以 **`unit_name`** 带下来，前端据此做「单元 → 知识点」分组标题
+  - **前端**：`Teaching.vue` 新增 `kpGroups` computed 做两级渲染，单元标题旁显示打勾进度（如 `第一单元 · 全等三角形 0/4`）
+  - **定位区别（勿合并）**：`GET /api/growth/knowledge-points` 返回**含单元节点的完整层级**（带 `parent_id`），供展示层；`eval-form` 返回**可评集合**（仅叶子），供采集层
+  - **验证**：可评知识点 **9 → 10 个**（截断消除）、`seq=0` 单元节点 **0 个**、全部带 `unit_name`
+- [x] **`openapi.yaml` 补齐成长路径契约（2026-09-20）** —— 补 8 个路径 + 8 个 schema
+  - **背景**：上一轮只更新了 `docs/api.md`，`openapi.yaml` 里 `/api/growth/*` **一个都没有**（42 个路径中缺失），属文档门禁欠账
+  - **补齐**：8 个路径（9 个端点，`/thresholds` 含 GET+PUT）+ `Growth` tag + 8 个 schema（`KnowledgePoint` / `GrowthEvalForm` / `ClassEvalInput` / `KpAssessmentInput` / `StudentTimeline` / `StudentGrowth` / `ClassGrowth` / `GrowthThresholds`）
+  - **顺手修正 2 处过时描述**：① `capabilities` 原写「尚无 class_evaluations / knowledge_points 表，恒为 false」—— v18 已翻 true，且补上遗漏的 `timeline` / `kpAssessments`；② `agentToken` 原写「仅可访问 /api/agent/* 与 /api/ai/*」，改为完整的路径白名单说明 + 读写同权的理由
+  - **新增可执行门禁** `_verify_test/check-openapi.mjs`：可解析性 + **84 个 `$ref` 引用完整性** + growth 路径数。契约文件"改坏了"不会让任何测试失败，只会在未来对接方那里炸
 - [x] **前端全站视觉改版（2026-09-18）** —— 「教务台」方向，**功能零变更**
   - **方向定调**（四项设计上下文经确认）：中度重塑 / 专业信赖 / 台式+平板并重 / 先样板页再全量。主色由 Element 出厂 `#409EFF` 换为深靛蓝 `#1F5C99`。设计上下文持久化在根目录 `.impeccable.md`，人类可读规范见 `docs/前端视觉规范-2026-09-18.md`
   - **三层样式架构**（新增）：`style/tokens.scss`（唯一变量源，含深色模式全套取值）、`style/page.scss`（页面视觉语法工具类）、`style/element-plus-override.scss`（Element 组件视觉重定义）。**硬性约束：override 必须晚于 `element-plus/dist/index.css` 引入**，靠加载顺序而非 `!important` 取胜
@@ -457,3 +497,132 @@
 3. 决定是否 `git init` 建立版本管理（已知问题 2）。
 4. **Docker 完整验证**（交付前必做）。
 5. go-live 后按约定逐步迁移 `el-dialog` → 函数式 `ReDialog`、`el-table` → `@pureadmin/table`。
+
+---
+
+## 成长路径落地 · 采集入口迁入 AI 工作台（2026-09-18）
+
+### 背景：人群分离定案
+
+用户明确：**教务系统给校区负责人 / 非一线教学人员用，教学 AI 工作台给一线老师用**。
+推论 → **老师要用的功能一律收在工作台**，这样老师才能"专注上课，不用到处找功能"。
+
+这一决定**推翻了**上一轮"采集入口放教务系统签到页"的方案。
+
+### 后端变更
+
+| 文件 | 变更 |
+| --- | --- |
+| `middleware/auth.js` | `type=ai_agent` 凭证放行范围从 `/api/(agent\|ai)` 扩到**含 `/api/growth`**；`PUT /growth/thresholds` 仍挡（管理动作） |
+| `index.js` | `AUDIT_MODULES` 补 `{ re: /^\/api\/growth/, name: "成长记录" }` |
+| `routes/growth.js` | 头注释改为「采集端 · 入口在 AI 工作台」 |
+
+**★ 关键纠偏**：最初只放行采集端（写）、挡住查询端（读），
+结果老师能往班里写数据却看不到自己写的数据，成长路径页**整页 403**。
+改为**读写同权**——安全边界靠 `canManageClass`（跨班 403），不靠"挡住读"。
+
+### 工作台变更（`ai-workbench/`）
+
+| 文件 | 变更 |
+| --- | --- |
+| `workbench-data.ts` | `Capability` 补 `timeline` / `kpAssessments`；新增 `postJson` 与 `loadGrowthForm` / `submitClassEval` / `submitKpAssessment` / `loadClassGrowth` / `loadStudentGrowth` / `loadStudentTimeline`；`growthCapabilities` 出口；`demoFallbackModules` 补两个新位 |
+| `views/Teaching.vue` | 「快速标记」升级为**正式课后采集入口**：① 三维评价（专注/参与/掌握 1-5，支持一键填全班）② 知识点打勾（三档 + 个别学员覆盖）；接后端三个接口；demo 模式明确标注不落库 |
+| `views/GrowthPath.vue` | **新增第 11 个菜单**。整班视角（班级表现曲线 / 掌握度待加强 / 已较好掌握 / 知识点掌握全景 / 各次课明细）+ 单学员视角（成长曲线 / 成绩曲线 / 知识点跳变 / 里程碑 / 过程记录明细） |
+| `components/LineChart.vue` | 新增轻量 SVG 折线图（不引图表库）；支持 `fitData` 自适应量程 |
+| `mock/dataset.ts` | 补演示成长数据（`DEMO_CLASS_EVAL_SERIES` / `DEMO_CLASS_KP` / `DEMO_STUDENT_GROWTH` / `DEMO_STUDENT_TIMELINE`） |
+| `router.ts` / `App.vue` | 教学闭环组末尾加「学生成长路径」（`/growth`）+ `ICONS` 补 `IconOdometer` |
+| `ai/generators.ts` | `DATA_VERSION` 写死 `v15` → 改为读实时 `dataVersion`（`DEMO_DATA_VERSION = "v18"` 兜底） |
+| `views/Dashboard.vue` | 模块级 `engine.*()` → `computed`（切数据源/班级时首页才会刷新） |
+
+### 修复的 4 个缺陷
+
+| # | 缺陷 | 表现 | 修复 |
+| --- | --- | --- | --- |
+| 1 | **读写权限不对称** | 成长路径页整页空白，控制台 3 个 403 | 放行范围含整个 `/api/growth`，仅挡 `PUT /thresholds` |
+| 2 | **时间范围漏哨兵值** | 界面显示「至 9999-12-31」 | 未传 from/to 时改取时间轴真实最早/最晚日期 |
+| 3 | **量程压缩趋势** | 1-5 分量程里数据都在 3.5~4.5，折线几乎水平 | `LineChart` 加 `fitData` + `minSpan`（下限跨度防放大噪声） |
+| 4 | **demo 模式页面空白** | 演示数据下看不到功能长什么样 | 补演示成长数据；demo 也渲染完整页面并标注「演示轨迹」 |
+
+另发现并标注（非缺陷，但影响解读）：**班级均值曲线的参评人数不一致**
+（09-18 只评 3 人、09-13 评满 8 人），界面已加「各次课明细」表暴露人数，
+并提示"人数不一致的课时之间不宜直接比较"，未用统一口径粉饰。
+
+### 验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| 权限边界（12 项） | 放行 8 项全 200；拦截 6 项全 403（含 `PUT /thresholds`、财务、用户、跨班 999） |
+| 采集落库 | 3 名学员评价 saved=3/appended=3；知识点评定 students=8/records=16；回读一致 |
+| 审计留痕 | `POST /api/growth/class-eval` → 动作名「新增成长记录」（id 88-90） |
+| 浏览器验证（新增） | `ui-growth-verify.py` **27/27**，含真实模式与 demo 模式，控制台无报错 |
+| e2e-lifecycle | **80/80** |
+| analytics-smoke | **22/22** |
+| ui-p0-verify | **31/31** |
+| docker-verify | **9/9** |
+
+**截图**：`evidence/ai-workbench-growth/`（01 侧边栏 / 02 整班 / 02b 知识点全景 / 03 单学员 / 03b 知识点与里程碑 / 03c 时间轴 / 04-05 课后采集 / 06-07 demo 模式）
+
+### 教务系统侧
+
+「成长档案」页（`src/views/teaching/growth/index.vue`）**保持并存**：财务口径轨迹不动，
+由教务端自动同步展示，主要用于查看；教学轨迹的更新源在 AI 工作台的采集入口。
+
+---
+
+## C1 收口 · AI 底座密钥服务端代持（2026-09-20）
+
+### 背景：一个必须在上线前堵住的安全缺陷
+
+`ai-workbench/src/ai/provider.ts` 里存在 `dify` 模式：`apiKey` 存 **localStorage**，
+`mode === "dify"` 时浏览器**直连** Dify 工作流（`POST {endpoint}/workflows/run` +
+`Authorization: Bearer {key}`）。该实现自身的代码注释就写着「生产建议走服务端代理」——
+是**已知的临时实现**，不是新引入的疏忽；但它是「正式给老师用」的阻塞项，三重危害：
+
+| # | 危害 | 说明 |
+| --- | --- | --- |
+| ① | Key 落在前端可读位置 | 任何能打开 DevTools 的人（含学生、家长借用设备）都能读到 |
+| ② | **绕过服务端二次脱敏** | 前端脱敏可被改前端代码绕过；服务端 `redact.js` 才是信任边界 |
+| ③ | 用量不入 `ai_usage` 表 | 配置中心看不到真实消耗，成本失控且无审计 |
+
+### 结论：不是「没有服务端通道」，而是「前端没走它」
+
+服务端通道 `POST /api/ai/generate`（`auth` + `requireRole("admin","teacher")`）**早已存在且可用**：
+Key 由 `LLM_API_KEY` / 配置中心持有，服务端做二次脱敏，用量落 `ai_usage`，未配置返回 503。
+实测 `agentToken`（`type = ai_agent`）可调该接口（路径白名单 `/^\/api\/(agent|ai)(\/|$)/` 覆盖它）。
+因此修复方向是**收口**（把主路径切过去并删掉旁路），而非新建通道。
+
+### 改动清单
+
+| 文件 | 改动 |
+| --- | --- |
+| `ai-workbench/src/ai/provider.ts` | `ProviderMode` 由 `rule\|server\|dify` 收敛为 `rule\|server`；整体删除 `DifyConfig` / `DifyResponse` / `runDify()` 与死代码 `estimateTokens()`；默认模式 `rule` → **`server`**；`saveConfig` 改**白名单**（只写 `mode/priceIn/priceOut/model`）；`loadConfig` 增**旧配置迁移**——丢弃整个 `dify` 子树（含残留 apiKey）+ `normalizeMode()` 把失效模式收敛回 `server`，并立刻覆写回 localStorage |
+| `ai-workbench/src/views/Settings.vue` | 移除全部密钥输入入口（endpoint / apiKey / 各场景 workflows）；radio 由三项改两项（`server` 标「推荐」）；`testConnection()` 从「探活 Dify 地址」改为**真实探活整条服务端通道**（`/api/ai/generate` 最小载荷），并区分 200 / 503 / 其他；新增服务端模型状态点与用量归属说明 |
+| `ai-workbench/src/App.vue` | 底座标签 `dify → server` 分支修正 |
+| `ai-workbench/src/ai/generators.ts` | `meta.mode` 去掉 `dify` 分支 |
+| `ai-workbench/src/components/AiPanel.vue` | 生成标签去掉 `Dify 生成` 兜底分支 |
+| `ai-workbench/src/router.ts` | 菜单描述改「服务端模型 / 规则引擎」 |
+| `docs/api.md` | §5.7 安全设计表补「已移除浏览器直连旁路」「用量集中可审计」两行 |
+
+**降级链路保持不变**：服务端 503 / 网络错误 → `generate()` 捕获 → 回退 `runRule()` 并在界面标注 `fallbackReason`。**永远不阻塞教学流程。**
+
+### 验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| `verify-provider-c1.mjs`（新增，接口 + 产物层） | **11/11** —— agentToken 可调 generate（1757 字，6862ms）、服务端脱敏剔除 `focusStudentNames/parentPhone/amount`、无泄漏、用量 in=378/out=1099；**主包 1.02MB 中 `apiKey` 0 次、`workflows/run` 0 次、无 `sk-` 字面量**；仅剩的 `dify` 字样是迁移分支 `if("dify" in t)` |
+| `ui-provider-c1.py`（新增，浏览器端） | **26/26** —— 只剩 2 个模式、无密码框、唯一录入框是「教务系统地址」、服务端模型名真实展示、localStorage 无 Key、**注入历史 `dify` 配置后自动抹除 apiKey 并回落 server** |
+| `ui-provider-degrade.py`（新增，降级链路） | **11/11** —— 以空 `LLM_API_KEY` 起临时后端 :3999：generate 返回 503 + `LLM_NOT_CONFIGURED`、llm-status `configured=false`、工作台仍生成 **1672 字**规则引擎内容并标注降级、无 JS 崩溃 |
+
+**截图**：`evidence/c1-settings-server-mode.png`、`c1-settings-rule-mode.png`、`c1-degrade-settings.png`、`c1-degrade-generate.png`
+
+### 本轮抓出的真实缺陷（由浏览器验证发现，非本人臆测）
+
+首轮 `ui-provider-c1.py` 报 3 处失败，根因是**迁移不完整**：原实现只删 `dify` 键却保留 `...rest`，
+于是 `mode: "dify"` 存活下来，前端会落在一个**已不存在的模式**上（两分支都不命中 → 界面语义混乱）；
+且 `loadConfig()` 只在 `App.vue` 初始化 `ref` 时调用，设置页自身走 `ref<ProviderConfig>(loadConfig())`
+并不会重新迁移。修复为「丢弃整个 dify 子树 + `normalizeMode` 运行时兜底 + 迁移时立即覆写」。
+
+另 1 处失败是**测试脚本自身的错误假设**：用 `input` 计数会把 Element Plus 的
+`radio` 与 `select` 内部只读 combobox 一并算作输入框。已改为精确匹配 `input.el-input__inner`
+并加「无密码框」断言——**断言写错要改断言，不能为了变绿而放松安全项**。
+

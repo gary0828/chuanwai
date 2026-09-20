@@ -21,7 +21,8 @@ const migrations = [
   require("./014-staff-only-crm"),
   require("./015-token-version"),
   require("./016-feedback"),
-  require("./017-ai-settings")
+  require("./017-ai-settings"),
+  require("./018-growth-timeline")
 ];
 
 function migrate(db) {

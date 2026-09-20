@@ -31,8 +31,9 @@
 | v16  | 使用反馈           | 新增 `feedbacks` 表（教师 / 管理员在使用系统过程中提交的问题与建议：提交人 `user_id`/`username`/`user_role`、`category`、`content`、`page_path`、`status`、`admin_reply`、`handled_by`/`handled_at`）。支撑首页「使用反馈」模块：教师提交并看到回复，admin 汇总、回复与跟踪处理。**只记录提交人身份与问题描述，不落任何学员数据**，避免反馈成为绕过四层权限的数据出口。建索引 `status` / `user_id` / `created_at` |
 
 | v17  | AI 配置中心       | 新增 `ai_settings`（AI 配置键值表，**优先级高于环境变量**，改完立即生效，无需重建容器）与 `ai_usage`（每次服务端生成后落一条用量：谁、什么场景、多少 token、多少成本）。支撑「AI 配置中心」页面（仅 admin，不进菜单，凭 `/#/ai-admin` 进入）。解决 2026-09-16 校区部署反馈的「改一个 Key 要重建镜像」问题 |
+| v18  | 学生成长时间轴     | 新增 5 张表，为 AI 工作台的「学生成长路径」提供数据地基：`student_timeline`（成长时间轴，**只增不改**）、`knowledge_points`（知识点体系，课时级粒度）、`class_evaluations`（课堂评价，3 维 1–5 分）、`kp_assessments`（知识点掌握评定，三档）、`growth_thresholds`（成长阈值，8 条默认值，可按真实分布调整不重建镜像）。**既有业务表一张未动**：出勤/成绩/课时仍由原表承载，读取时 UNION 合并 —— 见下文「★ 分工铁律」 |
 
-当前最新版本：**v17**（`PRAGMA user_version` = 17）
+当前最新版本：**v18**（`PRAGMA user_version` = 18）
 
 ## 表结构
 
@@ -462,3 +463,140 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 | tokens_out | INTEGER | NOT NULL, DEFAULT 0  | 输出 token                             |
 | cost       | REAL    | NOT NULL, DEFAULT 0  | 估算成本（元，高峰价，仅供量级参考）   |
 | created_at | TEXT    | NOT NULL, DEFAULT '' | 生成时间；建索引 `created_at`          |
+
+## 学生成长时间轴（v18 新增）
+
+> 目标（2026-09-20 拍板）：不是「一份当前状态报告」，而是「一条成长轨迹」——
+> 能看到每个学生从 0 到成功的每一步，每一步都有多维数据支撑。
+>
+> ### ★ 分工铁律（实测缺陷后确立，务必遵守）
+>
+> | 维度 | 由谁承载 | 是否写 `student_timeline` |
+> | ---- | -------- | ------------------------- |
+> | 出勤 | `attendances`（既有表） | ❌ **不写** |
+> | 成绩 | `exam_scores` + `exams`（既有表） | ❌ **不写** |
+> | 课时变动 | `hour_consumptions`（既有表） | ❌ **不写** |
+> | 课堂评价 | `class_evaluations` + 时间轴 | ✅ 写 |
+> | 知识点掌握 | `kp_assessments` + 时间轴 | ✅ 写 |
+> | 里程碑 | 时间轴（引擎计算产出） | ✅ 写 |
+>
+> **原因**：读取时会把既有表 UNION 进同一时间轴。若既有表承载的维度再写一份到
+> `student_timeline`，读出来就是双份 —— 实测表现为「12 次课算成 24 次」
+> 「一次考试显示两条」。`utils/timeline.js` 的 `appendEvent` 会对这三类直接抛错拦截，
+> 读取层另按 `(type, date)` 去重兜底。
+>
+> **另**：只有 `class_evaluations` 与 `student_timeline` 是「当前状态 vs 历史事实」的关系 ——
+> 前者允许 UPDATE（老师可以改主意），后者**只增不改**（历史不可篡改是成长路径可信的前提）。
+
+### student_timeline（成长时间轴，核心，只增不改）
+
+| 字段 | 类型 | 约束 | 说明 |
+| ---- | ---- | ---- | ---- |
+| id | INTEGER | PK, AUTOINCREMENT | 事件 ID |
+| student_id | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE | 学员 |
+| class_id | INTEGER | REFERENCES classes(id) ON DELETE SET NULL | 班级（便于按班聚合） |
+| course_id | INTEGER | REFERENCES courses(id) ON DELETE SET NULL | 课程 |
+| occurred_at | TEXT | NOT NULL | 事件发生日期 `YYYY-MM-DD` |
+| event_type | TEXT | NOT NULL | 白名单：`class_eval` / `kp_assessment` / `milestone` / `note`（既有表承载的三类被 `appendEvent` 拒绝） |
+| payload | TEXT | NOT NULL, DEFAULT '{}' | JSON 事件细节；**禁止放金额、家长电话**（`scrubPayload` 兜底剔除） |
+| source | TEXT | NOT NULL, DEFAULT 'manual' | `manual` 老师录入 / `auto` 系统生成 / `engine` 引擎产出 |
+| created_by | INTEGER | REFERENCES users(id) ON DELETE SET NULL | 录入人 |
+| created_at | TEXT | NOT NULL, DEFAULT datetime('now','localtime') | 入库时间 |
+
+索引：`idx_timeline_student_time (student_id, occurred_at)`、`idx_timeline_class_time (class_id, occurred_at)`、`idx_timeline_type (event_type)`
+
+### knowledge_points（知识点体系，课时级粒度）
+
+粒度决策：章节级太粗看不出进步、知识点级太细老师会放弃，取中间值 —— 一个课时 2–4 个知识点。
+
+| 字段 | 类型 | 约束 | 说明 |
+| ---- | ---- | ---- | ---- |
+| id | INTEGER | PK, AUTOINCREMENT | 知识点 ID |
+| parent_id | INTEGER | REFERENCES knowledge_points(id) ON DELETE CASCADE | 父节点（两级：一级=单元，二级=知识点） |
+| code | TEXT | NOT NULL, UNIQUE | 编码，如 `U1-2` |
+| name | TEXT | NOT NULL | 名称，如「SSS 判定」 |
+| course_id | INTEGER | REFERENCES courses(id) ON DELETE SET NULL | 所属课程 |
+| grade / term_no / unit_no / seq | — | 整数与文本 | 年级 / 学期序号 / 单元号 / 排序，用于按教学顺序展示 |
+| difficulty | INTEGER | NOT NULL, DEFAULT 2, CHECK 1–5 | 相对难度 |
+| description | TEXT | NOT NULL, DEFAULT '' | 说明 |
+| is_active | INTEGER | NOT NULL, DEFAULT 1 | 停用标记 |
+
+### class_evaluations（课堂评价，每课一条）
+
+维度决策：砍掉 demo 里的「作业」维（作业应由作业模块独立记录），保留老师一眼能判断的 3 维。
+用 1–5 分（3 = 一般），而非 0–100 —— 老师打不出「62 分」这种精度，强填只会产生假数据。
+
+| 字段 | 类型 | 约束 | 说明 |
+| ---- | ---- | ---- | ---- |
+| id | INTEGER | PK, AUTOINCREMENT | 记录 ID |
+| class_id | INTEGER | NOT NULL, REFERENCES classes(id) ON DELETE CASCADE | 班级 |
+| course_id | INTEGER | REFERENCES courses(id) ON DELETE SET NULL | 课程 |
+| student_id | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE | 学员 |
+| eval_date | TEXT | NOT NULL | 评价日期 |
+| session_no | INTEGER | NOT NULL, DEFAULT 0 | 第几次课 |
+| focus / participation / mastery | INTEGER | NOT NULL, DEFAULT 3, CHECK 1–5 | 专注度 / 参与度 / 掌握度 |
+| teacher_note | TEXT | NOT NULL, DEFAULT '' | 教师备注 |
+| created_by | INTEGER | REFERENCES users(id) ON DELETE SET NULL | 录入人 |
+| created_at / updated_at | TEXT | — | 时间戳 |
+
+约束：`UNIQUE (student_id, course_id, eval_date)` —— 同班同课同日期重复提交按覆盖处理。
+索引：`idx_ce_class_date`、`idx_ce_student_date`
+
+### kp_assessments（知识点掌握评定，成长曲线的证据源）
+
+三档决策：`未掌握 / 部分掌握 / 已掌握`。不用百分制 —— 三档足够画出「从 0 到成功」的阶梯，
+且教师 1 分钟能打完整个班。
+
+| 字段 | 类型 | 约束 | 说明 |
+| ---- | ---- | ---- | ---- |
+| id | INTEGER | PK, AUTOINCREMENT | 记录 ID |
+| student_id | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE | 学员 |
+| kp_id | INTEGER | NOT NULL, REFERENCES knowledge_points(id) ON DELETE CASCADE | 知识点 |
+| class_id / course_id | INTEGER | REFERENCES … ON DELETE SET NULL | 班级 / 课程 |
+| assessed_at | TEXT | NOT NULL | 评定日期 |
+| session_no | INTEGER | NOT NULL, DEFAULT 0 | 第几次课 |
+| level | TEXT | NOT NULL, DEFAULT '部分掌握', CHECK 未掌握/部分掌握/已掌握 | 掌握等级（三档） |
+| evidence | TEXT | NOT NULL, DEFAULT '' | 证据说明 |
+| created_by | INTEGER | REFERENCES users(id) ON DELETE SET NULL | 录入人 |
+| created_at | TEXT | — | 时间戳 |
+
+> **★ 每次课都写评定，即使等级未变**：这条记录本身就是「过程证据」。
+> 实测教训 —— 若只在等级变化时写入，每个知识点只剩一条记录，
+> 过程被压缩成孤立快照，里程碑识别从 8 个掉到 1 个（进步型学员）。
+> 读取层按日期保留完整序列，只把真正的等级跃迁识别为里程碑。
+
+索引：`idx_kpa_student_kp`、`idx_kpa_kp`、`idx_kpa_class`
+
+### growth_thresholds（成长阈值，不硬编码）
+
+背景：跑一周真实数据后必须能按实际分布调阈值，不能让老师改一次阈值就改代码重建镜像。
+沿用 `ai_settings` 的键值机制。
+
+| 字段 | 类型 | 约束 | 说明 |
+| ---- | ---- | ---- | ---- |
+| key | TEXT | PK | 阈值键 |
+| value | TEXT | NOT NULL, DEFAULT '' | 阈值（后端按数值解析） |
+| label | TEXT | NOT NULL, DEFAULT '' | 中文名 |
+| description | TEXT | NOT NULL, DEFAULT '' | 用途说明 |
+| updated_by / updated_at | — | — | 修改人与时间 |
+
+默认 8 条：`absent_streak_warn` 2｜`score_trend_down` -8｜`score_trend_up` 8｜
+`hours_low_warn` 12｜`excellent_rate` 88｜`outlier_z` 1.2｜`kp_progress_step` 1｜`attention_score` 6
+
+> 权限：读全员可见，**改仅 admin**（`PUT /api/growth/thresholds`），改完立即生效。
+
+## 成长时间轴 API（v18 新增）
+
+| 端点 | 权限 | 说明 |
+| ---- | ---- | ---- |
+| `GET /api/growth/eval-form?class_id&date` | auth + 本班 | 老师打开授课流程页时的预填数据（名单 + 待评知识点 + 今日已评情况） |
+| `POST /api/growth/class-eval` | auth + 本班 | 提交课堂评价（老师 10 秒动作，幂等覆盖 + 追加时间轴事件） |
+| `POST /api/growth/kp-assessment` | auth + 本班 | 批量知识点评定（老师 1 分钟动作，支持全班同状态 + 个别覆盖） |
+| `GET /api/growth/students/:id/timeline` | auth + 本班学员 | 单学员时间轴（既有三表 UNION + 新事件，已去重） |
+| `GET /api/growth/students/:id/growth` | auth + 本班学员 | 单学员成长画像（起点 vs 现在 + 知识点跃迁 + 里程碑） |
+| `GET /api/growth/classes/:id/growth` | auth + 本班 | 整班成长概览（班级课堂曲线 + 知识点掌握度分布） |
+| `GET /api/growth/knowledge-points` | auth | 知识点列表（可按课程筛选） |
+| `GET /api/growth/thresholds` | auth | 读成长阈值 |
+| `PUT /api/growth/thresholds` | admin | 改成长阈值（立即生效） |
+
+> 权限全部复用 `utils/scope.js`：教师只能访问自己带的班与班内学员，与教务系统内可见范围严格一致。

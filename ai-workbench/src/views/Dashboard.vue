@@ -8,23 +8,39 @@ import * as engine from "@/ai/engine";
 import { genClassDiagnosis, type AiOutput } from "@/ai/generators";
 import { classRecords, homeworkList, unit, unitProgressRows } from "@/workbench-data";
 
-const overview = engine.classOverview();
-const unitInfo = engine.unitProgress();
-const kps = engine.kpMasteryRanking();
-const support = engine.supportStudents();
-const top = engine.extendStudents();
-const records = engine.recentRecords(3);
-const homework = [...homeworkList.value].reverse();
+/**
+ * 全部走 computed。
+ *
+ * 为什么必须 computed（2026-09-18 修正）：
+ * engine.* 内部依赖 workbench-data 的响应式出口（students / classRecords ...），
+ * 若在模块加载时调用一次，切换数据源（演示 ↔ 真实）或切换班级后首页数值不会刷新，
+ * 会看到"顶部提示已切到真实数据、指标却还是演示值"的错位。
+ */
+const overview = computed(() => engine.classOverview());
+const unitInfo = computed(() => engine.unitProgress());
+const kps = computed(() => engine.kpMasteryRanking());
+const support = computed(() => engine.supportStudents());
+const top = computed(() => engine.extendStudents());
+const records = computed(() => engine.recentRecords(3));
+const homework = computed(() => [...homeworkList.value].reverse());
 
 const output = ref<AiOutput | null>(null);
 const loading = ref(false);
 
 const metrics = computed(() => [
-  { label: "在班学员", value: String(overview.studentCount), unit: "人" },
-  { label: "出勤率", value: overview.attendanceRate.toFixed(1), unit: "%" },
-  { label: "最近检测平均得分率", value: overview.avgScoreRate.toFixed(1), unit: "%" },
-  { label: "作业提交率", value: overview.homeworkSubmitRate.toFixed(1), unit: "%" },
-  { label: "需关注学员", value: String(support.length), unit: "人" }
+  { label: "在班学员", value: String(overview.value.studentCount), unit: "人" },
+  { label: "出勤率", value: overview.value.attendanceRate.toFixed(1), unit: "%" },
+  {
+    label: "最近检测平均得分率",
+    value: overview.value.avgScoreRate.toFixed(1),
+    unit: "%"
+  },
+  {
+    label: "作业提交率",
+    value: overview.value.homeworkSubmitRate.toFixed(1),
+    unit: "%"
+  },
+  { label: "需关注学员", value: String(support.value.length), unit: "人" }
 ]);
 
 const statusCls: Record<string, string> = {

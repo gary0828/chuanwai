@@ -50,10 +50,13 @@ function capabilities() {
     attendance: attendanceCount > 0,
     scores: scoreCount > 0,
     hours: hourOrderCount > 0,
-    // 以下三类当前库里尚无对应表，工作台会标注为「待建设」
+    // v18 起这三类已有对应表，由 capabilities 如实上报实际是否有数据
     evaluations: tableCount("class_evaluations") > 0,
     knowledge: tableCount("knowledge_points") > 0,
-    questions: tableCount("questions") > 0
+    questions: tableCount("questions") > 0,
+    // v18 新增：成长时间轴（学生成长路径的数据地基）
+    timeline: tableCount("student_timeline") > 0,
+    kpAssessments: tableCount("kp_assessments") > 0
   };
 }
 

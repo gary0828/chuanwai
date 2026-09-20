@@ -3,13 +3,8 @@ import { computed, onMounted, ref } from "vue";
 import IconDelete from "~icons/ep/delete";
 import IconInfo from "~icons/ep/info-filled";
 import IconRefresh from "~icons/ep/refresh";
-import { loadConfig, saveConfig, type ProviderConfig, type SceneKey } from "@/ai/provider";
-import {
-  clearRecords,
-  listRecords,
-  SCENE_LABELS,
-  type GenRecord
-} from "@/ai/generators";
+import { loadConfig, saveConfig, type ProviderConfig } from "@/ai/provider";
+import { clearRecords, listRecords, type GenRecord } from "@/ai/generators";
 import { agentToken, apiBase, currentUser, setApiBase } from "@/session";
 import { dataVersion, sourceMode } from "@/workbench-data";
 
@@ -27,8 +22,10 @@ const llmStatus = ref<{ configured: boolean; model: string | null }>({
   configured: false,
   model: null
 });
+const statusLoading = ref(false);
 
 async function loadLlmStatus() {
+  statusLoading.value = true;
   try {
     const token = agentToken();
     const res = await fetch(`${apiBase()}/api/ai/llm-status`, {
@@ -38,14 +35,9 @@ async function loadLlmStatus() {
     if (json?.success) llmStatus.value = json.data;
   } catch {
     /* 拉取失败时按「未配置」展示，不影响其他功能 */
+  } finally {
+    statusLoading.value = false;
   }
-}
-
-const sceneKeys = Object.keys(SCENE_LABELS) as SceneKey[];
-
-// 保证每个场景都有可绑定的字符串值（避免 el-input 绑定 undefined）
-for (const k of sceneKeys) {
-  if (typeof cfg.value.dify.workflows[k] !== "string") cfg.value.dify.workflows[k] = "";
 }
 
 const recordsMeta = computed(() => ({
@@ -70,19 +62,41 @@ function save() {
   window.setTimeout(() => (saved.value = false), 1600);
 }
 
+/**
+ * 真实探活：调一次 `/api/ai/generate` 的最小载荷。
+ * 与旧的"Dify 地址探活"不同，这里验证的是**整条服务端通道**（凭证 + 脱敏 + 模型），
+ * 也是老师实际会用到的路径，因此探活结果有真实意义。
+ */
 async function testConnection() {
   testing.value = true;
   testResult.value = "";
+  const started = performance.now();
   try {
-    const url = `${cfg.value.dify.endpoint.replace(/\/$/, "")}/workflows/run`;
-    await fetch(url, {
+    const token = agentToken();
+    const res = await fetch(`${apiBase()}/api/ai/generate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ inputs: {}, response_mode: "blocking", user: "probe" })
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        scene: "teaching_flow",
+        payload: { probe: true, note: "设置页连通性探针" }
+      })
     });
-    testResult.value = "已连通（若返回 401/400 说明服务可达但需配置工作流密钥；浏览器直连可能受跨域限制，生产环境建议经后端代理）";
+    const json = await res.json().catch(() => ({}));
+    const ms = Math.round(performance.now() - started);
+    if (res.ok && json?.success) {
+      const chars = String(json.data?.text || "").length;
+      testResult.value = `已连通（${ms}ms，模型 ${json.data?.model || "未知"}，返回 ${chars} 字）`;
+      await loadLlmStatus();
+    } else if (res.status === 503) {
+      testResult.value = `服务端未配置模型（${json?.code || "LLM_NOT_CONFIGURED"}）：生成会自动回退规则引擎，教学流程不受影响`;
+    } else {
+      testResult.value = `未连通：HTTP ${res.status} ${json?.message || ""}`.trim();
+    }
   } catch (err) {
-    testResult.value = `无法连通：${err instanceof Error ? err.message : "未知错误"}`;
+    testResult.value = `未连通：${err instanceof Error ? err.message : "未知错误"}`;
   } finally {
     testing.value = false;
   }
@@ -117,74 +131,53 @@ const ALLOWED = [
       </div>
       <div class="card-body">
         <el-radio-group v-model="cfg.mode" size="default">
+          <el-radio-button value="server">服务端模型（推荐）</el-radio-button>
           <el-radio-button value="rule">规则引擎（零配置）</el-radio-button>
-          <el-radio-button value="server">服务端模型</el-radio-button>
-          <el-radio-button value="dify">Dify 工作流</el-radio-button>
         </el-radio-group>
 
         <div class="mode-desc">
-          <template v-if="cfg.mode === 'rule'">
-            当前使用规则引擎：数字来自本地指标引擎，文案由模板组织。无需任何密钥，任何环境都能跑。
-          </template>
-          <template v-else-if="cfg.mode === 'server'">
+          <template v-if="cfg.mode === 'server'">
             当前使用服务端模型：工作台把已脱敏的指标交给教务后端，由后端持有 Key 调用大模型。
-            <b>Key 不下发前端</b>；未配置或调用失败会自动回退规则引擎并标注原因。
+            <b>Key 不下发前端，也不存在本机浏览器</b>；后端还会做二次脱敏并记录用量。
+            未配置或调用失败会自动回退规则引擎并标注原因。
           </template>
           <template v-else>
-            当前使用 Dify：浏览器直连 Dify 工作流。注意 Key 会存在本机浏览器中，仅建议内网联调使用。
+            当前使用规则引擎：数字来自本地指标引擎，文案由模板组织。无需任何配置，任何环境都能跑，
+            也作为服务端模型不可用时的兜底路径。
           </template>
         </div>
 
-        <div v-if="cfg.mode === 'server'" class="dify-form">
+        <div v-if="cfg.mode === 'server'" class="server-form">
           <div class="kv">
             <span>服务端模型</span>
             <span>
-              {{
-                llmStatus.configured
-                  ? llmStatus.model
-                  : "未配置（教务后端 LLM_API_KEY 为空）"
-              }}
+              <template v-if="statusLoading">检测中…</template>
+              <template v-else-if="llmStatus.configured">
+                <span class="dot-on" />{{ llmStatus.model }}
+              </template>
+              <template v-else>
+                <span class="dot-off" />未配置（教务后端 LLM_API_KEY 为空）
+              </template>
             </span>
           </div>
-          <div class="tip" style="margin-top: 12px">
-            <IconInfo class="tip-icon" />
-            在教务后端 <code>server/.env</code> 配置 <code>LLM_API_KEY</code>（可选
-            <code>LLM_MODEL</code>、<code>LLM_BASE_URL</code>），重启后端后本页即显示当前模型。
-          </div>
-        </div>
-
-        <div v-if="cfg.mode === 'dify'" class="dify-form">
-          <div class="form-row">
-            <label>Dify 地址</label>
-            <el-input v-model="cfg.dify.endpoint" size="small" placeholder="http://127.0.0.1/v1" />
-          </div>
-          <div class="form-row">
-            <label>默认 API Key</label>
-            <el-input v-model="cfg.dify.apiKey" size="small" type="password" show-password placeholder="app-xxxxxxxx" />
-          </div>
-          <div class="form-row">
-            <label>模型标识（用于成本核算展示）</label>
-            <el-input v-model="cfg.model" size="small" placeholder="deepseek-v4-flash" />
-          </div>
-
-          <div class="sec-title" style="margin-top: 16px">各场景工作流密钥（留空则用默认 Key）</div>
-          <div class="scene-grid">
-            <div v-for="k in sceneKeys" :key="k" class="scene-row">
-              <span class="scene-name">{{ SCENE_LABELS[k] }}</span>
-              <el-input
-                v-model="cfg.dify.workflows[k]"
-                size="small"
-                placeholder="workflow api key"
-              />
-            </div>
+          <div class="kv">
+            <span>用量归属</span>
+            <span>由教务后端写入 <code>ai_usage</code> 表，配置中心可查</span>
           </div>
 
           <div class="test-row">
             <el-button size="small" :loading="testing" @click="testConnection">
               <template #icon><IconRefresh /></template>
-              测试连通
+              测试服务端通道
             </el-button>
             <span v-if="testResult" class="test-result">{{ testResult }}</span>
+          </div>
+
+          <div class="tip">
+            <IconInfo class="tip-icon" />
+            在教务后端 <code>server/.env</code> 配置 <code>LLM_API_KEY</code>（可选
+            <code>LLM_MODEL</code>、<code>LLM_BASE_URL</code>），重启后端后本页即显示当前模型。
+            <b>Key 只存在于服务端，本工作台不提供任何密钥输入入口。</b>
           </div>
         </div>
 
@@ -318,10 +311,29 @@ const ALLOWED = [
   border-radius: 8px;
 }
 
-.dify-form {
+.server-form {
   padding-top: 16px;
   margin-top: 14px;
   border-top: 1px dashed var(--c-border);
+}
+
+/* 服务端模型状态点：有模型=绿，无模型=灰（不是错误，是"未配置"） */
+.dot-on,
+.dot-off {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  vertical-align: middle;
+  border-radius: 50%;
+}
+
+.dot-on {
+  background: var(--c-success);
+}
+
+.dot-off {
+  background: var(--c-text-3);
 }
 
 .form-row {
@@ -462,8 +474,7 @@ const ALLOWED = [
 }
 
 @media (max-width: 1200px) {
-  .grid-2,
-  .scene-grid {
+  .grid-2 {
     grid-template-columns: 1fr;
   }
 

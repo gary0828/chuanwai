@@ -39,7 +39,13 @@ export const NAV_GROUPS: NavGroup[] = [
         path: "/teaching",
         title: "授课流程",
         icon: "~icons/ep/clock",
-        desc: "课堂环节与快捷工具"
+        desc: "课堂环节与课后记录"
+      },
+      {
+        path: "/growth",
+        title: "学生成长路径",
+        icon: "~icons/ep/odometer",
+        desc: "每步过程与多维证据"
       }
     ]
   },
@@ -90,7 +96,7 @@ export const NAV_GROUPS: NavGroup[] = [
         path: "/settings",
         title: "底座与设置",
         icon: "~icons/ep/setting",
-        desc: "规则引擎 / Dify 切换"
+        desc: "服务端模型 / 规则引擎"
       }
     ]
   }
@@ -122,6 +128,12 @@ export const router = createRouter({
       name: "teaching",
       component: () => import("./views/Teaching.vue"),
       meta: { title: "授课流程" }
+    },
+    {
+      path: "/growth",
+      name: "growth",
+      component: () => import("./views/GrowthPath.vue"),
+      meta: { title: "学生成长路径" }
     },
     {
       path: "/homework",

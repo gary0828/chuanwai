@@ -23,9 +23,8 @@ const copied = ref(false);
 const modeTag = computed(() => {
   const m = props.output?.meta.mode;
   if (!m) return { text: "", cls: "tag-gray" };
-  if (m === "规则引擎") return { text: "规则引擎生成", cls: "tag-gray" };
   if (m === "服务端模型") return { text: "服务端模型生成", cls: "tag-green" };
-  return { text: "Dify 生成", cls: "tag-blue" };
+  return { text: "规则引擎生成", cls: "tag-gray" };
 });
 
 async function copyAll() {
