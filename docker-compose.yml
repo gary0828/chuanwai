@@ -27,9 +27,15 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080,http://localhost:8848,http://127.0.0.1:8848}
       # 登录失败限速：窗口内最大尝试次数（默认 10 次 / 15 分钟）
       - LOGIN_RATE_LIMIT_MAX=${LOGIN_RATE_LIMIT_MAX:-10}
-      # AI 教学工作台入口地址（用于生成免登跳转链接，必须是浏览器可访问的地址）
+      # AI 教学工作台入口地址（用于生成免登跳转链接）
       # 注意：8081 已被 Dify 占用，工作台用 8082
+      # ★ 配成回环地址 = 跳转地址自动跟随「访问者当前使用的地址」，
+      #   因此老师用 IP、域名、80 端口、HTTPS 访问都不会跳错。
+      #   生产若要「统一入口（一个端口同时提供教务+工作台+/api）」，
+      #   请改用 docker-compose.unified.yml（推荐，见 docs/校区部署与升级指南.md §九）
       - AI_WORKBENCH_URL=${AI_WORKBENCH_URL:-http://localhost:8082}
+      # 工作台子路径前缀（统一入口部署为 /ai；独立端口部署留空）
+      - AI_WORKBENCH_BASE_PATH=${AI_WORKBENCH_BASE_PATH:-}
       # 大模型（可选）：配置后工作台可切「服务端模型」；留空则一律走规则引擎
       # Key 只注入后端容器，不下发前端
       # 实测可用模型：deepseek-flash（快）/ deepseek-v4-pro（慢约 3.6 倍），两者均为推理型

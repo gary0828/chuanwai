@@ -1,0 +1,55 @@
+# ═══════════════════════════════════════════════════════════════════
+# 统一入口镜像：一个 nginx 同时托管「教务系统」与「AI 教学工作台」
+#
+# 对应 nginx 配置：deploy/nginx-unified.conf
+#   → 教务系统挂在 /       （/usr/share/nginx/html）
+#   → AI 工作台挂在 /ai/   （/usr/share/nginx/html-ai）
+#
+# 为什么推荐这种部署形态：见 deploy/nginx-unified.conf 顶部说明。
+# 一句话：同源同端口 → 免登跳转永远指向访问者当前地址，不会跳错端口。
+#
+# 构建（项目根目录执行）：
+#   docker build -t attendance-system-unified -f deploy/Dockerfile.unified .
+#
+# 配套 docker-compose 片段：
+#   unified:
+#     image: attendance-system-unified
+#     container_name: attendance-web
+#     restart: unless-stopped
+#     depends_on:
+#       server:
+#         condition: service_healthy
+#     ports:
+#       - "80:80"
+# ═══════════════════════════════════════════════════════════════════
+FROM node:20-alpine AS build-stage
+
+WORKDIR /app
+RUN corepack enable
+RUN corepack prepare pnpm@10.15.1 --activate
+RUN npm config set registry https://registry.npmmirror.com
+
+COPY .npmrc package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY . .
+
+# 两个前端分别构建（各用各自的 vite 配置与产物目录）
+# 教务系统：产物在 /app/dist
+RUN pnpm build
+# AI 工作台：产物在 /app/ai-workbench/dist
+RUN pnpm exec vite build --config ai-workbench/vite.config.ts
+
+FROM nginx:stable-alpine AS production-stage
+
+COPY deploy/nginx-unified.conf /etc/nginx/conf.d/default.conf
+# 教务系统 → /usr/share/nginx/html       （URL 根路径 /）
+COPY --from=build-stage /app/dist /usr/share/nginx/html
+# AI 工作台 → /usr/share/nginx/html-ai    （URL 前缀 /ai/）
+# 注意：URL 前缀是 /ai/，磁盘目录名是 html-ai，二者故意不同 ——
+# nginx 配置里用 `root` 让 /ai/xxx 落到 html-ai/ai/xxx，因此这里要把产物
+# 放进 html-ai/ai/ 子目录，路径才对齐。
+COPY --from=build-stage /app/ai-workbench/dist /usr/share/nginx/html-ai/ai
+
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

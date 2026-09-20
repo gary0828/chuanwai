@@ -42,11 +42,28 @@ export function setApiBase(base: string): void {
   else localStorage.removeItem("ai-workbench:api");
 }
 
-/** 教务系统前端地址（「返回教务系统」按钮用） */
+/**
+ * 教务系统前端地址（「返回教务系统」按钮用）。
+ *
+ * 默认回落到 **同源**（`location.origin`）：
+ * 推荐部署形态是工作台与教务系统由**同一个 nginx** 托管（同源、同端口），
+ * 此时「返回教务系统」就应该是当前 origin 本身。
+ *
+ * ★ 早期实现写死 `:8080`，在下面两种部署下都会跳到打不开的地址：
+ *   · 同源反代（nginx 80/443 托管两个前端）→ 跳到 `:8080` 没有监听
+ *   · 用了自定义端口/域名                     → 同上
+ * 只有在「工作台跑在 8082、教务系统单独跑在 8080」这种分离端口部署下，
+ * 才需要显式配置 `ai-workbench:crm`（或依赖下面的端口推断兜底）。
+ */
 export function crmUrl(): string {
   const stored = localStorage.getItem("ai-workbench:crm");
   if (stored) return stored.replace(/\/$/, "");
-  return `${location.protocol}//${location.hostname}:8080`;
+  // 同源部署：直接返回当前 origin
+  // 分离端口部署：工作台在 8082 时，教务系统通常是同主机的 8080
+  if (location.port === "8082") {
+    return `${location.protocol}//${location.hostname}:8080`;
+  }
+  return location.origin;
 }
 
 export function currentUser(): CurrentUser {

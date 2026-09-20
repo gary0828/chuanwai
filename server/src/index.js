@@ -95,7 +95,8 @@ const AUDIT_MODULES = [
   { re: /^\/api\/schedule-adjustments/, name: "调课" },
   { re: /^\/api\/makeup-classes/, name: "补课" },
   { re: /^\/api\/analytics/, name: "分析" },
-  { re: /^\/api\/feedback/, name: "使用反馈" }
+  { re: /^\/api\/feedback/, name: "使用反馈" },
+  { re: /^\/api\/growth/, name: "成长记录" }
 ];
 // 路由内已自行写审计的模块前缀（保持与上面注释一致，勿随意增删）
 const SELF_AUDITED = /^\/api\/(finance|leads|exams|schedule-adjustments|makeup-classes)(\/|$)/;
@@ -166,6 +167,7 @@ app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/ai", require("./routes/ai"));
 app.use("/api/feedback", require("./routes/feedback"));
 app.use("/api/agent", require("./routes/agent"));
+app.use("/api/growth", require("./routes/growth"));
 
 // 404
 app.use((_req, res) => {
@@ -202,6 +204,27 @@ const server = app.listen(PORT, () => {
     console.log(
       `[cors] 未设置 CORS_ORIGINS，使用默认白名单：${allowOrigins.join(", ")}`
     );
+  }
+  // 工作台跳转地址自检：回环地址意味着「跟随访问者 origin」，这在校区部署下是正确行为；
+  // 但如果显式配成了回环地址却期望外网访问，必须提醒 —— 这是最常见的部署踩坑点。
+  const wbHost = (() => {
+    try {
+      return new URL(config.aiWorkbenchUrl).hostname;
+    } catch {
+      return "";
+    }
+  })();
+  if (["localhost", "127.0.0.1", "::1", "0.0.0.0"].includes(wbHost)) {
+    console.log(
+      `[ai-workbench] AI_WORKBENCH_URL 为回环地址（${config.aiWorkbenchUrl}），` +
+        `跳转地址将自动跟随访问者所用 origin。`
+    );
+    console.log(
+      `[ai-workbench] 若工作台与教务系统同源部署（推荐），无需修改；` +
+        `若希望固定指向某个地址，请显式配置为浏览器可访问的地址。`
+    );
+  } else {
+    console.log(`[ai-workbench] 工作台跳转地址固定为：${config.aiWorkbenchUrl}`);
   }
 });
 

@@ -47,8 +47,8 @@ class PureHttp {
   /** 防止重复刷新`token` */
   private static isRefreshing = false;
 
-  /** 防止并发 401 触发多次跳转登录页 */
-  private static isHandlingAuthFailure = false;
+  /** 本页是否已提示过「登录态失效」，避免反复弹提示 */
+  private static didNotifyAuthFailure = false;
 
   /** 初始化配置对象 */
   private static initConfig: PureHttpRequestConfig = {};
@@ -68,8 +68,10 @@ class PureHttp {
     PureHttp.requests.forEach(item => item.reject(error));
     PureHttp.requests = [];
     PureHttp.isRefreshing = false;
-    if (PureHttp.isHandlingAuthFailure) return;
-    PureHttp.isHandlingAuthFailure = true;
+    // 标记置位后不再复位：一次登录态失效只需提示一次，
+    // 否则跳转登录页停留期间仍会有请求失败、反复弹出同类提示。
+    if (PureHttp.didNotifyAuthFailure) return;
+    PureHttp.didNotifyAuthFailure = true;
     ElMessage.error(message);
     try {
       useUserStoreHook().logOut();

@@ -92,11 +92,28 @@ const config = {
 
   /**
    * AI 教学工作台地址（免登跳转目标）。
-   * 仅用于拼装跳转 URL；生产环境应指向工作台实际入口。
+   *
+   * 两种部署形态：
+   * 1. **固定地址**（分离部署）：配 `AI_WORKBENCH_URL=http://10.0.0.5:8082`，
+   *    跳转恒指向该地址，不随访问者变化。
+   * 2. **跟随访问者**（同源部署，推荐）：配 `AI_WORKBENCH_URL=http://localhost:8082`
+   *    这类**回环地址**，跳转地址将自动替换为访问者当前 origin
+   *    （见 routes/ai.js 的 resolveWorkbenchUrl），从而天然兼容
+   *    「IP 访问 / 域名访问 / 80 端口 / HTTPS」而无需改配置。
+   *
+   * `aiWorkbenchBasePath` 用于同源部署时补上子路径前缀
+   * （例：工作台挂在 `https://校区域名/ai/` 下则填 `/ai`，独立部署留空）。
    */
   aiWorkbenchUrl: (
     process.env.AI_WORKBENCH_URL || "http://127.0.0.1:5300"
   ).replace(/\/$/, ""),
+
+  /** 工作台子路径前缀，同源部署时使用（如 `/ai`）。空串表示挂在域名根路径 */
+  aiWorkbenchBasePath: (() => {
+    const raw = (process.env.AI_WORKBENCH_BASE_PATH || "").trim();
+    if (!raw || raw === "/") return "";
+    return "/" + raw.replace(/^\/+|\/+$/g, "");
+  })(),
 
   /**
    * 大模型配置（可选）。未配置 apiKey 时 `/api/ai/generate` 返回 503，

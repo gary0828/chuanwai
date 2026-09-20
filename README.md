@@ -221,7 +221,8 @@ docker compose up -d --no-build --force-recreate server
 | `LLM_REASONING_EFFORT` | `none` | **保持 `none`**。DeepSeek 现行模型都是推理型，思维链会先吃满输出额度导致正文为空；想让模型做多步推理才改 `medium`/`high`，同时必须调大额度 |
 | `LLM_MAX_TOKENS` | `8192` | 开启推理后需上调。关闭推理时一份备课方案约 1900 输出 token，8192 余量充足 |
 | `LLM_TIMEOUT_MS` | `60000` | 网络较慢时上调 |
-| `AI_WORKBENCH_URL` | `http://localhost:8082` | 改端口或换域名时，**必须与浏览器实际访问地址完全一致**（不一致会导致免登会话丢失） |
+| `AI_WORKBENCH_URL` | `http://localhost` | **同源部署（推荐）保持默认回环地址即可** —— 后端会自动把它替换为「访问者当前访问的地址」，因此 IP / 域名 / 80 端口 / HTTPS 全部自适应，无需改动。仅当工作台部署在**另一台机器或独立端口**时，才显式配成浏览器可达地址（如 `http://10.0.0.5:8082`） |
+| `AI_WORKBENCH_BASE_PATH` | 空 | 同源部署且工作台挂在子路径时必须配（本项目统一入口为 `/ai`）。留空表示工作台在域名根路径 |
 
 ### 安全边界
 

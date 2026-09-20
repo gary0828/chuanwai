@@ -44,19 +44,34 @@ setInterval(() => {
 /**
  * 解析工作台跳转基址。
  *
- * 背景（2026-09-16 校区部署实测暴露的缺陷）：
+ * 背景（2026-09-16 校区部署实测暴露的缺陷，2026-09-20 修复）：
  * `AI_WORKBENCH_URL` 默认 `http://localhost:8082`，而 **localhost 指的是打开浏览器的
  * 那台电脑**。老师用自己的电脑访问校区机器上的教务系统时，免登链接会把他们带到
  * "自己电脑的 8082" —— 必然打不开（表现：页面空白 / 回落到演示身份）。
  *
  * 策略：
  *   - 显式配置了非回环地址（如 http://192.168.1.20:8082）→ 尊重配置，原样返回
- *   - 配置仍是 localhost / 127.0.0.1 → **跟随访问者当前的 host**，端口沿用配置
+ *   - 配置仍是 localhost / 127.0.0.1 → **跟随访问者当前的完整 origin**
+ *     （协议 + 主机 + 端口）→ 见下方「为什么必须连端口一起跟随」
  *
- * 安全：只接受纯主机名/IPv4，且拒绝 localhost 之外的可疑输入，
- * 防止被当成开放重定向（open redirect）使用。
+ * ★ 为什么必须连端口一起跟随（2026-09-20 修复的真实缺陷）：
+ *   早期实现只替换了 hostname 而**沿用配置里的 8082**。当工作台与教务系统同源
+ *   （同一 nginx、同一端口）时这是错的：
+ *     · 用户从 `http://ai.school.com`（80 端口）访问 → 跳 `http://ai.school.com:8082` ❌
+ *     · 用户从 `https://ai.school.com` 访问    → 跳 `http://ai.school.com:8082` ❌（协议降级 + 错端口）
+ *   同源反代是本项目的**推荐部署形态**（一个 nginx 同时托管两个前端，
+ *   `/api` 反代后端），此时跳转地址就应该是访问者当前 origin 本身。
+ *
+ * 安全：只接受合法主机名/IPv4，拒绝路径、查询串等可疑输入，
+ * 防止被当成开放重定向（open redirect）使用 —— 跳转目标始终是「访问者正在访问的
+ * 这个主机」，无法被诱导跳去第三方域名。
+ *
+ * ★ 子路径前缀（`AI_WORKBENCH_BASE_PATH`）：
+ *   同源部署时工作台通常挂在 `/ai/` 而非域名根路径，此时只返回 origin 会得到
+ *   `http://域名/#/sso?...` —— 落到教务系统自己的 404。故需把前缀拼回：
+ *   `http://域名/ai/#/sso?...`。独立部署（工作台有独立域名/端口）时该值为空。
  */
-function resolveWorkbenchUrl(reqHost) {
+function resolveWorkbenchUrl(origin) {
   const raw = config.aiWorkbenchUrl;
   let u;
   try {
@@ -64,16 +79,36 @@ function resolveWorkbenchUrl(reqHost) {
   } catch {
     return raw;
   }
-  const loopback = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];
-  if (!loopback.includes(u.hostname)) return raw;
+  // 显式配了真实地址（非回环）→ 尊重配置。
+  // 若配置里已自带子路径（如 http://10.0.0.5/ai）则不再叠加，避免 /ai/ai。
+  if (!LOOPBACK_HOSTS.includes(u.hostname)) {
+    const hasOwnPath = u.pathname && u.pathname !== "/";
+    return hasOwnPath ? raw : raw + config.aiWorkbenchBasePath;
+  }
 
-  const host = String(reqHost || "").trim();
-  if (!host || host.length > 253) return raw;
-  if (!/^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$/.test(host)) return raw;
-  if (loopback.includes(host)) return raw;
+  // 配置是回环地址 → 跟随访问者当前 origin
+  const originStr = String(origin || "").trim();
+  if (!originStr) return raw;
 
-  const port = u.port || (u.protocol === "https:" ? "443" : "80");
-  return `${u.protocol}//${host}:${port}`;
+  let o;
+  try {
+    o = new URL(originStr);
+  } catch {
+    return raw;
+  }
+  if (o.protocol !== "http:" && o.protocol !== "https:") return raw;
+  if (!isSafeHost(o.hostname)) return raw;
+  if (LOOPBACK_HOSTS.includes(o.hostname)) return raw;
+
+  return o.origin + config.aiWorkbenchBasePath;
+}
+
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];
+
+/** 只接受纯主机名 / IPv4，拒绝路径、查询串、用户信息等 */
+function isSafeHost(host) {
+  if (!host || host.length > 253) return false;
+  return /^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$/.test(host);
 }
 
 /** 签发免登票据（需已登录） */
@@ -99,8 +134,9 @@ router.post("/sso/ticket", auth, (req, res) => {
     { expiresIn: TICKET_TTL_SEC }
   );
 
-  // 前端把自己访问教务系统用的 host 传过来，避免跳到「访问者本机的 localhost」
-  const base = resolveWorkbenchUrl(req.body?.host);
+  // 前端把自己访问教务系统用的 origin 传过来，避免跳到「访问者本机的 localhost」。
+  // 同时兼容旧的 `host` 字段（老版本前端），但新前端一律传 origin。
+  const base = resolveWorkbenchUrl(req.body?.origin || req.body?.host);
   // URL 用 hash 路由承载票据，避免随请求发送到服务器
   const url = `${base}/#/sso?ticket=${encodeURIComponent(ticket)}`;
 
