@@ -257,6 +257,15 @@
 | 使用反馈 | GET | `/api/feedback/summary` | admin | 反馈统计（各状态计数） |
 | 使用反馈 | PUT | `/api/feedback/:id` | admin | 处理反馈（改状态 / 写回复） |
 | 使用反馈 | GET | `/api/feedback/options` | 登录 | 可选值字典（分类 / 状态） |
+| 成长时间轴 | GET | `/api/growth/eval-form` | 登录+本班 | 课堂评价预填（名单 + 待评知识点 + 已评情况） |
+| 成长时间轴 | POST | `/api/growth/class-eval` | 登录+本班 | 提交课堂评价（3 维 1–5 分，追加时间轴事件） |
+| 成长时间轴 | POST | `/api/growth/kp-assessment` | 登录+本班 | 批量知识点评定（三档，支持个别覆盖） |
+| 成长时间轴 | GET | `/api/growth/students/:id/timeline` | 登录+本班学员 | 单学员成长时间轴（三表 UNION + 新事件，已去重） |
+| 成长时间轴 | GET | `/api/growth/students/:id/growth` | 登录+本班学员 | 单学员成长画像（起点 vs 现在 + 里程碑） |
+| 成长时间轴 | GET | `/api/growth/classes/:id/growth` | 登录+本班 | 整班成长概览（课堂曲线 + 知识点掌握度） |
+| 成长时间轴 | GET | `/api/growth/knowledge-points` | 登录 | 知识点列表（可按课程筛选） |
+| 成长时间轴 | GET | `/api/growth/thresholds` | 登录 | 读成长阈值（8 条） |
+| 成长时间轴 | PUT | `/api/growth/thresholds` | admin | 改成长阈值（立即生效，不重建镜像） |
 | 健康 | GET | `/api/health` | 公开 | 容器健康检查 |
 
 ---
@@ -601,7 +610,7 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 | 项 | 值 |
 | --- | --- |
 | 权限 | 登录（admin / teacher） |
-| 请求体 | 无 |
+| 请求体 | `{ "origin": "http://192.168.1.20:8080" }`（可选，但**新前端一律传**） |
 | 响应 | `{ "success": true, "data": { "ticket": "...", "url": "...", "expiresIn": 60 } }` |
 
 ```json
@@ -609,7 +618,7 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
   "success": true,
   "data": {
     "ticket": "eyJhbGciOiJIUzI1NiIs...",
-    "url": "http://127.0.0.1:5300/#/sso?ticket=eyJhbGciOiJIUzI1NiIs...",
+    "url": "http://192.168.1.20:8080/ai/#/sso?ticket=eyJhbGciOiJIUzI1NiIs...",
     "expiresIn": 60
   }
 }
@@ -620,6 +629,19 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 | `ticket` | 一次性票据（JWT，HS256，复用 `JWT_SECRET`） |
 | `url` | 工作台跳转地址，**票据置于 URL hash 片段**（浏览器不会把它发给服务器） |
 | `expiresIn` | 有效期（秒），固定 60 |
+
+**请求体 `origin` 的作用（解决"点击 AI 工具台进不去"）**：
+
+前端传 `window.location.origin`，后端据此决定跳转地址：
+
+| `AI_WORKBENCH_URL` 配置 | 行为 |
+| --- | --- |
+| 回环地址（`localhost` / `127.0.0.1`，**同源部署默认**） | 返回**访问者 origin + `AI_WORKBENCH_BASE_PATH`**，即 `http://访问者地址/ai`。因此 IP / 域名 / 80 端口 / HTTPS 全部自适应 |
+| 非回环地址（如 `http://10.0.0.5:8082`） | 尊重配置原样返回（分离部署）；若配置自带路径则不再叠加 base path |
+
+> 兼容：仍接受旧字段 `host`，但只替换主机名、**端口沿用配置值**，同源部署下会跳错，请勿再使用。
+
+**安全**：`origin` 只接受 `http:` / `https:` 协议 + 纯主机名或 IPv4，拒绝 userinfo 混淆、`javascript:` / `file:` 协议、路径穿越、查询串等，防止被当作开放重定向诱骗跳往第三方站点。
 
 **票据载荷**：`{ id, username, role, tv, type: "ai_sso", jti }` —— 不含姓名、手机号、金额等任何业务字段。
 
@@ -666,8 +688,9 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `AI_WORKBENCH_URL` | 本地开发 `http://127.0.0.1:5300`；**Docker 部署由 compose 注入 `http://localhost:8082`** | 工作台入口地址，仅用于拼装跳转 URL。**必须与浏览器实际访问工作台的 origin 完全一致**（端口或 host 不同会让免登会话落进另一个 origin 的 localStorage 而丢失） |
-| `CORS_ORIGINS` | 默认白名单已含 `http://127.0.0.1:5300` | **Docker 部署无需配置**：工作台由 `ai-workbench/nginx.conf` 同源反代 `/api`，请求以同源发出不触发 CORS。只有「本地 `serve.mjs` 预览 + 浏览器直连 :3000」这种跨域形态才需要把预览地址加入白名单 |
+| `AI_WORKBENCH_URL` | 本地开发 `http://127.0.0.1:5300`；**同源部署（推荐）保持回环地址 `http://localhost`** | 工作台入口地址，仅用于拼装跳转 URL。配成**回环地址**时后端会替换为访问者 origin（见 §5.2），因此 IP / 域名 / 端口 / HTTPS 全自适应。仅分离部署时显式配成浏览器可达地址 |
+| `AI_WORKBENCH_BASE_PATH` | 空 | 同源部署且工作台挂在子路径时必填（统一入口为 `/ai`）。空串表示工作台在域名根路径 |
+| `CORS_ORIGINS` | 默认白名单已含 `http://127.0.0.1:5300` | **统一入口部署无需配置**：请求同源发出不触发 CORS。只有「本地 `serve.mjs` 预览 + 浏览器直连 :3000」这种跨域形态才需要把预览地址加入白名单 |
 
 ### 5.6 GET /api/ai/llm-status
 
@@ -691,11 +714,12 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 
 | 约束 | 实现 |
 | --- | --- |
-| **Key 不下发前端** | Key 只存后端环境变量 `LLM_API_KEY`，前端永远拿不到（前端存 Key 等于对任何能打开工作台的人公开） |
+| **Key 不下发前端** | Key 只存服务端（环境变量 `LLM_API_KEY` 或配置中心 `ai_settings`），前端永远拿不到。★ 工作台**已彻底移除**早期「浏览器直连 Dify 工作流」的旁路（该实现把 apiKey 存 localStorage）；工作台设置页只保留「服务端模型 / 规则引擎」两个选项，**不提供任何密钥输入入口**。若将来要接入 Dify，必须由**服务端**代持其 Key 并转发 |
 | **服务端二次脱敏** | 载荷经 `utils/redact.js` 硬编码白名单过滤后才出网（姓名 / 电话 / 金额 / 含金额特征的文本一律剔除）。**不信任前端** —— 工作台是独立部署的静态应用，任何人可改其代码后直接调本接口 |
 | 手机号 / 证件号兜底 | 自由文本中的 11 位手机号与 18 位证件号由 `scrubText()` 替换 |
 | 数字不出本地逻辑 | 提示词硬约束「只能使用给定数字，禁止编造」；全部数字由本地指标引擎算出 |
 | 未配置即降级 | `LLM_API_KEY` 为空返回 503，工作台自动回退规则引擎并标注原因，不阻塞教学流程 |
+| 用量集中可审计 | 每次调用写入 `ai_usage` 表（`username` / `scene` / `model` / `tokens_in` / `tokens_out` / `cost`）。走服务端通道是用量可见的**前提**，浏览器直连会让配置中心看不到消耗 |
 
 **响应**
 
@@ -742,7 +766,7 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 | 接口 | 权限 | 说明 |
 | --- | --- | --- |
 | `GET /api/ai/admin/config` | admin | 读取全部配置项；敏感值只返回掩码 `__masked__sk-****3f2a`，并标注当前 `source` 是 `db` 还是 `env` |
-| `PUT /api/ai/admin/config` | admin | 保存。空串 = 清除该键（回退环境变量）；掩码原样回传 = 不修改；未知键忽略 |
+| `PUT /api/ai/admin/config` | admin | 保存。空串 = 清除该键（回退环境变量）；掩码原样回传 = 不修改；**与当前生效值相同的项不落库**（防止一次保存把全部字段钉死、`.env` 从此失效）；未知键忽略 |
 | `GET /api/ai/admin/balance` | admin | 查询模型账户余额。**Key 不出服务端**，只回传余额数字 |
 | `GET /api/ai/admin/usage` | admin | 本月用量：次数、输入/输出 token、估算成本、按场景分布 |
 
@@ -750,15 +774,23 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 
 ### 5.9 免登地址的「跟随访问者」机制
 
-`POST /api/ai/sso/ticket` 接受可选请求体 `{ host }`（前端传 `window.location.hostname`）：
+`POST /api/ai/sso/ticket` 接受可选请求体 `{ origin }`（前端传 `window.location.origin`，含协议+主机+端口）：
 
 - `AI_WORKBENCH_URL` 配的是**非回环地址**（如 `http://192.168.1.20:8082`）→ 原样使用配置；
-- 配置仍是 `localhost` / `127.0.0.1` → **用访问者的 host 拼接**，端口沿用配置。
+- 配置仍是 `localhost` / `127.0.0.1` → **返回访问者 origin + `AI_WORKBENCH_BASE_PATH`**。
 
 > 为什么需要：2026-09-16 校区部署实测——`localhost` 指的是**打开浏览器的那台电脑**，
 > 老师用自己的电脑访问校区机器时会被跳到"自己电脑的 8082"而打不开，或回落到演示身份。
 >
-> 安全：`host` 只接受合法主机名/IPv4（正则白名单），含 `/`、`@`、端口等一律拒绝并回退到配置值，
+> ★ 2026-09-20 补充修复（同源部署下端口与协议也必须跟随）：
+> 早期实现只替换 hostname 而沿用配置里的 `:8082`，导致同源部署（一个 nginx 同时托管两端）时：
+> · 用户从 `http://域名`（80 端口）访问 → 跳 `http://域名:8082` ❌
+> · 用户从 `https://域名` 访问 → 跳 `http://域名:8082` ❌（协议降级 + 错端口）
+> 现改为返回**访问者完整 origin**，并补上工作台子路径（`/ai`），
+> 于是 `http://域名/ai/#/sso?...` 在 IP / 域名 / 80 / 443 下全部正确。
+>
+> 安全：`origin` 只接受 `http:` / `https:` 协议 + 合法主机名/IPv4（正则白名单），
+> 含 `/`、`@`、查询串、`javascript:` / `file:` 协议等一律拒绝并回退到配置值，
 > 防止本接口被当作开放重定向（open redirect）使用。
 
 ---
@@ -922,7 +954,156 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 
 ---
 
-## 八、新增 / 修改 API 的流程（必须遵守）
+## 九、学生成长时间轴（`/api/growth`，v18 新增）
+### 9.1 定位与硬约束
+
+目标：不是「一份当前状态报告」，而是**一条成长轨迹** —— 能看到每个学生从 0 到成功的每一步。
+
+| 约束 | 说明 |
+| --- | --- |
+| **只增不改** | `student_timeline` 只 INSERT。历史事件不可篡改是成长路径可信的前提 |
+| **既有表不重复** | 出勤 / 成绩 / 课时由原表承载，读取时 UNION 合并，**不再写时间轴**（否则双份） |
+| **金额与电话不出网** | 时间轴 payload 禁止放金额、家长电话，`scrubPayload` 兜底剔除 |
+| **权限继承** | 复用 `utils/scope.js`，教师只能碰自己带的班与班内学员 |
+| **阈值可改** | 走 `growth_thresholds`，admin 可调、立即生效、不重建镜像 |
+
+**★ 采集入口在工作台，不在教务系统**（2026-09-18 人群分离定案）
+
+教务系统给校区负责人 / 非一线教学人员用，教学 AI 工作台给一线老师用；
+**老师要用的功能一律收在工作台**。因此「课后随手记」落在工作台的「授课流程」页，
+「看学生成长路径」落在工作台的「学生成长路径」页，二者共用同一数据域。
+
+**工作台凭证（`type=ai_agent`）对本模块的边界**（见 `middleware/auth.js`）：
+
+| 路径 | 放行 | 理由 |
+| --- | --- | --- |
+| `GET /api/growth/*` | ✅ | 成长路径页需要读 |
+| `POST /api/growth/class-eval`、`POST /api/growth/kp-assessment` | ✅ | 采集入口，教学口径 |
+| `PUT /api/growth/thresholds` | ❌ 403 | 管理动作（改全局阈值），仅 admin |
+| 其余 `/api/*`（财务 / 用户 / 学生增删改…） | ❌ 403 | 不在工作台职责内 |
+
+> 读写必须同权。曾一度只放行写（采集端）而挡住读（查询端），
+> 结果是老师能往班里写数据却看不到自己写的数据，成长路径页整页 403 —— 那是错的。
+> 安全边界靠 `canManageClass` / `canManageStudent`（**老师只能碰自己带的班，跨班一律 403**），
+> 不靠「挡住读」。
+
+**审计**：`/api/growth` 的写操作已计入 `AUDIT_MODULES`，动作名为「新增成长记录」。
+
+### 9.2 GET /api/growth/eval-form
+
+老师打开「授课流程」页时的预填数据 —— 不让老师自己找该评什么。
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | auth + 本班（`canManageClass`） |
+| 查询参数 | `?class_id=1&date=2026-09-20`（date 必须 `YYYY-MM-DD`） |
+| 返回 | `students[]`（含 `evaluated` 与今日已评内容）、`knowledge_points[]`（该班课程的**叶子**知识点，最多 40 个）、`already_evaluated` |
+| 错误 | 400 参数不合法 / 403 无权操作该班 |
+
+**★ `knowledge_points[]` 只含叶子知识点（可评定对象）**，单元节点被后端过滤掉。
+
+`knowledge_points` 是**两级结构**：单元（`seq=0` / `parent_id IS NULL`，如「第一单元 · 全等三角形」）
+与其下的知识点（`seq>0` / `parent_id=单元 id`）。单元是**分组标题**，老师无法对它打勾。
+不过滤会有两个后果：① 采集列表出现无法操作的行；② 单元节点占掉 `LIMIT` 名额，
+把真正可评的知识点挤出去（真实数据里 13 条中 3 条是单元节点，`LIMIT 12` 恰好截掉了最后一个知识点）。
+
+- 过滤条件用 `parent_id IS NOT NULL` 而非 `seq > 0`：语义更准（有父节点才是叶子），
+  将来新增不按 `seq` 编号的知识点也不会漏
+- 单元名不丢失：以 `unit_name` 字段带下来，供采集页做「单元 → 知识点」分组标题
+- 定位区别：`GET /api/growth/knowledge-points` 返回**含单元节点的完整层级**（带 `parent_id`），
+  用于展示层；`eval-form` 返回**可评集合**，用于采集层 —— 两者不应合并
+
+### 9.3 POST /api/growth/class-eval
+
+提交课堂评价（老师课后 10 秒动作）。
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | auth + 本班 |
+| 请求体 | `{ class_id, course_id, eval_date, session_no, items: [{ student_id, focus, participation, mastery, note }] }` |
+| 取值范围 | 三维均为 1–5（越界自动夹取，缺省 3） |
+| 幂等 | `UNIQUE(student_id, course_id, eval_date)`，重复提交覆盖 |
+| 联动 | 向 `student_timeline` **追加**一条 `class_eval` 事件（历史不可改） |
+| 越权保护 | 学生不属于该班时静默跳过 |
+| 返回 | `{ saved, appended, eval_date, class_id }` |
+
+### 9.4 POST /api/growth/kp-assessment
+
+批量知识点评定（老师课后 1 分钟动作）。
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | auth + 本班 |
+| 请求体 | `{ class_id, course_id, assessed_at, session_no, kps: [{ kp_id, level }], student_ids?: [], overrides?: [{ student_id, kp_id, level }] }` |
+| level 白名单 | `未掌握` / `部分掌握` / `已掌握` |
+| 默认范围 | `student_ids` 缺省 = 全班在读学员 |
+| 覆盖机制 | `overrides` 用于个别学生单独调整（如全班「已掌握」但某生「部分掌握」） |
+| 联动 | 每条评定追加一条 `kp_assessment` 事件，payload 含 `from`（上次等级）与 `changed` |
+| 返回 | `{ students, records }` |
+
+### 9.5 GET /api/growth/students/:id/timeline
+
+单学员成长时间轴（既有三表 UNION + 新事件，已去重）。
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | auth + 本班学员（`canManageStudent`） |
+| 查询参数 | `?from=YYYY-MM-DD&to=YYYY-MM-DD`（可选） |
+| 返回 | `{ studentId, from, to, count, events[] }`，事件含 `type / label / date / summary / payload` |
+| 去重 | 既有表承载的维度优先，`student_timeline` 中的同名类型被丢弃；同类型同日期保留内容更全的一条 |
+
+### 9.6 GET /api/growth/students/:id/growth
+
+单学员成长画像 —— 「从 0 到成功」最直接的数据表达。
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | auth + 本班学员 |
+| 返回要点 | `sessionCount`（课次数）、`attendance`（attended/absent/leave/rate）、`evalTrend[]`（课堂三维曲线）、`evalDelta`（首末对比）、`examSeries[]`、`kpProgress[]`（含 `from/to/delta/jumps`）、`milestones[]`、`breakdown`（分类计数） |
+| 里程碑类型 | `kp_progress`（知识点真实跃迁，取过程中的跃迁点而非首末差值）、`attendance_streak`（连续 4 的倍数次课全勤且按时） |
+
+### 9.7 GET /api/growth/classes/:id/growth
+
+整班成长概览 —— 老师的使用动机来源（「这个班我教得怎么样」）。
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | auth + 本班 |
+| 返回 | `studentCount`、`students[]`、`evalSeries[]`（每课班级三维均值）、`kpMastery[]`（每个知识点的已掌握/已评定与掌握率）、`thresholds` |
+
+### 9.8 GET /api/growth/knowledge-points
+
+知识点列表，供工作台筛选与展示。
+
+| 项 | 值 |
+| --- | --- |
+| 权限 | auth（全员可读） |
+| 查询参数 | `?course_id=1`（可选） |
+| 排序 | 按 `unit_no, seq` 教学顺序 |
+| 返回字段 | 含 `parent_id`，**保留单元节点**（`parent_id IS NULL` 即单元） |
+
+**★ 与 9.2 `eval-form` 的定位区别（勿合并）**：
+本端点返回**含单元节点的完整层级**，供展示层做树/分组；
+`eval-form` 只返回**叶子知识点**（可评集合），供采集层逐行打勾。
+两者形状相似但用途不同 —— 合成一个会导致要么采集页出现无法操作的行、
+要么展示层丢失层级。
+
+### 9.9 GET / PUT /api/growth/thresholds
+
+| 项 | 值 |
+| --- | --- |
+| GET 权限 | auth（全员可读，供界面展示口径） |
+| PUT 权限 | **仅 admin** |
+| PUT 请求体 | `{ items: [{ key, value }] }`；未知 key 跳过，非数值跳过 |
+| 返回 | `{ updated: n }` |
+| 生效 | 立即（每次计算实时读表，无需重启） |
+
+默认 8 条阈值：`absent_streak_warn` 2｜`score_trend_down` -8｜`score_trend_up` 8｜
+`hours_low_warn` 12｜`excellent_rate` 88｜`outlier_z` 1.2｜`kp_progress_step` 1｜`attention_score` 6
+
+---
+
+## 十、新增 / 修改 API 的流程（必须遵守）
 
 1. 在 `server/src/routes/<module>.js` 中实现，复用 `auth` / `requireRole` / `utils/scope.js`。
 2. 需要新表 / 新字段 → **新增迁移脚本**（`server/src/migrations/0NN-*.js`，版本连续递增），同步更新 `server/database.md`。

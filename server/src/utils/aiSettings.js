@@ -8,6 +8,9 @@
 // 1. 只有白名单里的键可写，杜绝把 AI 配置表当成通用 KV 注入点；
 // 2. 敏感值（Key）**永不明文回传**，只给掩码 `sk-****3f2a`；
 // 3. 掩码值回传表示「不修改」，避免前端把掩码当成真 Key 存进去。
+// 4. 保存时**只落库真正改动的项**：前端整表提交（页面一点保存就回传全部 10 个字段），
+//    若照单全收，第一次保存就会把所有值钉进数据库，此后 .env 怎么改都无效。
+//    因此与当前生效值相同的项直接跳过，保持「没碰过的项继续跟随环境变量」。
 const db = require("../db");
 const config = require("../config");
 
@@ -81,7 +84,8 @@ function readForDisplay() {
   };
 }
 
-/** 保存：值为空串表示清除（回退到环境变量）；掩码值表示不修改；未知键忽略 */
+/** 保存：值为空串表示清除（回退到环境变量）；掩码值表示不修改；未知键忽略；
+ *  与当前生效值相同的项不落库，避免「点一次保存就把全部字段钉死、从此 .env 再也改不动」。 */
 function save(patch, username) {
   const now = new Date().toISOString();
   const upsert = db.prepare(
@@ -94,18 +98,29 @@ function save(patch, username) {
   );
   const del = db.prepare("DELETE FROM ai_settings WHERE key = ?");
 
+  const map = readMap();
   const changed = [];
   db.exec("BEGIN");
   try {
     for (const [key, raw] of Object.entries(patch || {})) {
       if (!FIELDS[key]) continue;
       const value = String(raw ?? "").trim();
-      if (value === "" ) {
-        del.run(key);
-        changed.push(key);
+      const row = map[key];
+      const inDb = Boolean(row && String(row.value).length > 0);
+
+      if (value === "") {
+        if (inDb) {
+          del.run(key);
+          changed.push(key);
+        }
         continue;
       }
       if (FIELDS[key].secret && isMask(value)) continue; // 前端没改，保持原值
+
+      // 与「本来就会生效的值」相同 → 不写库，保住环境变量的可改性
+      const effective = inDb ? String(row.value) : FIELDS[key].env();
+      if (!inDb && value === String(effective ?? "").trim()) continue;
+
       upsert.run(key, value, username || "", now);
       changed.push(key);
     }
