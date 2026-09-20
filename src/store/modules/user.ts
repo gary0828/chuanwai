@@ -7,6 +7,7 @@ import {
   routerArrays,
   storageLocal
 } from "../utils";
+import { resetAsyncRoutesState } from "@/router";
 import {
   type UserResult,
   type RefreshTokenResult,
@@ -97,6 +98,9 @@ export const useUserStore = defineStore("pure-user", {
       removeToken();
       useMultiTagsStoreHook().handleTags("equal", [...routerArrays]);
       resetRouter();
+      // ★ 同时重置「动态路由已加载」单例：否则换账号登录（如 admin→teacher）
+      //   会复用上一个账号的菜单与路由，导致越权可见或菜单缺失。
+      resetAsyncRoutesState();
       router.push("/login");
     },
     /** 刷新`token`（失败时 reject，避免调用方永久等待） */

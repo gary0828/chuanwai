@@ -118,11 +118,75 @@ const whiteList = ["/login"];
 
 const { VITE_HIDE_HOME } = import.meta.env;
 
+/**
+ * ★ 动态路由只加载一次（2026-09-20 修复冷启动白屏）
+ *
+ * 背景：pure-admin 原设计把 `initRouter()` 放在「守卫的刷新分支」里，
+ * 但**守卫只在 `to` 能匹配到已注册路由时才会执行**。因此直接打开一个
+ * 尚未注册的动态路由（刷新页面 / 收藏夹 / 别人发的链接）时：
+ *   to.matched = [] → 守卫根本不跑 → initRouter() 永不调用 → 永久白屏。
+ * 表现：直达 /attendance/records 白屏，先到 /welcome 再点菜单则一切正常。
+ *
+ * 修法：把「确保动态路由已加载」提到守卫最前面，且与 to 是否匹配无关。
+ * 用单例 Promise 去重，避免并发导航重复请求 /api/auth/async-routes。
+ */
+let asyncRoutesReady: Promise<void> | null = null;
+
+/** 确保动态路由已注册（幂等，可并发调用） */
+export function ensureAsyncRoutes(): Promise<void> {
+  // 已登录且已加载过 → 直接返回
+  if (asyncRoutesReady) return asyncRoutesReady;
+  const userInfo = storageLocal().getItem<DataInfo<number>>(userKey);
+  if (!Cookies.get(multipleTabsKey) || !userInfo) {
+    // 未登录，不需要动态路由
+    asyncRoutesReady = Promise.resolve();
+    return asyncRoutesReady;
+  }
+  // ★ 失败必须允许重试：若把 rejected 的 Promise 缓存住，
+  //   一次网络抖动（后端重启 / 请求被取消）就会让整个会话再也加载不出路由，
+  //   用户只能手动刷新。因此失败时清空单例，下次导航自动重试。
+  asyncRoutesReady = initRouter()
+    .then(() => undefined)
+    .catch(err => {
+      asyncRoutesReady = null;
+      throw err;
+    });
+  return asyncRoutesReady;
+}
+
+/**
+ * 重置动态路由加载状态（登出 / 重新登录时调用）
+ *
+ * 场景：A 账号登出后 B 账号登录，若不清空单例，B 会直接复用 A 的加载结果
+ * （`asyncRoutesReady` 已完成），导致 B 拿到的是 A 的菜单与路由。
+ * `resetRouter()` 只重置了 vue-router 实例，没有重置这个 Promise 单例。
+ */
+export function resetAsyncRoutesState() {
+  asyncRoutesReady = null;
+}
+
 router.beforeEach((to: ToRouteType, _from, next) => {
   to.meta.loaded = loadedPaths.has(to.path);
 
   if (!to.meta.loaded) {
     NProgress.start();
+  }
+
+  // ★ 第一优先：确保动态路由已加载。放在最前面，且不依赖 to 是否匹配，
+  //   否则直达未注册路由时本守卫不会被触发（Vue Router 无匹配即不导航）。
+  const userInfoEarly = storageLocal().getItem<DataInfo<number>>(userKey);
+  if (
+    Cookies.get(multipleTabsKey) &&
+    userInfoEarly &&
+    to.path !== "/login" &&
+    usePermissionStoreHook().wholeMenus.length === 0
+  ) {
+    ensureAsyncRoutes().then(() => {
+      // 路由注册完成后重新解析目标：此前 to.matched 可能为空
+      const resolved = router.resolve(to.fullPath);
+      next(resolved.matched.length ? { ...to, replace: true } : undefined);
+    });
+    return;
   }
 
   if (to.meta?.keepAlive) {
@@ -148,12 +212,15 @@ router.beforeEach((to: ToRouteType, _from, next) => {
   }
   if (Cookies.get(multipleTabsKey) && userInfo) {
     // 无权限跳转403页面
+    // ★ 必须 return —— 否则会继续往下落到 toCorrectRoute() 再 next() 一次，
+    //   同一导航里调用两次 next()，第二次将不再生效并触发 vue-router 警告，
+    //   表现为「权限拦截偶发失效」。
     if (to.meta?.roles && !isOneOfArray(to.meta?.roles, userInfo?.roles)) {
-      next({ path: "/error/403" });
+      return next({ path: "/error/403" });
     }
     // 开启隐藏首页后在浏览器地址栏手动输入首页welcome路由则跳转到404页面
     if (VITE_HIDE_HOME === "true" && to.fullPath === "/welcome") {
-      next({ path: "/error/404" });
+      return next({ path: "/error/404" });
     }
     if (_from?.name) {
       // name为超链接
@@ -164,40 +231,10 @@ router.beforeEach((to: ToRouteType, _from, next) => {
         toCorrectRoute();
       }
     } else {
-      // 刷新
-      if (
-        usePermissionStoreHook().wholeMenus.length === 0 &&
-        to.path !== "/login"
-      ) {
-        initRouter().then((router: Router) => {
-          if (!useMultiTagsStoreHook().getMultiTagsCache) {
-            const { path } = to;
-            const route = findRouteByPath(
-              path,
-              router.options.routes[0].children
-            );
-            getTopMenu(true);
-            // query、params模式路由传参数的标签页不在此处处理
-            if (route && route.meta?.title) {
-              if (isAllEmpty(route.parentId) && route.meta?.backstage) {
-                // 此处为动态顶级路由（目录）
-                const { path, name, meta } = route.children[0];
-                useMultiTagsStoreHook().handleTags("push", {
-                  path,
-                  name,
-                  meta
-                });
-              } else {
-                const { path, name, meta } = route;
-                useMultiTagsStoreHook().handleTags("push", {
-                  path,
-                  name,
-                  meta
-                });
-              }
-            }
-          }
-          // 确保动态路由完全加入路由列表并且不影响静态路由（注意：动态路由刷新时router.beforeEach可能会触发两次，第一次触发动态路由还未完全添加，第二次动态路由才完全添加到路由列表，如果需要在router.beforeEach做一些判断可以在to.name存在的条件下去判断，这样就只会触发一次）
+      // 刷新（动态路由已在守卫开头统一加载，此处只处理标签页与回落）
+      if (usePermissionStoreHook().wholeMenus.length === 0 && to.path !== "/login") {
+        // 兜底：正常情况下 ensureAsyncRoutes() 已在上方完成，这里不该再进来
+        ensureAsyncRoutes().then(() => {
           if (isAllEmpty(to.name)) router.push(to.fullPath);
         });
       }
