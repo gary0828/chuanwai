@@ -1,5 +1,21 @@
-# 仅供本机验收用的覆盖文件：把容器名与端口错开，避免与正在运行的主栈冲突。
-# 用法：docker compose -f docker-compose.unified.yml -f docker-compose.verify.yml up -d
+# 并行验收用覆盖文件（仅供本机验证，不影响生产部署）
+#
+# 用途：在「主栈已经在跑」的机器上，再起一套统一入口做端到端验收，
+#       把容器名错开避免 name conflict（两个 compose 文件都硬编码了
+#       container_name: attendance-server，同机直接起会冲突）。
+#
+# 用法（端口 9080 避开常见占用）：
+#   WEB_PORT=9080 docker compose \
+#     -p attendance-unified-test \
+#     -f docker-compose.unified.yml \
+#     -f docker-compose.verify.yml up -d
+#
+# 验收：
+#   python _verify_test/ui-unified-entry.py http://localhost:9080
+#
+# 清理：
+#   docker compose -p attendance-unified-test \
+#     -f docker-compose.unified.yml -f docker-compose.verify.yml down
 services:
   server:
     container_name: attendance-server-verify
