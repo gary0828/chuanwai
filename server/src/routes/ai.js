@@ -44,63 +44,81 @@ setInterval(() => {
 /**
  * 解析工作台跳转基址。
  *
- * 背景（2026-09-16 校区部署实测暴露的缺陷，2026-09-20 修复）：
+ * 背景（2026-09-16 校区部署实测暴露的缺陷）：
  * `AI_WORKBENCH_URL` 默认 `http://localhost:8082`，而 **localhost 指的是打开浏览器的
  * 那台电脑**。老师用自己的电脑访问校区机器上的教务系统时，免登链接会把他们带到
  * "自己电脑的 8082" —— 必然打不开（表现：页面空白 / 回落到演示身份）。
+ * 所以配置是回环地址时，必须把主机换成「访问者正在访问的那个主机」。
  *
- * 策略：
- *   - 显式配置了非回环地址（如 http://192.168.1.20:8082）→ 尊重配置，原样返回
- *   - 配置仍是 localhost / 127.0.0.1 → **跟随访问者当前的完整 origin**
- *     （协议 + 主机 + 端口）→ 见下方「为什么必须连端口一起跟随」
+ * ★★ 关键：换的只是**主机名**，不是整个 origin（2026-09-20 二次修正）
+ *   本项目有两种部署形态，端口归属完全不同：
  *
- * ★ 为什么必须连端口一起跟随（2026-09-20 修复的真实缺陷）：
- *   早期实现只替换了 hostname 而**沿用配置里的 8082**。当工作台与教务系统同源
- *   （同一 nginx、同一端口）时这是错的：
- *     · 用户从 `http://ai.school.com`（80 端口）访问 → 跳 `http://ai.school.com:8082` ❌
- *     · 用户从 `https://ai.school.com` 访问    → 跳 `http://ai.school.com:8082` ❌（协议降级 + 错端口）
- *   同源反代是本项目的**推荐部署形态**（一个 nginx 同时托管两个前端，
- *   `/api` 反代后端），此时跳转地址就应该是访问者当前 origin 本身。
+ *   A. 独立端口（docker-compose.yml）：教务 8080、工作台 8082，是两个服务。
+ *      ⇒ 必须**保留配置里的 8082**，只把 host 换掉。
+ *        `localhost:8082` + 访问者 192.168.1.20 → `192.168.1.20:8082` ✅
+ *        若误用访问者 origin，会得到 `192.168.1.20:8080` —— 那是教务系统，
+ *        没有 /sso 路由，浏览器直接 404（2026-09-20 真实故障）。
+ *
+ *   B. 统一入口（docker-compose.unified.yml）：一个 nginx 同时托管两端，
+ *      工作台挂在 /ai/ 子路径，配置是 `http://localhost` + BASE_PATH=/ai。
+ *      ⇒ 此时端口应跟随访问者（访问者用 80/443/自定义端口都能对），
+ *        `localhost` + 访问者 https://school.com → `https://school.com/ai` ✅
+ *        若硬套配置端口，会跳到 `school.com:80`（HTTPS 下协议降级 + 错端口）。
+ *
+ *   区分依据：**BASE_PATH 非空即同源部署**（同源才有可能挂子路径），
+ *   此时才跟随访问者 origin；否则一律「换 host、留端口与路径」。
  *
  * 安全：只接受合法主机名/IPv4，拒绝路径、查询串等可疑输入，
- * 防止被当成开放重定向（open redirect）使用 —— 跳转目标始终是「访问者正在访问的
- * 这个主机」，无法被诱导跳去第三方域名。
- *
- * ★ 子路径前缀（`AI_WORKBENCH_BASE_PATH`）：
- *   同源部署时工作台通常挂在 `/ai/` 而非域名根路径，此时只返回 origin 会得到
- *   `http://域名/#/sso?...` —— 落到教务系统自己的 404。故需把前缀拼回：
- *   `http://域名/ai/#/sso?...`。独立部署（工作台有独立域名/端口）时该值为空。
+ * 防止被当成开放重定向（open redirect）—— 跳转目标始终是「访问者正在访问的这个主机」，
+ * 无法被诱导跳去第三方域名。
  */
 function resolveWorkbenchUrl(origin) {
-  const raw = config.aiWorkbenchUrl;
+  const raw = String(config.aiWorkbenchUrl || "").trim();
   let u;
   try {
     u = new URL(raw);
   } catch {
     return raw;
   }
-  // 显式配了真实地址（非回环）→ 尊重配置。
-  // 若配置里已自带子路径（如 http://10.0.0.5/ai）则不再叠加，避免 /ai/ai。
+
+  const basePath = config.aiWorkbenchBasePath || "";
+  // 同源部署的判据：挂了子路径。此时端口应跟随访问者。
+  const sameSite = basePath !== "";
+
+  // 配置已是真实地址（非回环）→ 尊重配置，只补子路径
   if (!LOOPBACK_HOSTS.includes(u.hostname)) return withBasePath(raw);
 
-  // 配置是回环地址 → 跟随访问者当前 origin
-  const originStr = String(origin || "").trim();
-  if (!originStr) return withBasePath(raw);
+  // 配置是回环 → 借访问者的主机名（可能连端口一起，见 sameSite）
+  const o = parseSafeOrigin(origin);
+  if (!o) return withBasePath(raw);
 
+  if (sameSite) {
+    // 形态 B：跟随访问者完整 origin（协议 + 主机 + 端口），再补子路径
+    return o.origin + basePath;
+  }
+
+  // 形态 A：只换 hostname，保留配置的端口与协议。
+  // 刻意不用 u.origin —— 它带的是配置里的回环主机名，正是要替换掉的那个。
+  // 也刻意不拼 u.pathname —— pathname 至少是 "/"，会拼出 `:8082//`，
+  // 再叠加票据的 `/#/sso` 就成了 `:8082//#/sso`（前端路由匹配不上）。
+  const host = o.hostname.includes(":") ? `[${o.hostname}]` : o.hostname;
+  const base = `${u.protocol}//${host}${u.port ? `:${u.port}` : ""}`;
+  return withBasePath(base);
+}
+
+/** 解析并校验访问者 origin；不合法返回 null */
+function parseSafeOrigin(origin) {
+  const s = String(origin || "").trim();
+  if (!s) return null;
   let o;
   try {
-    o = new URL(originStr);
+    o = new URL(s);
   } catch {
-    return withBasePath(raw);
+    return null;
   }
-  if (o.protocol !== "http:" && o.protocol !== "https:") return withBasePath(raw);
-  if (!isSafeHost(o.hostname)) return withBasePath(raw);
-
-  // 访问者自己就在 localhost（本机调试、SSH 隧道、反代回环等）也照常跟随：
-  // 回环地址只对「正在访问的那台机器」有意义，而它正是访问者本人，
-  // 所以 o.origin 恰恰是正确的。关键是**必须补上子路径**——
-  // 早期实现这里直接 return raw，得到 http://localhost（无 /ai），同源部署下必 404。
-  return o.origin + config.aiWorkbenchBasePath;
+  if (o.protocol !== "http:" && o.protocol !== "https:") return null;
+  if (!isSafeHost(o.hostname)) return null;
+  return o;
 }
 
 /** 兜底路径也要带上子路径前缀，否则同源部署下会落到教务系统的 404 */
