@@ -206,6 +206,17 @@ app.use((err, _req, res, _next) => {
     message = constraintMessage(err);
   }
 
+  // body 超限（body-parser / express.raw 抛出）：原始 message 是
+  // "request entity too large"（英文、且不告诉用户上限是多少），
+  // 前端只能显示「Request failed with status code 413」这种无信息量的提示。
+  // 这里换成中文并保留原始上限说明，让用户知道该把图压到多大。
+  if (err?.type === "entity.too.large" || status === 413) {
+    status = 413;
+    message = err?.limit
+      ? `上传内容过大（上限 ${Math.round(Number(err.limit) / 1024 / 1024)}MB），请压缩后重试`
+      : "上传内容过大，请压缩后重试";
+  }
+
   // 5xx 才打印堆栈；4xx 属预期内的业务拒绝，避免噪音
   if (status >= 500) {
     console.error("[server error]", err);

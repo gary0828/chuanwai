@@ -133,11 +133,24 @@ function makeUploader(kind: "logo" | "favicon") {
           ElMessage.success("上传成功");
         }
       })
-      .catch(() => {
+      .catch((err: any) => {
         // 失败则回滚预览，避免误导用户以为已上传
         if (kind === "logo") logoTempUrl.value = "";
         else faviconTempUrl.value = "";
         URL.revokeObjectURL(localUrl);
+
+        // ★ 把底层错误码翻译成人话。413 是 nginx 层的体积拦截，
+        //   此时请求**根本没到后端**，所以只提示"上传失败"会让用户反复重试大图。
+        const status = err?.response?.status;
+        if (status === 413) {
+          ElMessage.error("图片过大，服务器拒绝接收（上限 2MB），请压缩后重试");
+        } else if (status === 401 || status === 403) {
+          ElMessage.error("登录状态已失效或无权限，请重新登录后再试");
+        } else if (err?.code === "ECONNABORTED" || err?.message?.includes("timeout")) {
+          ElMessage.error("上传超时，请检查网络后重试");
+        } else {
+          ElMessage.error(err?.response?.data?.message || "上传失败，请重试");
+        }
       })
       .finally(() => {
         if (kind === "logo") logoUploading.value = false;

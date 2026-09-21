@@ -143,7 +143,9 @@ router.post(
       return res.status(400).json({ success: false, message: "未收到文件内容" });
     }
     if (buf.length > MAX_UPLOAD_BYTES) {
-      return res.status(400).json({ success: false, message: "文件过大，上限 2MB" });
+      // 注：正常路径下 express.raw 已按同一上限拦截并抛 413（见 index.js 统一错误处理），
+      // 这里是双保险，防止将来有人调大 express.raw 的 limit 却忘了同步此处。
+      return res.status(413).json({ success: false, message: "文件过大，上限 2MB" });
     }
     // 魔数嗅探，得到可信扩展名（忽略客户端声明）
     const ext = sniffImage(buf);
