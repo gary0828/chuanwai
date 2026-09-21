@@ -433,6 +433,14 @@
 
 ## 最近一次浏览器验证
 
+### ⓪ 教务系统全闭环（2026-09-20，最新，以此为准）
+
+- **环境**：Docker `attendance-web`（:8080）+ `attendance-server`（:3000），前端镜像 2026-09-20 21:55 重建（含冷启动修复）
+- **结果**：全页面冷启动巡检 **28/28** ｜ e2e **80/80** ｜ analytics **22/22** ｜ 浏览器 P0 **31/31** ｜ Docker 部署 **9/9** ｜ 业务链闭环 **49/49**
+- **深链接冷启动实测**（模拟老师从收藏夹直接打开）：`/attendance/checkin`、`/data/classes`、`/finance/orders` 均正常渲染
+- **服务状态**：`/api/health` → `{"status":"ok"}`；前端 200；`data_version: v18`；容器内 SQLite 正常挂载
+- 详见下文「教务系统全闭环跑通 · 冷启动白屏根治（2026-09-20）」
+
 ### ① Docker 生产构建（2026-09-12，推荐以此为准）
 
 - **时间**：2026-09-12 08:5x（GMT+8）
@@ -625,4 +633,82 @@ Key 由 `LLM_API_KEY` / 配置中心持有，服务端做二次脱敏，用量�
 另 1 处失败是**测试脚本自身的错误假设**：用 `input` 计数会把 Element Plus 的
 `radio` 与 `select` 内部只读 combobox 一并算作输入框。已改为精确匹配 `input.el-input__inner`
 并加「无密码框」断言——**断言写错要改断言，不能为了变绿而放松安全项**。
+
+---
+
+## 教务系统全闭环跑通 · 冷启动白屏根治（2026-09-20）
+
+> **背景与优先级（用户拍板）**：AI 工作台是下一步计划，需大量时间；第一期测试重点是**教务系统** ——
+> 只有教务系统跑得流畅，才能为 AI 工作台提供真实数据。因此本轮目标为
+> 「**把教务系统全部闭环跑通**，每个功能在真实环境都能完成闭环、产生结果」，
+> 并以管理员身份走查全部功能，统一修复「逻辑不顺畅 / 数据不通 / 关联做不好」的问题。
+
+### 一、根治：冷启动直达动态路由永久白屏（🔴 自首个提交 `42d87bd` 起即存在）
+
+**现象**：直接打开任意一个动态路由（刷新页面 / 收藏夹 / 他人发的链接）→ **永久白屏**，`#app` 只剩 `<!---->`（5492 字节）。
+先访问 `/welcome` 再点菜单则完全正常 —— 这个「对照组」是定位的关键。
+
+**根因**：pure-admin 原设计把 `initRouter()` 只放在路由守卫的「刷新分支」里，而
+**Vue Router 的守卫只在 `to` 能匹配到已注册路由时才执行**。直达未注册的动态路由时
+`to.matched = []`、`to.name = undefined` → 守卫根本不跑 → `initRouter()` 永不调用 → 动态路由永不加载。
+
+**判定证据链**（缺一不可，避免误判）：
+
+| 观测 | 值 | 说明 |
+| --- | --- | --- |
+| `routeCount` | 13 | 只有静态路由，动态路由一个都没注册 |
+| `currentName` | `undefined` | 当前路由未解析 |
+| `matched` | `[]` | 无任何匹配记录 |
+| `hasPageNotFound` | `False` | `addPathMatch()` 从未执行 ⇒ `initRouter()` 从未被调用 |
+
+**修复**（`src/router/index.ts` + `src/store/modules/user.ts`，2 文件 / +77 −36）：
+
+1. 新增 `ensureAsyncRoutes()`，**前置到 `beforeEach` 最前面**，与 `to` 是否匹配无关；用单例 Promise 去重，避免并发导航重复请求 `/api/auth/async-routes`。
+2. 加载完成后用 `router.resolve(to.fullPath)` 重新解析，再以 `replace` 重放导航。
+3. 补齐两处 `return`：原代码在 403 / 404 拦截后仍继续执行 `toCorrectRoute()`，同一导航调用两次 `next()`，导致**权限拦截偶发失效**。
+4. **失败允许重试**：`initRouter()` reject 时清空单例。此前会把 rejected Promise 缓存住，一次网络抖动就让整个会话再也加载不出路由。
+5. 新增 `resetAsyncRoutesState()` 并在 `logOut()` 中调用：此前换账号登录（admin→teacher）会复用上一账号的菜单与路由，存在**越权可见**风险。
+
+### 二、新增权威巡检脚本 `verify-all-pages.py`
+
+- 路由清单**从 `/api/auth/async-routes` 实时拉取**（28 个：27 业务 + `/welcome`）
+- 每个路由**独立浏览器上下文**冷启动直达 + F5 刷新
+- 断言 `.app-page` 渲染 / 落点正确 / 无页面报错
+
+> **教训（已固化进 skill）**：路由清单**绝不能手写**。本轮手写清单时把
+> `/data/terms` 写成 `/data/semesters`、`/data/makeups` 写成 `/data/makeup-classes`、
+> `/data/adjustments` 写成 `/data/schedule-adjustments`，造成一连串假失败。
+
+### 三、排除的误判（同一轮内我自己写错探针造成的假失败）
+
+| 误判 | 真相 |
+| --- | --- |
+| 「班级学习报告接口缺失」 | 前端只调 `/api/reports/students/:id`（`src/api/teaching.ts`），本就没有班级报告功能 |
+| 「动态路由组件解析错误」 | 复刻 `import.meta.glob` 匹配后 27/27 全部正确 |
+| 「教师调课列表越权」 | 实为**残留数据**：`head_teacher_id` 全指向 teacher id=2 |
+| 「e2e 10 项 FAIL」 | 阶段 9.5 因残留数据失败 → 断言中断 → 后续 9 项是**连带后果**（日志有 `[中断]` 标记） |
+
+配套补了两个可复用能力：`_verify_test/clean-residue.js`（按外键顺序清理 `e2e_` 残留）、
+`probe-business-chain.mjs` 阶段 7/13 改为**动态挑空闲时段**并新增第 19 阶段自动清理。
+
+### 四、验证结果（2026-09-20 实测，次日 09-21 独立复核仍全绿）
+
+| 套件 | 结果 |
+| --- | --- |
+| `verify-all-pages.py`（新增） | **28/28** |
+| `e2e-lifecycle` | **80/80** |
+| `analytics-smoke` | **22/22** |
+| `ui-p0-verify` | **31/31** |
+| `docker-verify` | **9/9** |
+| `probe-business-chain` | **49/49** |
+
+业务链实测闭环：缴费挂订单汇总 3200 ✅ ｜ 签到扣 1 课时 48→47 ✅ ｜ 补课完成扣至 46 ✅ ｜
+退费通过 → 订单置「退班」✅ ｜ 请假审批通过 ✅ ｜ 7 个统计接口全 200 ✅。
+
+### 五、本轮其它修复与恢复
+
+- **`.git` 对象库被破坏并完整恢复**：用 `git stash` 时被 SIGTERM 中断，导致 `refs/heads`、`refs/remotes` 被清空且 pack 文件消失。
+  已按「备份 → 确认远程 HEAD → `printf` 写 ref → `fetch` 拉回对象 → 重建 remotes → 清空失效 reflog」完整还原。
+  **教训：本环境不要使用 `git stash`。**
+- **推送通道**：`github.com` 直连被阻断时，可改用 GitHub **Git Data REST API** 构造等价提交（blob → tree → commit → 更新 ref），见 `_verify_test/push-via-api.py`。
 

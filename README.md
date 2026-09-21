@@ -414,6 +414,30 @@ node server/scripts/e2e-lifecycle.mjs
 
 脚本自动创建 `e2e_` 前缀测试数据，结束后自清理（含 preClean 容错），可重复运行、不留数据残留；全部断言通过时退出码为 0。
 
+### 全页面冷启动巡检（改路由 / 菜单后必跑）
+
+`_verify_test/verify-all-pages.py` 覆盖「**直接打开链接**」这一真实使用场景 —— 老师把页面存进收藏夹、或别人发链接给他时，页面必须能直接打开而不是白屏。
+
+```bash
+"C:/Program Files/Python314/python.exe" _verify_test/verify-all-pages.py http://localhost:8080 http://127.0.0.1:3000
+```
+
+- 路由清单**从 `/api/auth/async-routes` 实时拉取**（不手写，避免与后端下发的真实菜单脱节）
+- 每个路由用**独立浏览器上下文**冷启动直达，再按 F5 刷新一次
+- 断言：`.app-page` 已渲染、URL 落点正确、无页面级报错
+
+> 背景：本项目曾存在「冷启动直达动态路由永久白屏」的缺陷（自首个提交起即存在，2026-09-20 修复）。
+> 根因是 `initRouter()` 只在路由守卫的刷新分支调用，而 Vue Router 的守卫**只在 `to` 能匹配到已注册路由时才执行** ——
+> 直达未注册路由时守卫不跑，动态路由永不加载。已改为在守卫最前面调用 `ensureAsyncRoutes()`，与 `to` 是否匹配无关。
+
+### 业务链闭环探针
+
+`_verify_test/probe-business-chain.mjs` 以 19 个阶段串联真实业务操作（含第 19 阶段自动清理），验证跨模块数据是否连通：
+
+```bash
+BASE=http://127.0.0.1:3000 node _verify_test/probe-business-chain.mjs   # 49 项
+```
+
 ## 多端登录扩展（预留口子）
 
 > 注意：系统定位为**纯员工端 CRM**。以下扩展口子仅针对机构员工端的多端登录（手机号 / 微信扫码登录员工账号），不面向学生 / 家长端。

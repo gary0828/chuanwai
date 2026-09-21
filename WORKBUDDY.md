@@ -1,7 +1,10 @@
 # WORKBUDDY.md · 教务管理系统 项目规则（Agent 开发约束）
 
 > 本文件是 Agent 在本仓库工作时的**最高优先级规则**。每次会话开始必须通读本文件 + `docs/项目地图.md`。
-> 生成时间：2026-09-11 ｜ 数据库版本：v14 ｜ e2e 断言数：80（全绿）
+> 生成时间：2026-09-11 ｜ **事实基线最后校准：2026-09-21** ｜ 数据库版本：**v18** ｜ 回归基线：全页面巡检 28/28 · e2e 80/80 · analytics 22/22 · 浏览器 P0 31/31 · Docker 9/9 · 业务链 49/49（全绿）
+>
+> **推进顺序（2026-09-20 用户拍板）：教务系统闭环优先于一切新功能。**
+> AI 工作台是下一步计划，开工前须先收集校区老师真实使用意见；教务系统的「逻辑不顺畅 / 数据不通 / 关联做不好」优先修。
 
 ---
 
@@ -138,8 +141,8 @@ export const getStudentList = (params?: object) => {
 > 本节只保留 AI 干活时高频需要、且 README 里查不到的事实。
 
 - **定位**：培训机构**纯员工端 CRM**（admin / teacher 两种角色；学生、家长无账号、不登录）。
-- **数据库**：当前 **v14**，权威 schema 文档 `server/database.md`，迁移脚本 `server/src/migrations/`。
-- **测试**：`server/scripts/e2e-lifecycle.mjs`，**80 项断言**。
+- **数据库**：当前 **v18**（v16 使用反馈 / v17 AI 配置中心 / v18 学生成长时间轴），权威 schema 文档 `server/database.md`，迁移脚本 `server/src/migrations/`。
+- **测试**：`server/scripts/e2e-lifecycle.mjs`（**80 项**）；另有 `analytics-smoke.mjs`（22 项）、`ui-p0-verify.py`（31 项）、`docker-verify.sh`（9 项）、`_verify_test/verify-all-pages.py`（**28 项**，改路由/菜单后必跑）、`_verify_test/probe-business-chain.mjs`（49 项）。
 - **默认账号**：`admin / admin123456`、`teacher / teacher123456`。
 
 ## 二、关键时间约束（最高优先级）
