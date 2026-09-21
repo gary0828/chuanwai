@@ -554,6 +554,53 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 > 老师在工作台既要看也要改。**安全边界靠 `canManage`（owner 或 admin），不靠"挡住读"**。
 > 与 `/api/growth` 的处理方式一致，见 `middleware/auth.js`。
 
+### 自动生成（L3 · `server/src/utils/todo-generator.js`）
+
+> ★★ **核心：待办的 owner 由「事件类型」决定，绝不是"生成给所有人"。**
+> 4 类事件的敏感度差别极大，无差别生成会把**财务与招生数据泄漏到工作台**。
+
+| 事件 | `source_type` | 检测口径 | 收件人（owner） | 老师可见 |
+|---|---|---|---|---|
+| 学员余额/课时不足 | `tuition_low` | `orders`（`status='在读'`）按学员汇总 `remain_hours` ≤ 阈值；学员须 `status='在读'` | **仅 admin** | ❌ **绝不给**（数据源是**财务表**，含 `amount`） |
+| 线索待跟进 | `lead_follow` | `leads.status='新线索'` 且 `updated_at` 距今 ≥ 阈值天 | **仅 admin** | ❌ **绝不给**（`routes/leads.js` **全程 `requireRole("admin")`**） |
+| 连续缺勤 | `absent_streak` | 按学员取最近考勤倒序，**连续** `缺勤` 节数 ≥ `warn_consecutive` | **该班班主任 + admin** | ✅ 仅本班 |
+| 课评欠录 | `eval_missing` | `schedules` 是**周几模板**（1=周一…7=周日）；最近 N 天里该班有课、但 `class_evaluations` 无对应 `(class_id, eval_date)` | **该班班主任 + admin** | ✅ 仅本班 |
+
+★ 「给老师过滤」照抄现有先例 `notifications` 的 `notificationScope`（老师只看 `head_teacher_id = 自己` 的班）。
+
+**幂等规则**（靠上面的 `uniq_todos_source` 唯一索引，**故 L3 无需新迁移**）：
+
+| 情况 | 动作 |
+|---|---|
+| 该 `(source_type, source_ref_id, owner_id)` 不存在 | INSERT |
+| 已存在且 `status='已完成'` | **回写为「待办」** —— 条件又出现了（如学员续费后又用尽），不新增行 |
+| 已存在且 `status='待办'` | 跳过 |
+
+**阈值**（读 `settings` 表同名键，缺失用默认值；**往 K-V 表加键 = 纯数据写入，无需迁移**）：
+
+| 键 | 默认 | 含义 |
+|---|---|---|
+| `todo_hours_low` | 5 | 剩余课时 ≤ 此值 → 余额预警 |
+| `todo_lead_days` | 7 | 线索超过此天数未动 → 待跟进 |
+| `todo_eval_days` | 7 | 最近此天数内有课但无课评 → 欠录 |
+| `warn_consecutive` | 3 | **复用既有键**，与出勤预警同一口径 |
+
+**触发点**（生成器幂等，故"多跑"安全）：
+
+| 触发 | 位置 |
+|---|---|
+| **A 按需** | `GET /api/todos` 内调用（**60 秒节流**，避免铃铛每次打开都全量扫库） |
+| **C 定时** | `server/src/index.js` 的 `setInterval`，每 6 小时 + 启动 30 秒后（`unref()`，**零新依赖**） |
+| 手动 | `POST /api/todos/generate?force=1`（**仅 admin**，便于排查与验收） |
+
+★ **脱敏**：`orders.amount`、`leads.phone` **一律不查、不带入文案**（ADR-005 白名单外）。
+
+### 前端折叠（教务端）
+
+一条自动待办可能同时发给班主任 + admin（多条 owner）。**admin 的「全部」视图**会把同
+`(source_type, source_ref_id)` 的行**折叠为一行**：负责人合并显示 + 「N 人」标注，
+**完成/退回/删除/编辑作用于整组**（它们本是同一个事件）。手工待办不参与折叠。
+
 ---
 
 ## 学生成长时间轴（v18 新增）

@@ -33,6 +33,11 @@ const searchForm = reactive({
 });
 const pagination = reactive({ page: 1, pageSize: 20, total: 0 });
 
+/** 被折叠掉的组数（用于向用户说明「为什么行数少于总数」） */
+const foldedGroups = computed(
+  () => displayList.value.filter((r: any) => r.owners > 1).length
+);
+
 /** 员工列表（仅 admin 指派时用） */
 const users = ref<any[]>([]);
 
@@ -45,7 +50,9 @@ const form = reactive({
   content: "",
   priority: "普通",
   due_date: "",
-  owner_id: "" as number | ""
+  owner_id: "" as number | "",
+  /** 折叠行编辑时，改动要落到整组（同源的多条） */
+  groupIds: [] as number[]
 });
 const rules = {
   title: [{ required: true, message: "请输入待办标题", trigger: "blur" }]
@@ -76,6 +83,45 @@ function loadUsers() {
   });
 }
 
+/**
+ * ★ 折叠同源（2026-09-21 用户要求）：
+ * 一条自动待办可能**同时发给班主任 + admin**（多个 owner，见 `todo-generator.js` 的归属矩阵），
+ * 于是在 admin 的「全部」视图里会出现**标题完全相同**的重复行 —— 那不是重复，是同一事件的两个收件人。
+ * 按 `(source_type, source_ref_id)` 折叠成一行：
+ *   - 负责人列合并显示（「系统管理员、e2e教师」）
+ *   - 组内任一未完成 → 该行仍算「待办」
+ *   - **完成 / 退回 / 删除 / 编辑 作用于该组全部** —— 因为本就是同一个事件
+ * 手工待办（无 `source_type`）不参与折叠。
+ */
+const displayList = computed(() => {
+  const groups = new Map<string, any[]>();
+  const order: string[] = [];
+  for (const t of dataList.value) {
+    const key = t.source_type
+      ? `src:${t.source_type}|${t.source_ref_id}`
+      : `id:${t.id}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      order.push(key);
+    }
+    groups.get(key)!.push(t);
+  }
+  return order.map(key => {
+    const rows = groups.get(key)!;
+    const head: any = { ...rows[0] };
+    head.groupIds = rows.map((r: any) => r.id);
+    head.ownerNames = [
+      ...new Set(rows.map((r: any) => r.owner_name).filter(Boolean))
+    ];
+    head.ownerText = head.ownerNames.join("、");
+    head.owners = rows.length;
+    head.status = rows.every((r: any) => r.status === "已完成")
+      ? "已完成"
+      : "待办";
+    return head;
+  });
+});
+
 function handleSearch() {
   pagination.page = 1;
   loadData();
@@ -99,21 +145,27 @@ function openAdd() {
     content: "",
     priority: "普通",
     due_date: "",
-    owner_id: ""
+    owner_id: "",
+    groupIds: []
   });
   loadUsers();
   dialogVisible.value = true;
 }
 
 function openEdit(row: any) {
-  dialogTitle.value = "编辑待办";
+  // 折叠行：id 取组内第一条（后端用它定位），但提交时会写入整组
+  dialogTitle.value =
+    (row.groupIds?.length ?? 0) > 1
+      ? "编辑待办（同源多条一并修改）"
+      : "编辑待办";
   Object.assign(form, {
     id: row.id,
     title: row.title,
     content: row.content,
     priority: row.priority,
     due_date: row.due_date || "",
-    owner_id: row.owner_id
+    owner_id: row.owner_id,
+    groupIds: row.groupIds ?? [row.id]
   });
   loadUsers();
   dialogVisible.value = true;
@@ -132,9 +184,18 @@ function handleSubmit() {
     if (isAdmin.value && form.owner_id)
       payload.owner_id = Number(form.owner_id);
 
-    const api = form.id ? updateTodo(form.id, payload) : createTodo(payload);
+    // 折叠行编辑 → 落到整组；新建/普通行 → 单条
+    const ids = form.id && form.groupIds.length ? form.groupIds : null;
+    const api = form.id
+      ? ids && ids.length > 1
+        ? Promise.all(ids.map(id => updateTodo(id, payload)))
+        : updateTodo(form.id, payload)
+      : createTodo(payload);
     api.then((res: any) => {
-      if (res.success) {
+      const okRes = Array.isArray(res)
+        ? res.every((r: any) => r?.success)
+        : res?.success;
+      if (okRes) {
         ElMessage.success(form.id ? "修改成功" : "新建成功");
         dialogVisible.value = false;
         loadData();
@@ -146,26 +207,29 @@ function handleSubmit() {
 function handleToggleStatus(row: any) {
   const done = row.status === "待办";
   const target = done ? "已完成" : "待办";
-  updateTodo(row.id, { status: target }).then((res: any) => {
-    if (res.success) {
-      ElMessage.success(done ? "已标记完成" : "已退回待办");
-      loadData();
-    }
+  const ids: number[] = row.groupIds?.length ? row.groupIds : [row.id];
+  // ★ 同源多条一并处理 —— 它们本是同一个事件的两个收件人
+  Promise.all(ids.map(id => updateTodo(id, { status: target }))).then(() => {
+    ElMessage.success(
+      (done ? "已标记完成" : "已退回待办") +
+        (ids.length > 1 ? `（同源 ${ids.length} 条一并处理）` : "")
+    );
+    loadData();
   });
 }
 
 function handleDelete(row: any) {
-  ElMessageBox.confirm(`确定删除待办「${row.title}」吗？`, "提示", {
+  const ids: number[] = row.groupIds?.length ? row.groupIds : [row.id];
+  const extra = ids.length > 1 ? `（同时删除 ${ids.length} 条同源待办）` : "";
+  ElMessageBox.confirm(`确定删除待办「${row.title}」${extra}吗？`, "提示", {
     type: "warning",
     confirmButtonText: "删除",
     cancelButtonText: "取消"
   })
     .then(() => {
-      deleteTodo(row.id).then((res: any) => {
-        if (res.success) {
-          ElMessage.success("删除成功");
-          loadData();
-        }
+      Promise.all(ids.map(id => deleteTodo(id))).then(() => {
+        ElMessage.success("删除成功");
+        loadData();
       });
     })
     .catch(() => {});
@@ -240,7 +304,7 @@ onMounted(loadData);
       </div>
 
       <!-- 表格 -->
-      <el-table v-loading="loading" :data="dataList" border stripe>
+      <el-table v-loading="loading" :data="displayList" border stripe>
         <el-table-column type="index" label="#" width="60" align="center" />
         <el-table-column prop="title" label="标题" min-width="200">
           <template #default="{ row }">
@@ -255,12 +319,15 @@ onMounted(loadData);
             {{ row.title }}
           </template>
         </el-table-column>
-        <el-table-column
-          prop="owner_name"
-          label="负责人"
-          width="110"
-          align="center"
-        />
+        <el-table-column label="负责人" min-width="150" align="center">
+          <template #default="{ row }">
+            <span>{{ row.ownerText }}</span>
+            <!-- ★ 折叠行：标注这条同源待办实际发给了几个人 -->
+            <el-tag v-if="row.owners > 1" type="info" size="small" class="ml-1">
+              {{ row.owners }} 人
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="来源" width="90" align="center">
           <template #default="{ row }">
             <el-tag
@@ -315,13 +382,20 @@ onMounted(loadData);
         </template>
       </el-table>
 
-      <div class="mt-4 flex justify-end">
+      <div class="mt-4 flex flex-wrap items-center justify-end gap-3">
+        <!-- ★ 折叠是前端做的，所以「行数」与后端 total 会不一致，必须说清楚 -->
+        <span class="text-xs">
+          本页 {{ displayList.length }} 行<template v-if="foldedGroups"
+            >（同源已折叠 {{ foldedGroups }} 组）</template
+          >
+          · 共 {{ pagination.total }} 条
+        </span>
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.pageSize"
           :total="pagination.total"
           :page-sizes="[20, 50, 100]"
-          layout="total, sizes, prev, pager, next"
+          layout="sizes, prev, pager, next"
           background
           @size-change="loadData"
           @current-change="loadData"

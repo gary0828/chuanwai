@@ -258,6 +258,30 @@ const server = app.listen(PORT, () => {
 
 // ── 进程健壮性 ───────────────────────────────────────────────────────
 // 未捕获异常只记录不退出（保持可用性）；优雅停机供 Docker 停止容器时使用。
+// ── 待办自动生成：定时触发（触发点 C）────────────────────────────────────
+// ★ 项目无调度器依赖，用原生 setInterval —— **零新依赖**。
+//   每 6 小时一次 + 启动 30 秒后一次（错开启动高峰）。
+//   三个触发点：A 打开待办/铃铛时按需（routes/todos.js）｜C 本定时任务｜admin 手动 POST /api/todos/generate
+//   ★ 生成器**幂等**（一条来源 = 一条待办），所以"多跑"永远安全，"漏跑"由 A 兜底。
+//   `.unref()` 让它不阻塞进程退出（优雅关闭 / 测试友好）。
+const TODO_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+function runTodoGenerator(tag) {
+  try {
+    const r = require("./utils/todo-generator").generateTodos({ force: true });
+    if (r.created || r.reopened) {
+      console.log(
+        `[todo-generator] ${tag}：新增 ${r.created} 条 · 重开 ${r.reopened} 条 · 跳过 ${r.skipped} 条`
+      );
+    }
+  } catch (e) {
+    console.error(`[todo-generator] ${tag} 失败：`, e.message);
+  }
+}
+
+setTimeout(() => runTodoGenerator("启动"), 30 * 1000).unref();
+setInterval(() => runTodoGenerator("定时"), TODO_INTERVAL_MS).unref();
+
 process.on("unhandledRejection", reason => {
   console.error("[unhandledRejection]", reason);
 });

@@ -766,6 +766,24 @@ paths:
         "400": { description: 标题为空或不存在的负责人 }
         "403": { description: 非 admin 试图指派给他人 }
 
+  /api/todos/generate:
+    post:
+      tags: [Todos]
+      summary: 手动触发一次自动生成（★ 仅 admin）
+      description: |
+        按**归属矩阵**把 4 类业务事件转成待办，**幂等**（一条来源 = 一条待办，靠唯一索引去重）：
+        - `tuition_low`（学员余额/课时不足）、`lead_follow`（线索待跟进） → **仅 admin**
+          （数据源分别是财务表 `orders` 与对老师零开放的 `leads`）
+        - `absent_streak`（连续缺勤）、`eval_missing`（课评欠录） → **该班班主任 + admin**
+
+        常规触发有两条：① 打开待办/铃铛时按需（60 秒节流）② 每 6 小时的定时任务。
+        本端点用于排查与验收。
+      parameters:
+        - { name: force, in: query, schema: { type: string, enum: ["1"] }, description: 传 1 跳过 60 秒节流 }
+      responses:
+        "200": { description: 成功（data.created / data.reopened / data.skipped / data.candidates） }
+        "403": { description: 非 admin }
+
   /api/todos/{id}:
     put:
       tags: [Todos]

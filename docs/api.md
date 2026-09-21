@@ -239,6 +239,7 @@
 | 待办 | POST | `/api/todos` | 登录 | 新建待办。`owner_id` 默认自己；★ **仅 `admin` 可指派给别人**（teacher 传他人 id → 403） |
 | 待办 | PUT | `/api/todos/:id` | 本人/admin | 修改（含标记完成 `{status:'已完成'}`；改 `owner_id` 仅 admin）。★ 非本人且非 admin → **403** |
 | 待办 | DELETE | `/api/todos/:id` | 本人/admin | 删除。★ 非本人且非 admin → **403** |
+| 待办 | POST | `/api/todos/generate` | **仅 admin** | 手动触发一次自动生成（`?force=1` 跳过 60s 节流）。★ 自动生成由 **4 类事件**按**归属矩阵**投递：`tuition_low`/`lead_follow` → **仅 admin**；`absent_streak`/`eval_missing` → **班主任 + admin**。幂等（一条来源 = 一条待办） |
 | 考试 | GET | `/api/exams` | 登录 | 考试列表（含成绩录入进度，教师仅本班） |
 | 考试 | POST | `/api/exams` | 登录 | 新增考试 |
 | 考试 | PUT | `/api/exams/:id` | 登录 | 修改考试 |

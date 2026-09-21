@@ -8,6 +8,28 @@
 
 ## 已完成
 
+- [x] **待办功能 · L3 自动生成（2026-09-21）** —— 4 类业务事件自动转待办，**零新迁移**
+  - **★ 用户的关键提醒**：「管理员权限和老师的权限是不一样的」—— 这一点在 L3 最危险：4 类事件敏感度差别极大，无差别生成会把**财务与招生数据泄漏到工作台**
+  - **★★ 归属矩阵（本批次的核心设计）**：
+    | 事件 | `source_type` | 收件人 | 老师可见 | 依据 |
+    |---|---|---|---|---|
+    | 学员余额/课时不足 | `tuition_low` | **仅 admin** | ❌ 绝不给 | 数据源 `orders`（**财务表**，含 `amount`） |
+    | 线索待跟进 | `lead_follow` | **仅 admin** | ❌ 绝不给 | `routes/leads.js` **全程 `requireRole("admin")`** |
+    | 连续缺勤 | `absent_streak` | **班主任 + admin** | ✅ 仅本班 | 教学口径 |
+    | 课评欠录 | `eval_missing` | **班主任 + admin** | ✅ 仅本班 | 教学口径 |
+    ★ 「给老师过滤」**照抄现有先例** `notifications` 的 `notificationScope`，不自己发明
+  - **生成器** `server/src/utils/todo-generator.js`（新增）：4 个检测器 + 幂等落库
+    - **幂等**：一条来源 = 一条待办。已存在且「已完成」→ **回写为「待办」**（条件又出现，如学员续费后又用尽）；已存在且「待办」→ 跳过；不存在 → 插入。★ **正好用上 L2 建的唯一索引 → L3 无需新迁移**
+    - **节流**：按需触发 60 秒内不重跑（避免铃铛每次打开都全量扫库）
+    - **脱敏**：`orders.amount` / `leads.phone` **一律不查、不带入文案**
+  - **三个触发点**：**A** `GET /api/todos` 内按需 ｜ **C** `index.js` 每 6 小时 + 启动 30 秒后（`setInterval` + `unref()`，**零新依赖**）｜ admin 手动 `POST /api/todos/generate?force=1`
+  - **阈值**走 `settings` 表可覆盖（`todo_hours_low`=5 / `todo_lead_days`=7 / `todo_eval_days`=7）+ 复用既有 `warn_consecutive`=3（**往 K-V 表加键 = 纯数据写入，无需迁移**）
+  - **★ 前端折叠**（用户要求）：同源的自动待办在 admin「全部」视图里会重复出现（一条事件发给多个 owner）→ 按 `(source_type, source_ref_id)` **折叠为一行**，负责人合并显示 + 「N 人」标注，**完成/退回/删除/编辑作用于整组**；并修正了「共 N 条」与折叠后行数不一致的表述 → 「本页 X 行（同源已折叠 Y 组）· 共 Z 条」
+  - **★ 修复真 bug**：`db.transaction is not a function` —— 误按 better-sqlite3 的 API 写，而本项目 `db` 是 **`node:sqlite` 裸封装**（`db.js` 仅 `module.exports = db`），**无 `.transaction()`**；已按项目既有写法改为手工 `BEGIN/COMMIT/ROLLBACK`
+  - **验证**：`verify-todo-generator.mjs` **15/15**（★ 归属矩阵全对：`tuition_low`/`lead_follow` owner **只有 admin**；`absent_streak`/`eval_missing` = 班主任+admin；**老师可见类型只有后两类**；幂等；脱敏）｜ `verify-fold.py` **5/5** ｜ ESLint 0 错 ｜ 契约门禁通过
+  - **数据实情**（重要）：**当前真实数据下只生成 2 条**（都是 `eval_missing`）。其余三类**不触发是正确的**：课时余额全部 > 5；线索全是「0 天前」（E2E 测试刚造）；无任何学员连续缺勤 3 节。为验全类型曾**临时**放宽阈值，**验完已全部还原并复核**
+  - **文档**：`server/database.md`（todos 章节补「自动生成（L3）」）· `docs/api.md` · `docs/openapi.yaml`（新增 `/api/todos/generate`）· `ROADMAP.md`
+
 - [x] **待办功能 · L2 手工待办（2026-09-21）** —— 迁移 v19 + 双端页面，**双端共用一张表**
   - **背景**：系统此前**没有任何「待办」概念** —— 业务风险（学员余额将尽、连续缺勤、线索未跟进、课评欠录）散落各页，没有机制告诉使用者"今天该做什么"。铃铛的「待办」tab 长期是模板演示数据
   - **需求**（`grill-me` 追问定稿）：**两端都要**（校区负责人 + 一线老师）· **自动 + 手工都要** · 一张表按角色过滤 · 管理员可指派

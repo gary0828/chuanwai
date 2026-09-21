@@ -11,6 +11,7 @@ const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { parseText } = require("../utils/validate");
+const { generateTodos } = require("../utils/todo-generator");
 
 const router = express.Router();
 
@@ -29,6 +30,17 @@ function pickEnum(value, allowed, fallback) {
 
 /** 列表（我的 / 全部） */
 router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
+  // ★ 触发点 A：打开待办/铃铛时**按需**跑一遍自动生成（幂等 + 60s 节流，见 todo-generator）。
+  //   生成是全局的（会为各种 owner 落库），但**读取范围仍严格按下面的作用域收敛** ——
+  //   老师这次请求顺带触发了生成，也**看不到**不属于自己的那些（含财务/线索类）。
+  let generated = null;
+  try {
+    generated = generateTodos();
+  } catch (e) {
+    // 生成失败不能阻塞列表读取
+    console.error("[todo-generator] 生成失败：", e.message);
+  }
+
   const {
     scope = "mine",
     status = "",
@@ -100,7 +112,18 @@ router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
         .get(mine).c
     : db.prepare("SELECT COUNT(*) AS c FROM todos WHERE status = '待办'").get().c;
 
-  res.json({ success: true, data: { list, total, pendingCount } });
+  res.json({ success: true, data: { list, total, pendingCount, generated } });
+});
+
+/**
+ * 手动触发一次自动生成（**仅 admin**）。
+ * 用途：排查「为什么没生成待办」时不用等定时任务；也便于验收测试。
+ * `force=1` 跳过 60s 节流。
+ */
+router.post("/generate", auth, requireRole("admin"), (req, res) => {
+  const force = String(req.query.force || "") === "1";
+  const result = generateTodos({ force });
+  res.json({ success: true, data: result });
 });
 
 /** 新建（owner 默认自己；仅 admin 可指派给别人） */
