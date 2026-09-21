@@ -46,7 +46,9 @@ paths:
       summary: 公开站点信息（免登录）
       description: |
         登录页需要展示 Logo 与机构名称，此时尚无 token，故本接口免鉴权。
-        **只返回站点展示字段白名单**，绝不返回 warn_rate 等内部参数。
+        **只返回站点展示字段白名单，且只返回"非空"项** —— 未登录访客看不到"有哪些配置项"。
+        空对象 `{}` 表示全未配置，调用方应回退到自身默认值。
+        绝不返回 warn_rate 等内部参数。
       security: []
       responses:
         "200":
@@ -1986,6 +1988,9 @@ components:
       type: object
       description: |
         站点信息（机构名称 / Logo / 页脚）。存于 settings 表的 site.* 键。
+        所有字段均可选：
+        - `GET /api/site-info`（公开）**只返回非空的**，未配置的键直接不出现在响应里；
+        - `GET /api/site-info/admin` 与 `PUT` 的响应返回**全部 12 个键**（未配置为空串）。
         **备案类字段留空表示不展示**，前端据此决定是否渲染对应行。
       properties:
         site.name: { type: string, description: 系统简称（侧边栏 / 登录页） }

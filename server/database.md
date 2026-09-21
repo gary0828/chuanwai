@@ -168,7 +168,7 @@
 
 **读写规则（`routes/site-info.js`）**：
 
-- `GET /api/site-info`（**免登录**，登录页拿不到 token 就要用）只返回上表 12 个键，且只返回**非空**项 —— 白名单之外的内网参数（如 `warn_rate`）**永不外泄**。
+- `GET /api/site-info`（**免登录**，登录页拿不到 token 就要用）**只返回非空项** —— 未登录访客看不到"有哪些配置项"；空对象即全未配置。白名单之外的内网参数（如 `warn_rate`）**永不外泄**。
 - `PUT /api/site-info`（admin）**只接受白名单内键**，越界键静默忽略；单值上限 500 字符。
 - `POST /api/site-info/upload?kind=logo|favicon`（admin）：`express.raw()` 直收二进制（**不引 multer**），2MB 上限，按**文件头魔数**判型（PNG/JPEG/GIF/WEBP/ICO/SVG），落盘 `server/data/assets/site/`，文件名 `{kind}-{yyyymmddHHMMSS}-{rand8}{ext}`，写入同 kind 新文件后**自动清理旧文件**，并把相对路径回写 `site.logo` / `site.favicon`。
 - 静态访问：`GET /assets/**` → `server/data/assets/`（禁 dotfile、禁目录列表）。

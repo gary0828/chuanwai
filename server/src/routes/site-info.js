@@ -79,9 +79,15 @@ function readSiteInfo() {
 }
 
 // ── 1. 公开接口：免登录（登录页 / 未登录时用）──────────────────────────
-// 只返回展示所需字段，且过滤空值语义由前端处理。
+// ★ 只返回**非空**字段：一是避免把「有哪些配置项」这种内网信息暴露给未登录访客，
+//   二是让前端能直接用 `if (v)` 判断有无，无需再区分「没配」与「配成空串」。
 router.get("/", (_req, res) => {
-  res.json({ success: true, data: readSiteInfo() });
+  const all = readSiteInfo();
+  const data = {};
+  for (const k of SITE_KEYS) {
+    if (all[k] !== "" && all[k] !== null && all[k] !== undefined) data[k] = all[k];
+  }
+  res.json({ success: true, data });
 });
 
 // ── 2. 管理接口：登录后可读（设置页回填用，含全部 site.* 键）──────────
