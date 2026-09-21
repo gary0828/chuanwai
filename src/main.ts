@@ -56,6 +56,17 @@ app.use(VueTippy);
 
 getPlatformConfig(app).then(async config => {
   setupStore(app);
+  // 站点信息（机构名称 / Logo / 页脚）在挂载前拉取一次：
+  // 登录页就要显示，所以不能等到进入主界面再请求。
+  // 失败静默降级为内置默认值，不阻塞启动。
+  const { useSiteStoreHook } = await import("@/store/modules/site");
+  await useSiteStoreHook()
+    .fetch()
+    .then(() => {
+      useSiteStoreHook().applyDocumentTitle();
+      useSiteStoreHook().applyFavicon();
+    })
+    .catch(() => {});
   app.use(router);
   await router.isReady();
   injectResponsiveStorage(app, config);

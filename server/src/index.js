@@ -3,6 +3,7 @@
 // 注意 require 顺序：config 必须最先加载并在建表/写种子数据之前完成校验，
 // 避免「配置非法却已污染数据库」的半启动状态（上线门禁 B1）。
 const config = require("./config");
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -54,6 +55,19 @@ app.use(
 );
 
 app.use(express.json({ limit: config.jsonBodyLimit }));
+
+// ── 静态资源：站点上传的图片（Logo / favicon）────────────────────────
+// 见 docs/decisions/ADR-008：文件本体存磁盘 server/data/assets/，DB 只存路径。
+// 只暴露 /assets 子目录，禁止越权访问 data/ 下的数据库与备份。
+app.use(
+  "/assets",
+  express.static(path.join(__dirname, "..", "data", "assets"), {
+    maxAge: "1d",
+    fallthrough: true,
+    index: false,
+    dotfiles: "deny"
+  })
+);
 
 // ── 登录限速（H7：防口令爆破）────────────────────────────────────────
 // 只统计「失败」的登录请求（skipSuccessfulRequests），成功登录不占额度，
@@ -153,6 +167,7 @@ app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/schedules", require("./routes/schedules"));
 app.use("/api/terms", require("./routes/terms"));
 app.use("/api/settings", require("./routes/settings"));
+app.use("/api/site-info", require("./routes/site-info"));
 app.use("/api/notices", require("./routes/notices"));
 app.use("/api/backups", require("./routes/backups"));
 app.use("/api/audit-logs", require("./routes/audit-logs"));

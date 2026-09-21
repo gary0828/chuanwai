@@ -3,9 +3,10 @@ import Motion from "./utils/motion";
 import { useRouter } from "vue-router";
 import { message } from "@/utils/message";
 import { createLoginRules } from "./utils/rule";
-import { ref, reactive } from "vue";
+import { ref, reactive, computed } from "vue";
 import { debounce } from "@pureadmin/utils";
 import { useNav } from "@/layout/hooks/useNav";
+import { useSiteStore } from "@/store/modules/site";
 import { useEventListener } from "@vueuse/core";
 import type { FormInstance } from "element-plus";
 import { useLayout } from "@/layout/hooks/useLayout";
@@ -36,6 +37,14 @@ initStorage();
 const { dataTheme, overallStyle, dataThemeChange } = useDataThemeChange();
 dataThemeChange(overallStyle.value);
 const { title } = useNav();
+
+// 站点信息：Logo 与副标题支持后台配置（未配置则用内置默认）
+const site = useSiteStore();
+const logoUrl = computed(() => site.logo);
+const siteSlogan = computed(
+  () =>
+    site.info["site.slogan"] || "考勤、成绩、课表、学员档案与财务，都在同一处。"
+);
 
 // 图形验证码开关：环境变量 VITE_LOGIN_CAPTCHA=false 时可关闭
 // （关闭场景：Playwright 自动化验证脚本无法识别 canvas 验证码，见 PROGRESS.md）
@@ -140,10 +149,10 @@ useEventListener(document, "keydown", ({ code }) => {
     <!-- 品牌 → 表单卡 → 页脚：三者同轴居中，整个页面因此上下左右完全对称 -->
     <div class="login-shell">
       <header class="login-brand">
-        <span class="login-brand__mark">教务</span>
+        <img class="login-brand__logo" :src="logoUrl" alt="logo" />
         <h1 class="login-brand__name">{{ title }}</h1>
         <p class="login-brand__slogan">
-          考勤、成绩、课表、学员档案与财务，都在同一处。
+          {{ siteSlogan }}
         </p>
       </header>
 

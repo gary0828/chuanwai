@@ -33,11 +33,107 @@ tags:
     description: AI 分析预留端点（仅 admin）
   - name: Growth
     description: 学生成长路径与课堂采集（采集入口在 AI 教学工作台）
+  - name: SiteInfo
+    description: 站点信息（机构名称 / Logo / 页脚）与图片上传
 
 security:
   - bearerAuth: []
 
 paths:
+  /api/site-info:
+    get:
+      tags: [SiteInfo]
+      summary: 公开站点信息（免登录）
+      description: |
+        登录页需要展示 Logo 与机构名称，此时尚无 token，故本接口免鉴权。
+        **只返回站点展示字段白名单**，绝不返回 warn_rate 等内部参数。
+      security: []
+      responses:
+        "200":
+          description: 站点信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SiteInfo" }
+    put:
+      tags: [SiteInfo]
+      summary: 保存站点信息（仅 admin）
+      description: 只接受 SiteInfo 中定义的白名单键，其余键被忽略。
+      responses:
+        "200":
+          description: 保存成功并返回最新值
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SiteInfo" }
+        "400":
+          description: 无可更新项 / 内容超长
+
+  /api/site-info/admin:
+    get:
+      tags: [SiteInfo]
+      summary: 读取全部站点配置（登录）
+      responses:
+        "200":
+          description: 站点信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SiteInfo" }
+        "401":
+          description: 未登录
+
+  /api/site-info/upload:
+    post:
+      tags: [SiteInfo]
+      summary: 上传 Logo / 标签页图标（仅 admin）
+      description: |
+        原始二进制直传（Content-Type 为 image/*），无需 multipart。
+        服务端做**魔数嗅探**（忽略客户端声明的扩展名），文件落盘
+        `server/data/assets/site/`，数据库只存路径（见 ADR-008）。
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [logo, favicon]
+            default: logo
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema: { type: string, format: binary }
+          image/jpeg:
+            schema: { type: string, format: binary }
+          image/svg+xml:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      url: { type: string, example: /assets/site/logo-20260921120000-ab12cd34.png }
+                      key: { type: string, example: site.logo }
+        "400":
+          description: 未收到内容 / 格式不支持 / 超过 2MB
+
   /api/health:
     get:
       tags: [Auth]
@@ -1885,4 +1981,23 @@ components:
       type: object
       description: 成长阈值（8 条默认值，admin 可调，不重建镜像）
       additionalProperties: { type: number }
+
+    SiteInfo:
+      type: object
+      description: |
+        站点信息（机构名称 / Logo / 页脚）。存于 settings 表的 site.* 键。
+        **备案类字段留空表示不展示**，前端据此决定是否渲染对应行。
+      properties:
+        site.name: { type: string, description: 系统简称（侧边栏 / 登录页） }
+        site.title: { type: string, description: 浏览器标签页完整标题 }
+        site.orgName: { type: string, description: 版权主体（机构全称） }
+        site.sinceYear: { type: string, description: 起始年份，4 位数字 }
+        site.slogan: { type: string, description: 登录页副标题 }
+        site.contact: { type: string, description: 联系电话 }
+        site.address: { type: string, description: 地址 }
+        site.icp: { type: string, description: ICP 备案号（当前场景留空） }
+        site.policeNo: { type: string, description: 公安备案号（当前场景留空） }
+        site.copyrightExtra: { type: string, description: 页脚补充说明 }
+        site.logo: { type: string, description: Logo 路径，如 /assets/site/xxx.png }
+        site.favicon: { type: string, description: 标签页图标路径 }
 

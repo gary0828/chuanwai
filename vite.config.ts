@@ -29,6 +29,12 @@ export default ({ mode }: ConfigEnv): UserConfigExport => {
         "/api": {
           target: "http://localhost:3000",
           changeOrigin: true
+        },
+        // 站点上传的图片（Logo / favicon）由后端 /assets 托管
+        // 生产环境前后端同源无需代理，仅开发态需要
+        "/assets": {
+          target: "http://localhost:3000",
+          changeOrigin: true
         }
       },
       // 预热文件以提前转换和缓存结果，降低启动期间的初始页面加载时长并防止转换瀑布

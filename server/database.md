@@ -35,6 +35,8 @@
 
 当前最新版本：**v18**（`PRAGMA user_version` = 18）
 
+> 📌 **不占版本号的表结构复用**：站点信息（`site.*`，见「settings」节）**复用 v6 的 `settings` 键值表**，因此**没有 v19 迁移**。判断标准：只有**新建/改动表结构**才需要迁移；往既有 K-V 表里加键位属于纯数据写入，不算 schema 变更。
+
 ## 表结构
 
 ### users（员工账号，纯员工端 CRM 唯一账号体系）
@@ -132,11 +134,46 @@
 
 ### settings（系统参数，v6 新增，键值对）
 
-| 字段       | 类型 | 约束                 | 说明                                                               |
-| ---------- | ---- | -------------------- | ------------------------------------------------------------------ |
-| key        | TEXT | PK                   | 参数键（预置：warn_rate / warn_consecutive / warn_days / term_id） |
-| value      | TEXT | NOT NULL, DEFAULT '' | 参数值                                                             |
-| updated_at | TEXT | NOT NULL, DEFAULT    | 更新时间                                                           |
+| 字段       | 类型 | 约束                 | 说明         |
+| ---------- | ---- | -------------------- | ------------ |
+| key        | TEXT | PK                   | 参数键       |
+| value      | TEXT | NOT NULL, DEFAULT '' | 参数值       |
+| updated_at | TEXT | NOT NULL, DEFAULT    | 更新时间     |
+
+**键位分组**（同一张表承载，新增键位**不需要迁移**；仅 `site.*` 有白名单，其余键由各自路由自行校验）：
+
+| 分组         | 键位                                                                                                       | 归属路由               | 说明                                                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------- |
+| 预警参数     | `warn_rate` / `warn_consecutive` / `warn_days`                                                             | `routes/settings.js`   | 缺勤预警阈值，管理端可调                                                   |
+| 站点信息     | `site.*`（12 个键）                                                                                        | `routes/site-info.js`  | 登录页 / 页签名 / 页脚展示信息，见下方「site.\* 键位」                     |
+
+> ⚠️ `term_id` 已于 **v13** 移除（学期改为直接读 `terms.is_current`），此处不再列出。
+
+#### `site.*` 键位（v18 新增，复用 v6 的 settings 表，**无迁移**）
+
+| 键位                    | 默认值       | 说明                                             |
+| ----------------------- | ------------ | ------------------------------------------------ |
+| `site.name`             | 川外教育     | 品牌短名，展示于**登录页品牌位**与**左侧菜单顶部** |
+| `site.title`            | 川外教育教学管理系统 | 系统全称，写入浏览器**页签标题**          |
+| `site.orgName`          | 川外教育     | 机构全称，用于**页脚版权行**                     |
+| `site.sinceYear`        | 2020         | 起始年份，与当前年份组成 `2020-2026` 版权区间     |
+| `site.slogan`           | （空）       | 登录页副标题                                     |
+| `site.contact`          | （空）       | 联系电话，页脚展示                               |
+| `site.address`          | （空）       | 机构地址，页脚展示                               |
+| `site.icp`              | （空）       | ICP 备案号，页脚展示（**未备案留空即可，不留占位**） |
+| `site.policeNo`         | （空）       | 公安备案号，页脚展示                             |
+| `site.copyrightExtra`   | （空）       | 版权行补充说明                                   |
+| `site.logo`             | （空）       | Logo 图片路径，形如 `/assets/site/logo-*.png`     |
+| `site.favicon`          | （空）       | 站点图标路径，形如 `/assets/site/favicon-*.png`   |
+
+**读写规则（`routes/site-info.js`）**：
+
+- `GET /api/site-info`（**免登录**，登录页拿不到 token 就要用）只返回上表 12 个键，且只返回**非空**项 —— 白名单之外的内网参数（如 `warn_rate`）**永不外泄**。
+- `PUT /api/site-info`（admin）**只接受白名单内键**，越界键静默忽略；单值上限 500 字符。
+- `POST /api/site-info/upload?kind=logo|favicon`（admin）：`express.raw()` 直收二进制（**不引 multer**），2MB 上限，按**文件头魔数**判型（PNG/JPEG/GIF/WEBP/ICO/SVG），落盘 `server/data/assets/site/`，文件名 `{kind}-{yyyymmddHHMMSS}-{rand8}{ext}`，写入同 kind 新文件后**自动清理旧文件**，并把相对路径回写 `site.logo` / `site.favicon`。
+- 静态访问：`GET /assets/**` → `server/data/assets/`（禁 dotfile、禁目录列表）。
+
+> 详见 `docs/api.md` 与 `docs/decisions/ADR-008-数据资产化与AI产出层架构.md`（决策 ②「数据库只存索引，文件本体存磁盘」）。
 
 ### notices（通知公告，v6 新增）
 

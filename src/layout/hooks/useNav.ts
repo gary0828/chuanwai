@@ -10,6 +10,7 @@ import { router, remainingPaths } from "@/router";
 import { computed, type CSSProperties } from "vue";
 import { useAppStoreHook } from "@/store/modules/app";
 import { useUserStoreHook } from "@/store/modules/user";
+import { useSiteStore } from "@/store/modules/site";
 import { useGlobal, isAllEmpty } from "@pureadmin/utils";
 import { usePermissionStoreHook } from "@/store/modules/permission";
 import ExitFullscreen from "~icons/ri/fullscreen-exit-fill";
@@ -21,6 +22,7 @@ const errorInfo =
 export function useNav() {
   const route = useRoute();
   const pureApp = useAppStoreHook();
+  const site = useSiteStore();
   const routers = useRouter().options.routes;
   const { isFullscreen, toggle } = useFullscreen();
   const { wholeMenus } = storeToRefs(usePermissionStoreHook());
@@ -69,12 +71,13 @@ export function useNav() {
   });
 
   const title = computed(() => {
-    return $config.Title;
+    // 站点简称：优先后台配置的 site.name，回退构建期 Title（platform-config.json）
+    return site.name || $config.Title;
   });
 
   /** 动态title */
   function changeTitle(meta: routeMetaType) {
-    const Title = getConfig().Title;
+    const Title = site.title;
     if (Title) document.title = `${meta.title} | ${Title}`;
     else document.title = meta.title;
   }
@@ -121,9 +124,9 @@ export function useNav() {
     return remainingPaths.includes(path);
   }
 
-  /** 获取`logo` */
+  /** 获取`logo`：优先后台上传的图，回退内置 /logo.svg */
   function getLogo() {
-    return new URL("/logo.svg", import.meta.url).href;
+    return site.logo;
   }
 
   return {

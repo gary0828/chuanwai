@@ -100,19 +100,14 @@ html.dark .login-page {
   text-align: center;
 }
 
-.login-brand__mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
+/* Logo 图片：后台可上传，未配置时用内置 /logo.svg。
+   object-fit + 最大宽高，保证任意比例的图都不会撑破版式。 */
+.login-brand__logo {
+  display: block;
+  width: auto;
+  max-width: 180px;
   height: 44px;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.04em;
-  color: var(--on-brand);
-  background: var(--brand-600);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-sm);
+  object-fit: contain;
 }
 
 .login-brand__name {
@@ -197,8 +192,8 @@ html.dark .login-page {
     margin-bottom: var(--space-6);
   }
 
-  .login-brand__mark {
-    width: 38px;
+  .login-brand__logo {
+    max-width: 150px;
     height: 38px;
   }
 

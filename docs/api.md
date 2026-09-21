@@ -190,6 +190,11 @@
 | 看板 | GET | `/api/dashboard/overview` | 登录 | 首页统计 |
 | 系统参数 | GET | `/api/settings` | 登录 | 读取全部系统参数 |
 | 系统参数 | PUT | `/api/settings` | admin | 更新系统参数（整体覆盖） |
+| 站点信息 | GET | `/api/site-info` | **免登录** | 公开站点信息（机构名/Logo/页脚），**字段白名单**，登录页用 |
+| 站点信息 | GET | `/api/site-info/admin` | 登录 | 读取全部 `site.*` 键（设置页回填用） |
+| 站点信息 | PUT | `/api/site-info` | admin | 保存站点信息（**只接受 `site.*` 白名单键**） |
+| 站点信息 | POST | `/api/site-info/upload?kind=logo\|favicon` | admin | 上传 Logo / 图标（**魔数校验**，落盘 `server/data/assets/site/`，DB 只存路径） |
+| 静态资源 | GET | `/assets/*` | **免登录** | 站点上传的图片；仅暴露 `data/assets/`，禁止目录穿越 |
 | 公告 | GET | `/api/notices` | 登录 | 公告列表（分页 + 关键字） |
 | 公告 | GET | `/api/notices/latest` | 登录 | 最新公告（看板用，最多 3 条） |
 | 公告 | POST | `/api/notices` | admin | 新增公告 |
