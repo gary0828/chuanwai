@@ -246,7 +246,8 @@ node server/scripts/e2e-lifecycle.mjs
 | `evidence/`、`_verify_test/` | 7MB | 截图 / 测试脚本（需改时按路径显式打开） |
 | `*.db*`、`pnpm-lock.yaml`、`package-lock.json` | — | 二进制与超长锁文件 |
 
-已由 `.aiignore` / `.cursorignore` / `.copilotignore` / `.ignore` 四份同内容规则文件覆盖（ripgrep 亦生效，实测搜索不再命中 `node_modules`）。
+已由 `.aiignore` 统一覆盖（ripgrep 亦生效，实测搜索不再命中 `node_modules`）。
+（2026-09-21 清理：原先 `.cursorignore` / `.copilotignore` / `.ignore` 三份与 `.aiignore` 内容完全相同，已删除冗余副本，今后只维护 `.aiignore`。）
 
 ### 10.2 用搜索代替遍历
 
