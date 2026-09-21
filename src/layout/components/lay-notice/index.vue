@@ -1,27 +1,32 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { getNoticeList } from "@/api/attendance";
+import { getNoticeList, getTodoList } from "@/api/attendance";
 import NoticeList from "./components/NoticeList.vue";
-import type { TabItem } from "./types";
+import type { ListItem, TabItem } from "./types";
 import BellIcon from "~icons/ep/bell";
 
-// ── 数据源：后端公告 /api/notices ──────────────────────────────────────
+// ── 数据源：后端真实接口（公告 + 待办）────────────────────────────────
 //
 // ★ 2026-09-21 改造：此前读的是 `./data.ts` 里写死的模板演示数据（"小铭 评论了你"
 //   "开发多租户管理"…，且含 3 个第三方图片外链），从未请求后端。现已改为真实数据，
 //   演示数据文件已删除。设计决议见 `docs/ROADMAP.md`「五之二、通知铃铛 + 待办功能」。
+//
+// ★ 为什么只有两个 tab：原模板有「通知 / 消息 / 待办」三个。经核查，「通知记录
+//   notifications」实为「已发送的家校通知存档」（发件记录，非收件箱），放进铃铛会
+//   误导用户，且与「待办」定位重叠 —— 故砍掉「消息」。
 
 /** 红点口径：最近 N 天新增的「已发布」公告数。
  *  走时间基准而非已读基准 —— 公告表没有 per-user 已读记录，
- *  走已读基准需新建 notice_reads 表 + 迁移，L1 刻意不做（见 ROADMAP 决策）。 */
+ *  走已读基准需新建 notice_reads 表 + 迁移，刻意不做（见 ROADMAP 决策）。 */
 const RECENT_DAYS = 7;
-/** 铃铛里最多展示多少条 */
+/** 每个 tab 最多展示多少条 */
 const MAX_ITEMS = 20;
-/** 单次拉取条数（用于统计近 7 天数量；当前公告规模远小于此，不会低估） */
+/** 单次拉取条数（用于统计近 7 天数量；当前规模远小于此，不会低估） */
 const FETCH_SIZE = 50;
 
 const loading = ref(false);
-const rows = ref<any[]>([]);
+const noticeRows = ref<any[]>([]);
+const todoRows = ref<any[]>([]);
 
 /** 后端 created_at 形如 `YYYY-MM-DD HH:mm:ss`（localtime）。
  *  直接 `new Date("2026-09-21 10:00:00")` 在部分内核下解析失败，故把 `-` 换 `/` 提兼容。 */
@@ -34,15 +39,29 @@ function isRecent(s: unknown): boolean {
   return Number.isFinite(t) && Date.now() - t <= RECENT_DAYS * 86400_000;
 }
 
-/** ★ 列表接口不按状态过滤（管理页需要看到「下架」的），铃铛只展示「已发布」。 */
-const published = computed(() => rows.value.filter(r => r?.status === "发布"));
+/** 今天是 `YYYY-MM-DD`（本地），用于逾期判断 */
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
 
-/** 红点数字 */
-const noticesNum = computed(
-  () => published.value.filter(r => isRecent(r.created_at)).length
+function isOverdue(r: any): boolean {
+  return !!r?.due_date && String(r.due_date) < todayStr();
+}
+
+/** ★ 公告列表接口不按状态过滤（管理页需要看到「下架」的），铃铛只展示「已发布」。 */
+const published = computed(() =>
+  noticeRows.value.filter(r => r?.status === "发布")
 );
 
-function toListItem(r: any) {
+/** 未完成待办 */
+const pendingTodos = computed(() =>
+  todoRows.value.filter(r => r?.status === "待办")
+);
+
+function toNoticeItem(r: any): ListItem {
   return {
     title: String(r?.title ?? ""),
     description: String(r?.content ?? ""),
@@ -52,25 +71,69 @@ function toListItem(r: any) {
   };
 }
 
+function toTodoItem(r: any): ListItem {
+  const extra = isOverdue(r)
+    ? ({ extra: "逾期", status: "danger" } as const)
+    : r?.priority === "紧急"
+      ? ({ extra: "紧急", status: "warning" } as const)
+      : r?.source === "auto"
+        ? ({ extra: "系统", status: "info" } as const)
+        : {};
+  return {
+    title: String(r?.title ?? ""),
+    description:
+      String(r?.content ?? "") ||
+      (r?.due_date ? `截止 ${r.due_date}` : "（无补充说明）"),
+    datetime: r?.due_date
+      ? `截止 ${r.due_date}`
+      : String(r?.created_at ?? "").slice(0, 10),
+    type: "todo",
+    ...extra
+  };
+}
+
 const notices = computed<TabItem[]>(() => [
   {
     key: "notice",
     name: "通知",
     emptyText: loading.value ? "加载中…" : "暂无通知",
-    list: published.value.slice(0, MAX_ITEMS).map(toListItem)
+    list: published.value.slice(0, MAX_ITEMS).map(toNoticeItem)
+  },
+  {
+    key: "todo",
+    name: "待办",
+    emptyText: loading.value ? "加载中…" : "暂无待办",
+    list: pendingTodos.value.slice(0, MAX_ITEMS).map(toTodoItem)
   }
 ]);
 
 const activeKey = ref(notices.value[0].key);
 
+/** 红点 = 两个 tab 的「待处理」数之和：公告取近 7 天已发布、待办取未完成 */
+const noticesNum = computed(
+  () =>
+    published.value.filter(r => isRecent(r.created_at)).length +
+    pendingTodos.value.length
+);
+
 async function load() {
   loading.value = true;
   try {
-    const res: any = await getNoticeList({ page: 1, pageSize: FETCH_SIZE });
-    rows.value = res?.success ? (res.data?.list ?? []) : [];
+    const [noticeRes, todoRes]: any[] = await Promise.all([
+      getNoticeList({ page: 1, pageSize: FETCH_SIZE }),
+      getTodoList({
+        scope: "mine",
+        status: "待办",
+        page: 1,
+        pageSize: FETCH_SIZE
+      })
+    ]);
+    noticeRows.value = noticeRes?.success ? (noticeRes.data?.list ?? []) : [];
+    todoRows.value = todoRes?.success ? (todoRes.data?.list ?? []) : [];
   } catch {
     // 拉取失败不阻塞导航栏：红点归零、下拉显示空态，不弹错误打扰用户
-    rows.value = [];
+    noticeRows.value = [];
+    todoRows.value = [];
   } finally {
     loading.value = false;
   }

@@ -11,6 +11,13 @@ const router = express.Router();
 const ROUTES = {
   admin: [
     {
+      // 待办：校区负责人与老师共用的同一张表，页面同一份（按角色过滤）
+      path: "/todos",
+      component: "system/todos/index",
+      name: "SysTodos",
+      meta: { title: "待办", icon: "ep:list", rank: 0 }
+    },
+    {
       path: "/user",
       component: "attendance/users/index",
       name: "UserManage",
@@ -221,6 +228,13 @@ const ROUTES = {
     }
   ],
   teacher: [
+    {
+      // 待办：老师日常第一入口（系统生成的 + 负责人指派的 + 自己建的）
+      path: "/todos",
+      component: "system/todos/index",
+      name: "SysTodos",
+      meta: { title: "待办", icon: "ep:list", rank: 0 }
+    },
     {
       path: "/attendance",
       meta: { title: "考勤管理", icon: "ep:data-line", rank: 2 },

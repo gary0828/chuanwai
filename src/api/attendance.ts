@@ -462,6 +462,28 @@ export const markAllNotificationsRead = () => {
   return http.request("put", "/api/notifications/read-all");
 };
 
+/** ---------- 待办 ---------- */
+
+/** 待办列表（scope=mine|all；仅 admin 可 all，teacher 传 all 也会被后端收敛为自己） */
+export const getTodoList = (params?: object) => {
+  return http.request("get", "/api/todos", { params });
+};
+
+/** 新建待办（owner 默认自己；admin 可传 owner_id 指派给别人） */
+export const createTodo = (data: object) => {
+  return http.request("post", "/api/todos", { data });
+};
+
+/** 修改待办（含标记完成：传 { status: '已完成' }） */
+export const updateTodo = (id: number, data: object) => {
+  return http.request("put", `/api/todos/${id}`, { data });
+};
+
+/** 删除待办 */
+export const deleteTodo = (id: number) => {
+  return http.request("delete", `/api/todos/${id}`);
+};
+
 /** ---------- 经营报表（仅 admin） ---------- */
 
 /** 经营报表：招生/营收/续班/在读 汇总 */

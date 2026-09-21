@@ -235,6 +235,10 @@
 | 通知 | GET | `/api/notifications` | 登录 | 通知记录（教师仅本班学员） |
 | 通知 | PUT | `/api/notifications/:id/read` | 登录 | 单条标记已读 |
 | 通知 | PUT | `/api/notifications/read-all` | 登录 | 全部标记已读 |
+| 待办 | GET | `/api/todos` | 登录 | 待办列表（`?scope=mine\|all`、`?status=`、`?priority=`、`?keyword=`、`?owner_id=`）。★ **teacher 传 `scope=all` 也会被收敛为只看自己**；仅 `admin` 可看全部 |
+| 待办 | POST | `/api/todos` | 登录 | 新建待办。`owner_id` 默认自己；★ **仅 `admin` 可指派给别人**（teacher 传他人 id → 403） |
+| 待办 | PUT | `/api/todos/:id` | 本人/admin | 修改（含标记完成 `{status:'已完成'}`；改 `owner_id` 仅 admin）。★ 非本人且非 admin → **403** |
+| 待办 | DELETE | `/api/todos/:id` | 本人/admin | 删除。★ 非本人且非 admin → **403** |
 | 考试 | GET | `/api/exams` | 登录 | 考试列表（含成绩录入进度，教师仅本班） |
 | 考试 | POST | `/api/exams` | 登录 | 新增考试 |
 | 考试 | PUT | `/api/exams/:id` | 登录 | 修改考试 |

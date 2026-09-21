@@ -32,10 +32,12 @@
 
 | v17  | AI 配置中心       | 新增 `ai_settings`（AI 配置键值表，**优先级高于环境变量**，改完立即生效，无需重建容器）与 `ai_usage`（每次服务端生成后落一条用量：谁、什么场景、多少 token、多少成本）。支撑「AI 配置中心」页面（仅 admin，不进菜单，凭 `/#/ai-admin` 进入）。解决 2026-09-16 校区部署反馈的「改一个 Key 要重建镜像」问题 |
 | v18  | 学生成长时间轴     | 新增 5 张表，为 AI 工作台的「学生成长路径」提供数据地基：`student_timeline`（成长时间轴，**只增不改**）、`knowledge_points`（知识点体系，课时级粒度）、`class_evaluations`（课堂评价，3 维 1–5 分）、`kp_assessments`（知识点掌握评定，三档）、`growth_thresholds`（成长阈值，8 条默认值，可按真实分布调整不重建镜像）。**既有业务表一张未动**：出勤/成绩/课时仍由原表承载，读取时 UNION 合并 —— 见下文「★ 分工铁律」 |
+| v19  | 待办               | 新增 `todos`（待办）。**双端共用一张表 + 按角色过滤**，而不是两套表：`owner_id` 区分归属（教务端校区负责人 / AI 工作台一线老师读同一张表），`creator_id` 记录谁建的，`source` 区分 `manual`（手工）/ `auto`（L3 由业务事件自动生成）。★ 建 `(source_type, source_ref_id, owner_id)` **部分唯一索引** —— 这是 **L3 自动生成的幂等去重键**，提前在 v19 建好，L3 无需再迁移。**既有业务表一张未动** |
 
-当前最新版本：**v18**（`PRAGMA user_version` = 18）
+当前最新版本：**v19**（`PRAGMA user_version` = 19）
 
-> 📌 **不占版本号的表结构复用**：站点信息（`site.*`，见「settings」节）**复用 v6 的 `settings` 键值表**，因此**没有 v19 迁移**。判断标准：只有**新建/改动表结构**才需要迁移；往既有 K-V 表里加键位属于纯数据写入，不算 schema 变更。
+> 📌 **不占版本号的表结构复用**：站点信息（`site.*`，见「settings」节）**复用 v6 的 `settings` 键值表**，**没有为它单独建迁移**。判断标准：只有**新建/改动表结构**才需要迁移；往既有 K-V 表里加键位属于纯数据写入，不算 schema 变更。
+> （例：v19 是「建 `todos` 表」所以占版本号；`site.*` 只是往 v6 的 `settings` 里加行，所以不占。）
 
 ## 表结构
 
@@ -500,6 +502,59 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 | tokens_out | INTEGER | NOT NULL, DEFAULT 0  | 输出 token                             |
 | cost       | REAL    | NOT NULL, DEFAULT 0  | 估算成本（元，高峰价，仅供量级参考）   |
 | created_at | TEXT    | NOT NULL, DEFAULT '' | 生成时间；建索引 `created_at`          |
+
+## 待办（v19 新增 · `todos`）
+
+> 设计决议与背景见 `docs/ROADMAP.md`「五之二、通知铃铛 + 待办功能」。
+
+### 为什么是「一张表 + 按角色过滤」而不是两套表
+
+教务端（**校区负责人**）与 AI 工作台（**一线老师**）读的是**同一张表**，靠 `owner_id` 区分归属。
+理由：待办本质同构，若拆成两套表，则**生成逻辑 / 权限判定 / 完成语义都要写两遍**，且两端数据无法互通。
+（用户 2026-09-21 拍板）
+
+### 表结构
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | INTEGER PK | — |
+| `title` | TEXT NOT NULL | 标题（≤100 字） |
+| `content` | TEXT | 补充说明（≤5000 字） |
+| `owner_id` | INTEGER NOT NULL → `users(id)` ON DELETE CASCADE | **负责人**（归属谁） |
+| `creator_id` | INTEGER → `users(id)` ON DELETE SET NULL | 创建人（**系统自动生成时为空**） |
+| `source` | TEXT CHECK `manual` / `auto` | `manual`=手工建；`auto`=L3 由业务事件生成 |
+| `source_type` | TEXT | 自动来源类型（如 `tuition_low` / `absent_streak` / `lead_follow` / `eval_missing`）；**L2 全为空** |
+| `source_ref_id` | INTEGER | 来源记录 id（配合 `source_type` 做幂等去重） |
+| `status` | TEXT CHECK `待办` / `已完成` | 默认 `待办` |
+| `priority` | TEXT CHECK `普通` / `重要` / `紧急` | 默认 `普通` |
+| `due_date` | TEXT | 截止日期（可空，`YYYY-MM-DD`） |
+| `completed_at` | TEXT | 完成时间；**退回待办时清空** |
+| `created_at` / `updated_at` | TEXT | `datetime('now','localtime')` |
+
+**索引**：
+
+| 索引 | 用途 |
+|---|---|
+| `idx_todos_owner_status (owner_id, status)` | 最高频查询：某人的待办列表 |
+| `idx_todos_due (due_date)` | 按截止排序 / 找逾期 |
+| ★ `uniq_todos_source (source_type, source_ref_id, owner_id)` **部分唯一索引**（`WHERE source_type IS NOT NULL`） | **L3 幂等去重键** —— 同一来源 + 同一负责人只允许一条自动待办；手工待办（`source_type` 为空）不受约束 |
+
+> ★ **唯一索引为什么在 L2 就建好**：它只约束自动待办，L2 不写自动待办所以不影响；
+> 但 L3 的生成器一上线就需要它。**提前建好 → L3 不需要再动表结构。**
+
+### 权限模型（**边界在路由内的归属校验，不在路径**）
+
+| 角色 | 能力 |
+|---|---|
+| 本人 | 看自己的 · 改自己的 · 完成自己的 · 删自己的 |
+| `admin` | 上面全有 **+ 看全部（`?scope=all`）+ 指派给别人（`POST` 带 `owner_id`）+ 改他人待办** |
+| `teacher` | **只能自己的**。★ 无论传什么 `scope`，后端一律收敛为「只看自己」（越权 403） |
+
+> ★ AI 工作台凭证 `type=ai_agent` 放行 `/api/todos`（**读写同权**）——
+> 老师在工作台既要看也要改。**安全边界靠 `canManage`（owner 或 admin），不靠"挡住读"**。
+> 与 `/api/growth` 的处理方式一致，见 `middleware/auth.js`。
+
+---
 
 ## 学生成长时间轴（v18 新增）
 

@@ -104,6 +104,7 @@ const AUDIT_MODULES = [
   { re: /^\/api\/finance/, name: "财务" },
   { re: /^\/api\/leads/, name: "招生线索" },
   { re: /^\/api\/notifications/, name: "通知" },
+  { re: /^\/api\/todos/, name: "待办" },
   { re: /^\/api\/exams/, name: "考试" },
   { re: /^\/api\/reports/, name: "报表" },
   { re: /^\/api\/schedule-adjustments/, name: "调课" },
@@ -174,6 +175,7 @@ app.use("/api/audit-logs", require("./routes/audit-logs"));
 app.use("/api/finance", require("./routes/finance"));
 app.use("/api/leads", require("./routes/leads"));
 app.use("/api/notifications", require("./routes/notifications"));
+app.use("/api/todos", require("./routes/todos"));
 app.use("/api/exams", require("./routes/exams"));
 app.use("/api/reports", require("./routes/reports"));
 app.use("/api/schedule-adjustments", require("./routes/adjustments"));

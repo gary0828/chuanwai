@@ -15,6 +15,17 @@ export interface NavGroup {
 /** 侧边栏导航：按教学闭环分组，而不是功能堆页 */
 export const NAV_GROUPS: NavGroup[] = [
   {
+    group: "我的",
+    items: [
+      {
+        path: "/todos",
+        title: "我的待办",
+        icon: "~icons/ep/list",
+        desc: "系统提醒 + 指派任务 + 自己建的"
+      }
+    ]
+  },
+  {
     group: "教学闭环",
     items: [
       {
@@ -110,6 +121,12 @@ export const router = createRouter({
       name: "dashboard",
       component: () => import("./views/Dashboard.vue"),
       meta: { title: "当前单元行动台" }
+    },
+    {
+      path: "/todos",
+      name: "todos",
+      component: () => import("./views/Todos.vue"),
+      meta: { title: "我的待办" }
     },
     {
       path: "/course",

@@ -8,6 +8,7 @@ import IconClock from "~icons/ep/clock";
 import IconCollection from "~icons/ep/collection";
 import IconEdit from "~icons/ep/edit-pen";
 import IconFiles from "~icons/ep/files";
+import IconList from "~icons/ep/list";
 import IconOdometer from "~icons/ep/odometer";
 import IconSetting from "~icons/ep/setting";
 import IconTickets from "~icons/ep/tickets";
@@ -47,6 +48,7 @@ function changeClass(id: number) {
 
 const ICONS: Record<string, unknown> = {
   "/": IconBoard,
+  "/todos": IconList,
   "/course": IconFiles,
   "/lesson": IconEdit,
   "/teaching": IconClock,

@@ -29,6 +29,8 @@ tags:
     description: 招生线索（P0）
   - name: Notifications
     description: 家校通知记录
+  - name: Todos
+    description: 待办（教务端与 AI 工作台共用一张表；teacher 仅自己，admin 可看全部并指派）
   - name: Analytics
     description: AI 分析预留端点（仅 admin）
   - name: Growth
@@ -725,6 +727,77 @@ paths:
       summary: 全部标记已读
       responses:
         "200": { description: 成功 }
+
+  # --------------------------------------------------------------- Todos
+  # 待办：教务端（校区负责人）与 AI 工作台（一线老师）**同一张表**，按 owner 过滤。
+  # ★ 权限边界在**路由内的归属校验**，不靠路径：teacher 传 scope=all 也会被收敛为自己。
+  /api/todos:
+    get:
+      tags: [Todos]
+      summary: 待办列表（teacher 强制仅自己；admin 可用 scope=all 看全部）
+      parameters:
+        - { name: scope, in: query, schema: { type: string, enum: [mine, all], default: mine }, description: 仅 admin 的 all 生效；teacher 一律收敛为 mine }
+        - { name: status, in: query, schema: { type: string, enum: [待办, 已完成] } }
+        - { name: priority, in: query, schema: { type: string, enum: [普通, 重要, 紧急] } }
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: owner_id, in: query, schema: { type: integer }, description: 仅 admin 且 scope=all 时生效 }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200": { description: 成功（data.list / data.total / data.pendingCount） }
+    post:
+      tags: [Todos]
+      summary: 新建待办（owner 默认自己；★ 仅 admin 可指派他人）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, maxLength: 100 }
+                content: { type: string, maxLength: 5000 }
+                priority: { type: string, enum: [普通, 重要, 紧急], default: 普通 }
+                due_date: { type: string, format: date, nullable: true }
+                owner_id: { type: integer, description: 仅 admin 可传；teacher 传他人 id 返回 403 }
+      responses:
+        "200": { description: 成功 }
+        "400": { description: 标题为空或不存在的负责人 }
+        "403": { description: 非 admin 试图指派给他人 }
+
+  /api/todos/{id}:
+    put:
+      tags: [Todos]
+      summary: 修改待办（含标记完成；本人或 admin）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, maxLength: 100 }
+                content: { type: string, maxLength: 5000 }
+                status: { type: string, enum: [待办, 已完成], description: 转已完成会写 completed_at；退回时清空 }
+                priority: { type: string, enum: [普通, 重要, 紧急] }
+                due_date: { type: string, format: date, nullable: true }
+                owner_id: { type: integer, description: 改负责人仅 admin }
+      responses:
+        "200": { description: 成功 }
+        "400": { description: 标题为空或超长 }
+        "403": { description: 既非本人也非 admin，或非 admin 试图改负责人 }
+        "404": { description: 待办不存在 }
+    delete:
+      tags: [Todos]
+      summary: 删除待办（本人或 admin）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功 }
+        "403": { description: 既非本人也非 admin }
+        "404": { description: 待办不存在 }
 
   # --------------------------------------------------------------- Analytics
   /api/analytics/metrics:

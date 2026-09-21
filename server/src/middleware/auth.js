@@ -95,14 +95,19 @@ function auth(req, res, next) {
     const path = String(req.originalUrl || req.url || "").split("?")[0];
     const READ_ONLY_OK = /^\/api\/(agent|ai)(\/|$)/.test(path);
     const GROWTH_OK = /^\/api\/growth(\/|$)/.test(path);
+    // 待办（2026-09-21）：老师既要在工作台看自己的待办，也要能新建/完成/删除，
+    // 因此**读写同权放行整段前缀**。安全边界不在路径上，而在路由内的归属校验
+    // （`routes/todos.js` 的 canManage）：teacher 无论传什么 scope 都强制只看自己的，
+    // 指派给别人 / 改负责人只有 admin 能做。这与 /api/growth 的处理方式一致。
+    const TODOS_OK = /^\/api\/todos(\/|$)/.test(path);
     // 管理动作：即使在 /api/growth 内也不放行（改全局成长阈值）
     const ADMIN_ONLY = path === "/api/growth/thresholds" && req.method !== "GET";
-    if ((!READ_ONLY_OK && !GROWTH_OK) || ADMIN_ONLY) {
+    if ((!READ_ONLY_OK && !GROWTH_OK && !TODOS_OK) || ADMIN_ONLY) {
       return res.status(403).json({
         success: false,
         message: ADMIN_ONLY
           ? "成长阈值属于管理配置，请用教务系统管理员账号操作"
-          : "该凭证仅可用于教学工作台的只读接口与课堂采集接口"
+          : "该凭证仅可用于教学工作台的只读接口与教学采集接口"
       });
     }
   }

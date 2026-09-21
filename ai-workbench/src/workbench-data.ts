@@ -114,22 +114,31 @@ async function getJson<T>(path: string): Promise<T> {
   return (body as any).data as T;
 }
 
-/** 写操作（课堂采集）；失败时把后端的中文提示原样抛出，便于老师看懂 */
-async function postJson<T>(path: string, payload: unknown): Promise<T> {
+/** 统一的写操作（POST / PUT / DELETE）；失败时把后端的中文提示原样抛出，便于老师看懂 */
+async function sendJson<T>(
+  method: "POST" | "PUT" | "DELETE",
+  path: string,
+  payload?: unknown
+): Promise<T> {
   const token = agentToken();
   const res = await fetch(`${apiBase()}${path}`, {
-    method: "POST",
+    method,
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     },
-    body: JSON.stringify(payload)
+    body: payload === undefined ? undefined : JSON.stringify(payload)
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !(body as any)?.success) {
     throw new Error((body as any)?.message || `提交失败（HTTP ${res.status}）`);
   }
   return (body as any).data as T;
+}
+
+/** 写操作（课堂采集） */
+function postJson<T>(path: string, payload: unknown): Promise<T> {
+  return sendJson<T>("POST", path, payload);
 }
 
 /** 拉取真实数据（上下文 + 默认班级概览） */
@@ -606,3 +615,99 @@ export const demoFallbackModules = computed<string[]>(() => {
   list.push("教学单元与课时进度");
   return list;
 });
+
+/* ────────────────────────────  待办（个人事务）  ────────────────────────────
+ *
+ * 老师在工作台看/管自己的待办，与教务端**同一张表**（`todos`），按 owner 过滤。
+ * 后端 `routes/todos.js` 对 teacher 强制只看自己 —— 这里传 `scope=mine` 只是
+ * 表达意图，真正的边界在后端。
+ *
+ * ★ demo 模式下**只读演示数据、不做任何写操作** —— 避免老师以为在演示里点了
+ *   「完成」，真实库里却什么都没发生。
+ */
+export interface WorkbenchTodo {
+  id: number;
+  title: string;
+  content: string;
+  status: "待办" | "已完成";
+  priority: "普通" | "重要" | "紧急";
+  source: "manual" | "auto";
+  due_date: string | null;
+  created_at: string;
+}
+
+/** 演示用的待办（结构对齐真实接口） */
+function demoTodos(): WorkbenchTodo[] {
+  const today = new Date();
+  const d = (n: number) => {
+    const x = new Date(today.getTime() + n * 86400_000);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+  };
+  return [
+    {
+      id: -1,
+      title: "【演示】给小李补一次「两边及夹角」的证明训练",
+      content: "上次课该知识点掌握不牢，安排一次一对一",
+      status: "待办",
+      priority: "重要",
+      source: "manual",
+      due_date: d(1),
+      created_at: d(0) + " 08:30:00"
+    },
+    {
+      id: -2,
+      title: "【演示】学员『王小雨』课时余额不足",
+      content: "剩余课时低于阈值，建议联系家长续费",
+      status: "待办",
+      priority: "紧急",
+      source: "auto",
+      due_date: d(-1),
+      created_at: d(0) + " 07:00:00"
+    },
+    {
+      id: -3,
+      title: "【演示】提交本周班级学情小结",
+      content: "",
+      status: "已完成",
+      priority: "普通",
+      source: "manual",
+      due_date: null,
+      created_at: d(-2) + " 09:00:00"
+    }
+  ];
+}
+
+/** 我的待办（不含已完成时传 status='待办'） */
+export async function loadMyTodos(status?: string): Promise<WorkbenchTodo[]> {
+  if (sourceMode.value !== "real") {
+    return status ? demoTodos().filter(t => t.status === status) : demoTodos();
+  }
+  const qs = status
+    ? `?scope=mine&status=${encodeURIComponent(status)}&pageSize=100`
+    : "?scope=mine&pageSize=100";
+  const res = await getJson<{ list: WorkbenchTodo[] }>(`/api/todos${qs}`);
+  return res?.list ?? [];
+}
+
+/** 标记完成 / 退回待办 */
+export async function setTodoStatus(id: number, status: "待办" | "已完成"): Promise<void> {
+  if (sourceMode.value !== "real") return; // demo 不写真库
+  await sendJson("PUT", `/api/todos/${id}`, { status });
+}
+
+/** 新建待办（默认记给自己） */
+export async function createMyTodo(payload: {
+  title: string;
+  content?: string;
+  priority?: string;
+  due_date?: string | null;
+}): Promise<void> {
+  if (sourceMode.value !== "real") return; // demo 不写真库
+  await sendJson("POST", "/api/todos", payload);
+}
+
+/** 删除待办 */
+export async function removeTodo(id: number): Promise<void> {
+  if (sourceMode.value !== "real") return; // demo 不写真库
+  await sendJson("DELETE", `/api/todos/${id}`);
+}

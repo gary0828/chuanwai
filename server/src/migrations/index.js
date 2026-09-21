@@ -22,7 +22,8 @@ const migrations = [
   require("./015-token-version"),
   require("./016-feedback"),
   require("./017-ai-settings"),
-  require("./018-growth-timeline")
+  require("./018-growth-timeline"),
+  require("./019-todos")
 ];
 
 function migrate(db) {
