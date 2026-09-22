@@ -28,4 +28,5 @@ K-020 | Preference | 部署 | ★ 重建生产 docker 是最后一步，单独�
 K-021 | Preference | 待办 | ★ 待办学籍端 + AI 工作台两端都要（用户被质疑后重申） | memory/knowledge/preferences.md | active | 2026-09-21 | 用户重申
 K-022 | Fact | 环境 | 前端 dev 8848 / 后端 3000 / docker 前端 8080 / 工作台 8082；默认账号 admin、teacher | memory/INDEX.md#1 | active | 2026-09-21 | 实测
 K-023 | Convention | 文档 | 文档体系已按规范重组（00-导航 / 01-规范 / 02~08 分域 + archive）；写或改文档前先读规范 | docs/01-文档规范.md | active | 2026-09-21 | 用户要求全面整理
+K-024 | Convention | 推送·公开仓库 | 推公开仓库前必扫 `.env`/`*.db`/`evidence/` 等敏感数据；本机 git 配了失效死代理(127.0.0.1:7890/.env 14564)，直连用 `git -c http.proxy= -c https.proxy=` + 清 `HTTP(S)_PROXY` 绕过 | memory/logs/2026-09-21.md#20:10 | active | 2026-09-21 | 推 gitee 实测
 ```
