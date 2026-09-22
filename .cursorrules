@@ -1,0 +1,10 @@
+# .cursorrules
+
+本项目的会话启动入口是 `memory/INDEX.md`。先读它，再动手。
+
+1. 读 `memory/INDEX.md`（唯一入口）
+2. 读 `memory/CURSOR.md`（当前进度）
+3. 按 INDEX §3 指针按需读详情，未命中就停手
+
+收尾：按 `memory/PROTOCOL.md` §2 归档，并跑 `node memory/check.mjs`。
+禁止：启动时整读 README.md / docs/PROGRESS.md / WORKBUDDY.md 全文；往 INDEX.md 堆正文；改昨天的日志。

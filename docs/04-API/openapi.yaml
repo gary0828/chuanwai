@@ -1,0 +1,2099 @@
+openapi: 3.0.3
+info:
+  title: 教务管理系统 API
+  description: |
+    培训机构**纯员工端 CRM** 后端 API（Express 4 + node:sqlite）。
+    仅 `admin` / `teacher` 两种员工角色；学生、家长无账号、不登录。
+
+    本文件是机器可读规范，人类可读的完整说明见 `docs/04-API/API.md`。
+    覆盖范围：认证 + 四个 P0 模块（考勤签到 / 学生 / 成绩 / 招生线索）+ 通知 + AI 分析端点。
+    统一响应包裹：成功 `{ success: true, data }`；失败 `{ success: false, message }`。
+    `/api/analytics/*` 使用独立的「AI 分析信封」。
+  version: 1.0.0
+  contact:
+    name: 教务管理系统
+servers:
+  - url: http://localhost:3000
+    description: 本地 / Docker 后端
+
+tags:
+  - name: Auth
+    description: 认证与 Token
+  - name: Students
+    description: 学生管理（P0）
+  - name: Attendance
+    description: 考勤签到（P0）
+  - name: Exams
+    description: 考试成绩（P0）
+  - name: Leads
+    description: 招生线索（P0）
+  - name: Notifications
+    description: 家校通知记录
+  - name: Todos
+    description: 待办（教务端与 AI 工作台共用一张表；teacher 仅自己，admin 可看全部并指派）
+  - name: Analytics
+    description: AI 分析预留端点（仅 admin）
+  - name: Growth
+    description: 学生成长路径与课堂采集（采集入口在 AI 教学工作台）
+  - name: SiteInfo
+    description: 站点信息（机构名称 / Logo / 页脚）与图片上传
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/site-info:
+    get:
+      tags: [SiteInfo]
+      summary: 公开站点信息（免登录）
+      description: |
+        登录页需要展示 Logo 与机构名称，此时尚无 token，故本接口免鉴权。
+        **只返回站点展示字段白名单，且只返回"非空"项** —— 未登录访客看不到"有哪些配置项"。
+        空对象 `{}` 表示全未配置，调用方应回退到自身默认值。
+        绝不返回 warn_rate 等内部参数。
+      security: []
+      responses:
+        "200":
+          description: 站点信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SiteInfo" }
+    put:
+      tags: [SiteInfo]
+      summary: 保存站点信息（仅 admin）
+      description: 只接受 SiteInfo 中定义的白名单键，其余键被忽略。
+      responses:
+        "200":
+          description: 保存成功并返回最新值
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SiteInfo" }
+        "400":
+          description: 无可更新项 / 内容超长
+
+  /api/site-info/admin:
+    get:
+      tags: [SiteInfo]
+      summary: 读取全部站点配置（登录）
+      responses:
+        "200":
+          description: 站点信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SiteInfo" }
+        "401":
+          description: 未登录
+
+  /api/site-info/upload:
+    post:
+      tags: [SiteInfo]
+      summary: 上传 Logo / 标签页图标（仅 admin）
+      description: |
+        原始二进制直传（Content-Type 为 image/*），无需 multipart。
+        服务端做**魔数嗅探**（忽略客户端声明的扩展名），文件落盘
+        `server/data/assets/site/`，数据库只存路径（见 ADR-008）。
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [logo, favicon]
+            default: logo
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema: { type: string, format: binary }
+          image/jpeg:
+            schema: { type: string, format: binary }
+          image/svg+xml:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      url: { type: string, example: /assets/site/logo-20260921120000-ab12cd34.png }
+                      key: { type: string, example: site.logo }
+        "400":
+          description: 未收到内容 / 格式不支持 / 超过 2MB
+
+  /api/health:
+    get:
+      tags: [Auth]
+      summary: 健康检查
+      security: []
+      responses:
+        "200":
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, example: ok }
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: 统一登录入口
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /api/auth/info:
+    get:
+      tags: [Auth]
+      summary: 当前用户信息
+      responses:
+        "200": { description: 成功 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/async-routes:
+    get:
+      tags: [Auth]
+      summary: 动态菜单路由（按角色下发，前端自动过滤无权限菜单）
+      responses:
+        "200": { description: 成功 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/refresh-token:
+    post:
+      tags: [Auth]
+      summary: 刷新 accessToken（校验凭证未被吊销）
+      description: >-
+        除校验签名与过期时间外，还会比对 Token 中的 `tv` 声明与 `users.token_version`。
+        该账号已登出 / 已改密 / 已改角色时返回 401。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        "200": { description: 成功 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: 退出登录（服务端吊销该账号全部已签发凭证）
+      description: >-
+        递增该账号的 `users.token_version`，使其已签发的 accessToken 与 refreshToken
+        立即全部失效。**需要携带有效 accessToken**（v15 起由空实现改为真实吊销）。
+      responses:
+        "200": { description: 已登出，该账号全部凭证已吊销 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ---------------------------------------------------------------- Students
+  /api/students:
+    get:
+      tags: [Students]
+      summary: 学生列表（筛选 + 分页；teacher 仅本班）
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 10 } }
+        - { name: class_id, in: query, schema: { type: integer } }
+        - { name: name, in: query, schema: { type: string }, description: 姓名（精确） }
+        - { name: student_no, in: query, schema: { type: string }, description: 学号（精确） }
+        - { name: keyword, in: query, schema: { type: string }, description: 姓名或学号模糊 }
+      responses:
+        "200":
+          description: 分页列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          list:
+                            type: array
+                            items: { $ref: "#/components/schemas/Student" }
+                          total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Students]
+      summary: 新增学生
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StudentInput" }
+      responses:
+        "200": { description: 创建成功 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/students/export:
+    get:
+      tags: [Students]
+      summary: 学生全量导出（与列表同筛选条件，不分页）
+      parameters:
+        - { name: class_id, in: query, schema: { type: integer } }
+        - { name: keyword, in: query, schema: { type: string } }
+      responses:
+        "200": { description: 全量列表（供前端生成 Excel） }
+
+  /api/students/import:
+    post:
+      tags: [Students]
+      summary: 批量导入（前端解析 Excel 后提交，逐条校验返回失败明细）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [list]
+              properties:
+                list:
+                  type: array
+                  items: { $ref: "#/components/schemas/StudentInput" }
+      responses:
+        "200":
+          description: 导入结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          success_count: { type: integer }
+                          fail_count: { type: integer }
+                          failures:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                row: { type: integer }
+                                student_no: { type: string }
+                                message: { type: string }
+
+  /api/students/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    put:
+      tags: [Students]
+      summary: 修改学生（teacher 仅本班）
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StudentInput" }
+      responses:
+        "200": { description: 成功 }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      tags: [Students]
+      summary: 删除学生（存在报班/缴费/退费记录时返回 400 拒绝）
+      responses:
+        "200": { description: 成功 }
+        "400":
+          description: 存在业务引用，禁止删除
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # -------------------------------------------------------------- Attendance
+  /api/attendance:
+    get:
+      tags: [Attendance]
+      summary: 某课程某日全班名单（回显已登记状态）
+      parameters:
+        - { name: date, in: query, required: true, schema: { type: string, format: date } }
+        - { name: class_id, in: query, required: true, schema: { type: integer } }
+        - { name: course_id, in: query, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: 名单（仅 students.status='在读'）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/AttendanceRosterItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/attendance/batch:
+    post:
+      tags: [Attendance]
+      summary: 批量登记考勤（事务）— 联动课时包扣减 / 缺勤通知 / 请假同步单
+      description: |
+        提交语义为 `ON CONFLICT(student_id, course_id, date) DO UPDATE`（重复提交覆盖）。
+
+        **业务联动（同一事务）**
+        - `正常`/`迟到`/`早退` → 扣减 1 课时 + 写入 `hour_consumptions`（type=扣减）
+        - `缺勤`/`请假` → 不扣课时
+        - 新旧状态差异 → 自动回补 / 扣减（回补不超过 total_hours）
+        - `缺勤` → 生成家长缺勤通知（幂等）；改回其他状态 → 撤销当日通知
+        - `请假` → 生成待审批请假同步单（幂等）；改回其他状态 → 撤销同步单与「请假审批通过」通知
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, course_id, records]
+              properties:
+                date: { type: string, format: date }
+                course_id: { type: integer }
+                records:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [student_id, status]
+                    properties:
+                      student_id: { type: integer }
+                      status:
+                        type: string
+                        enum: [正常, 迟到, 早退, 缺勤, 请假]
+                      remark: { type: string }
+            example:
+              date: "2026-09-11"
+              course_id: 1
+              records:
+                - { student_id: 1, status: 正常 }
+                - { student_id: 2, status: 缺勤, remark: 家长未请假 }
+      responses:
+        "200":
+          description: 登记成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          count: { type: integer, example: 2 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: 包含无权操作的学生记录
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/attendance/records:
+    get:
+      tags: [Attendance]
+      summary: 考勤记录分页查询
+      parameters:
+        - { name: date_start, in: query, schema: { type: string, format: date } }
+        - { name: date_end, in: query, schema: { type: string, format: date } }
+        - { name: course_id, in: query, schema: { type: integer } }
+        - { name: class_id, in: query, schema: { type: integer } }
+        - { name: student_id, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { type: string, enum: [正常, 迟到, 早退, 缺勤, 请假] } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 10 } }
+      responses:
+        "200": { description: "分页列表（list / total）" }
+
+  /api/attendance/statistics:
+    get:
+      tags: [Attendance]
+      summary: 考勤统计（student / class 维度）
+      parameters:
+        - { name: dimension, in: query, schema: { type: string, enum: [student, class], default: student } }
+        - { name: course_id, in: query, schema: { type: integer } }
+        - { name: class_id, in: query, schema: { type: integer } }
+        - { name: start, in: query, schema: { type: string, format: date } }
+        - { name: end, in: query, schema: { type: string, format: date } }
+      responses:
+        "200": { description: 成功 }
+
+  /api/attendance/statistics/trend:
+    get:
+      tags: [Attendance]
+      summary: 出勤趋势
+      parameters:
+        - { name: period, in: query, schema: { type: string, enum: [day, week, month], default: day } }
+        - { name: course_id, in: query, schema: { type: integer } }
+        - { name: class_id, in: query, schema: { type: integer } }
+        - { name: start, in: query, schema: { type: string, format: date } }
+        - { name: end, in: query, schema: { type: string, format: date } }
+      responses:
+        "200": { description: 成功 }
+
+  /api/attendance/statistics/monthly:
+    get:
+      tags: [Attendance]
+      summary: 月度报表（班级 × 月份出勤矩阵）
+      parameters:
+        - { name: course_id, in: query, schema: { type: integer } }
+        - { name: class_id, in: query, schema: { type: integer } }
+        - { name: start, in: query, schema: { type: string, format: date } }
+        - { name: end, in: query, schema: { type: string, format: date } }
+      responses:
+        "200": { description: 成功 }
+
+  /api/attendance/warnings:
+    get:
+      tags: [Attendance]
+      summary: 缺勤预警（低出勤率 + 连续缺勤）
+      parameters:
+        - { name: class_id, in: query, schema: { type: integer } }
+        - { name: rate, in: query, schema: { type: number, default: 0.8 }, description: 出勤率阈值（0-1） }
+        - { name: consecutive, in: query, schema: { type: integer, default: 3 }, description: 连续缺勤天数阈值 }
+        - { name: days, in: query, schema: { type: integer, default: 14 }, description: 统计窗口天数 }
+      responses:
+        "200": { description: 成功 }
+
+  # ------------------------------------------------------------------- Exams
+  /api/exams:
+    get:
+      tags: [Exams]
+      summary: 考试列表（含成绩录入进度；teacher 仅本班）
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 10 } }
+        - { name: course_id, in: query, schema: { type: integer } }
+        - { name: class_id, in: query, schema: { type: integer } }
+        - { name: keyword, in: query, schema: { type: string } }
+      responses:
+        "200": { description: 成功 }
+    post:
+      tags: [Exams]
+      summary: 新增考试
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExamInput" }
+      responses:
+        "200": { description: 成功 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/exams/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    put:
+      tags: [Exams]
+      summary: 修改考试
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExamInput" }
+      responses:
+        "200": { description: 成功 }
+    delete:
+      tags: [Exams]
+      summary: 删除考试（级联删除成绩）
+      responses:
+        "200": { description: 成功 }
+
+  /api/exams/{id}/scores:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [Exams]
+      summary: 成绩录入表单（考试信息 + 该班在读学生 + 已有成绩）
+      responses:
+        "200": { description: 成功 }
+    put:
+      tags: [Exams]
+      summary: 批量录入成绩（事务 upsert；仅新插入时推送成绩通知）
+      description: |
+        冲突键 `UNIQUE(exam_id, student_id)`，一考一成绩、重复录入覆盖。
+        仅**新插入**成绩时生成 `notifications.type='成绩发布'`（parent_name 快照）；修改已有成绩不重复生成（幂等）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scores]
+              properties:
+                scores:
+                  type: array
+                  items:
+                    type: object
+                    required: [student_id, score]
+                    properties:
+                      student_id: { type: integer }
+                      score: { type: number, minimum: 0 }
+                      remark: { type: string }
+      responses:
+        "200": { description: 成功 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/exams/{id}/scorecard:
+    get:
+      tags: [Exams]
+      summary: 成绩单（排名 + 等级 + 平均分）
+      description: 等级口径：得分率 ≥90% 优 / ≥80% 良 / ≥70% 中 / ≥60% 及格 / 否则不及格
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功 }
+
+  # ------------------------------------------------------------------- Leads
+  /api/leads:
+    get:
+      tags: [Leads]
+      summary: 线索列表（teacher 仅见自己创建的线索）
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 10 } }
+        - { name: name, in: query, schema: { type: string } }
+        - { name: phone, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [新线索, 跟进中, 已转化, 已流失] } }
+        - { name: source, in: query, schema: { type: string, enum: [转介绍, 线上, 地推, 广告] } }
+      responses:
+        "200": { description: 成功 }
+    post:
+      tags: [Leads]
+      summary: 新增线索
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LeadInput" }
+      responses:
+        "200": { description: 成功 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/leads/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    put:
+      tags: [Leads]
+      summary: 修改线索
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LeadInput" }
+      responses:
+        "200": { description: 成功 }
+    delete:
+      tags: [Leads]
+      summary: 删除线索（仅 admin）
+      responses:
+        "200": { description: 成功 }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/leads/{id}/follow:
+    put:
+      tags: [Leads]
+      summary: 追加跟进记录（时间线留痕）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+      responses:
+        "200": { description: 成功 }
+
+  /api/leads/{id}/status:
+    put:
+      tags: [Leads]
+      summary: 状态流转
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [新线索, 跟进中, 已转化, 已流失]
+      responses:
+        "200": { description: 成功 }
+
+  /api/leads/{id}/convert:
+    put:
+      tags: [Leads]
+      summary: 一键转化（事务：创建学员档案 + 报班订单）
+      description: |
+        在同一事务内 `INSERT students` + `INSERT orders`，并把 `leads.status` 置为 `已转化`、
+        `leads.converted_student_id` 指向新学员。任一步失败整体回滚。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LeadConvertInput" }
+      responses:
+        "200": { description: 转化成功，返回新学员与订单 ID }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/leads/stats/channels:
+    get:
+      tags: [Leads]
+      summary: 渠道统计（各渠道线索数 / 转化数 / 转化率）
+      responses:
+        "200": { description: 成功 }
+
+  # ----------------------------------------------------------- Notifications
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: 通知记录（teacher 仅本班学员）
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 10 } }
+        - { name: student_id, in: query, schema: { type: integer } }
+        - { name: type, in: query, schema: { type: string, enum: [考勤缺勤, 成绩发布, 请假审批通过] } }
+        - { name: date_start, in: query, schema: { type: string, format: date } }
+        - { name: date_end, in: query, schema: { type: string, format: date } }
+        - { name: is_read, in: query, schema: { type: integer, enum: [0, 1] } }
+      responses:
+        "200": { description: 成功 }
+
+  /api/notifications/{id}/read:
+    put:
+      tags: [Notifications]
+      summary: 单条标记已读
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功 }
+
+  /api/notifications/read-all:
+    put:
+      tags: [Notifications]
+      summary: 全部标记已读
+      responses:
+        "200": { description: 成功 }
+
+  # --------------------------------------------------------------- Todos
+  # 待办：教务端（校区负责人）与 AI 工作台（一线老师）**同一张表**，按 owner 过滤。
+  # ★ 权限边界在**路由内的归属校验**，不靠路径：teacher 传 scope=all 也会被收敛为自己。
+  /api/todos:
+    get:
+      tags: [Todos]
+      summary: 待办列表（teacher 强制仅自己；admin 可用 scope=all 看全部）
+      parameters:
+        - { name: scope, in: query, schema: { type: string, enum: [mine, all], default: mine }, description: 仅 admin 的 all 生效；teacher 一律收敛为 mine }
+        - { name: status, in: query, schema: { type: string, enum: [待办, 已完成] } }
+        - { name: priority, in: query, schema: { type: string, enum: [普通, 重要, 紧急] } }
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: owner_id, in: query, schema: { type: integer }, description: 仅 admin 且 scope=all 时生效 }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200": { description: 成功（data.list / data.total / data.pendingCount） }
+    post:
+      tags: [Todos]
+      summary: 新建待办（owner 默认自己；★ 仅 admin 可指派他人）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, maxLength: 100 }
+                content: { type: string, maxLength: 5000 }
+                priority: { type: string, enum: [普通, 重要, 紧急], default: 普通 }
+                due_date: { type: string, format: date, nullable: true }
+                owner_id: { type: integer, description: 仅 admin 可传；teacher 传他人 id 返回 403 }
+      responses:
+        "200": { description: 成功 }
+        "400": { description: 标题为空或不存在的负责人 }
+        "403": { description: 非 admin 试图指派给他人 }
+
+  /api/todos/generate:
+    post:
+      tags: [Todos]
+      summary: 手动触发一次自动生成（★ 仅 admin）
+      description: |
+        按**归属矩阵**把 4 类业务事件转成待办，**幂等**（一条来源 = 一条待办，靠唯一索引去重）：
+        - `tuition_low`（学员余额/课时不足）、`lead_follow`（线索待跟进） → **仅 admin**
+          （数据源分别是财务表 `orders` 与对老师零开放的 `leads`）
+        - `absent_streak`（连续缺勤）、`eval_missing`（课评欠录） → **该班班主任 + admin**
+
+        常规触发有两条：① 打开待办/铃铛时按需（60 秒节流）② 每 6 小时的定时任务。
+        本端点用于排查与验收。
+      parameters:
+        - { name: force, in: query, schema: { type: string, enum: ["1"] }, description: 传 1 跳过 60 秒节流 }
+      responses:
+        "200": { description: 成功（data.created / data.reopened / data.skipped / data.candidates） }
+        "403": { description: 非 admin }
+
+  /api/todos/{id}:
+    put:
+      tags: [Todos]
+      summary: 修改待办（含标记完成；本人或 admin）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, maxLength: 100 }
+                content: { type: string, maxLength: 5000 }
+                status: { type: string, enum: [待办, 已完成], description: 转已完成会写 completed_at；退回时清空 }
+                priority: { type: string, enum: [普通, 重要, 紧急] }
+                due_date: { type: string, format: date, nullable: true }
+                owner_id: { type: integer, description: 改负责人仅 admin }
+      responses:
+        "200": { description: 成功 }
+        "400": { description: 标题为空或超长 }
+        "403": { description: 既非本人也非 admin，或非 admin 试图改负责人 }
+        "404": { description: 待办不存在 }
+    delete:
+      tags: [Todos]
+      summary: 删除待办（本人或 admin）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功 }
+        "403": { description: 既非本人也非 admin }
+        "404": { description: 待办不存在 }
+
+  # --------------------------------------------------------------- Analytics
+  /api/analytics/metrics:
+    get:
+      tags: [Analytics]
+      summary: 指标定义字典（12 项，供 AI 解析口径）
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalyticsEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/analytics/overview:
+    get:
+      tags: [Analytics]
+      summary: 全局经营概览（21 项指标 + 近 12 月营收趋势 + 渠道转化）
+      parameters:
+        - { name: start, in: query, schema: { type: string, format: date } }
+        - { name: end, in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/AnalyticsEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          meta:
+                            type: object
+                            properties:
+                              revenue_trend:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    month: { type: string }
+                                    amount: { type: number }
+                                    count: { type: integer }
+                              channel_stats:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    source: { type: string }
+                                    total: { type: integer }
+                                    converted: { type: integer }
+                                    conversion_rate: { type: number }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/analytics/{dataset}/export:
+    get:
+      tags: [Analytics]
+      summary: 批量数据导出（attendance / finance / leads / scores）
+      parameters:
+        - name: dataset
+          in: path
+          required: true
+          schema: { type: string, enum: [attendance, finance, leads, scores] }
+        - { name: format, in: query, schema: { type: string, enum: [json, csv], default: json } }
+        - { name: start, in: query, schema: { type: string, format: date } }
+        - { name: end, in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: |
+            `format=json`（默认）返回 AI 分析信封；`format=csv` 返回带 UTF-8 BOM 的 CSV 附件
+            （`Content-Type: text/csv; charset=utf-8`，`Content-Disposition: attachment`）。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalyticsEnvelope" }
+            text/csv:
+              schema: { type: string }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: 未知数据集（`data.supported` 返回可用数据集）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/ai/sso/ticket:
+    post:
+      tags: [AI 工作台]
+      summary: 签发一次性免登票据（跳转 AI 教学工作台）
+      description: |
+        生成 60 秒有效、一次性使用的免登票据，供浏览器跳转至独立部署的 AI 教学工作台。
+        票据置于跳转 URL 的 hash 片段中，不随请求发送到服务器，不进入访问日志。
+        载荷仅含 `{ id, username, role, tv, type, jti }`，不含姓名、手机号、金额等业务字段。
+
+        请求体可选传 `origin`（前端传 `window.location.origin`）。当 `AI_WORKBENCH_URL`
+        配置为回环地址（localhost/127.0.0.1，同源部署默认）时，返回的 `url` 会是
+        「访问者 origin + AI_WORKBENCH_BASE_PATH」，从而兼容 IP / 域名 / 80 / HTTPS。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                origin:
+                  type: string
+                  description: 前端所在 origin（含协议+主机+端口），用于同源部署时跟随访问者地址
+                  example: http://192.168.1.20:8080
+      responses:
+        "200":
+          description: 签发成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      ticket:
+                        type: string
+                        description: 一次性票据（JWT，HS256，复用 JWT_SECRET）
+                      url:
+                        type: string
+                        description: 工作台跳转地址，票据位于 hash 片段
+                        example: http://192.168.1.20:8080/ai/#/sso?ticket=eyJhbGciOi...
+                      expiresIn: { type: integer, example: 60 }
+        "401":
+          description: 未登录 / Token 失效
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/ai/sso/verify:
+    post:
+      tags: [AI 工作台]
+      summary: 校验票据并换取工作台会话
+      description: |
+        公开端点（票据本身即凭证，不需要 Authorization 头）。
+        票据一次性：校验通过后立即作废，重复使用返回 401。
+        同时比对票据中的 `tv` 与 `users.token_version`，因此登出 / 改密 / 改角色后票据立即失效。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket]
+              properties:
+                ticket:
+                  type: string
+                  description: 由 `/api/ai/sso/ticket` 签发的一次性票据
+      responses:
+        "200":
+          description: 校验通过
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      name: { type: string }
+                      role: { type: string, enum: [admin, teacher] }
+                      loginAt: { type: string, format: date-time }
+                      scope:
+                        type: string
+                        enum: [all, own]
+                        description: admin 为 all，teacher 为 own（工作台据此限制数据范围）
+                      agentToken:
+                        type: string
+                        description: |
+                          工作台凭证（type = ai_agent，有效期 12 小时）。
+
+                          可访问范围（路径白名单，见 `server/src/middleware/auth.js`）：
+                          - `/api/agent/*`、`/api/ai/*` —— 只读网关
+                          - `/api/growth/*` —— 成长采集与查询（★ 读写同权，见下）
+
+                          **为什么放行整个 /api/growth**：教务系统给校区负责人/非一线教学人员，
+                          教学 AI 工作台给一线老师，**老师要用的功能一律收在工作台**，
+                          于是"课后采集"与"看学生成长路径"都落在工作台，二者共用同一数据域。
+
+                          **读写必须同权**：曾一度只放行写（采集端）、挡住读（查询端），
+                          结果是老师能往班里写数据却看不到自己写的数据，成长路径页整页 403。
+                          安全边界不靠"挡住读"，而靠：
+                          ① 端点内部复用 `canManageClass`/`canManageStudent`，**跨班一律 403**；
+                          ② 数据域只含教学口径（出勤/课堂表现/知识点/成绩/课时数量），
+                             不含金额、订单、退费、家长信息；
+                          ③ 管理动作仍挡住 —— 唯一例外是 `PUT /api/growth/thresholds`
+                             （改全局阈值，仅 admin），文件路径白名单以管理动作形式排除。
+
+                          其余 `/api/*` 一律 403（财务、用户、班级/学生增删改……）。
+        "400":
+          description: 缺少票据或类型不正确
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: 票据无效 / 已过期 / 已被使用 / 类型不符 / 登录状态已失效
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/agent/context:
+    get:
+      tags: [AI 只读网关]
+      summary: 教学上下文（身份 / 可见班级 / 数据能力位）
+      description: |
+        AI 教学工作台取数入口。按当前用户数据范围返回可见班级：
+        admin 为全部，teacher 仅 `classes.head_teacher_id` 为自己的班级。
+        `capabilities` 如实反映真实库里已有哪类数据，供工作台决定展示真实值还是标注「待建设」。
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        type: object
+                        properties:
+                          id: { type: integer }
+                          name: { type: string }
+                          role: { type: string, enum: [admin, teacher] }
+                      classes:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            name: { type: string }
+                            grade: { type: string }
+                            student_count: { type: integer }
+                      capabilities:
+                        type: object
+                        description: |
+                          能力开关由后端按**实际库状态**实时下发（不是写死的常量）。
+                          前端据此决定展示哪些模块与采集入口；
+                          **不要把"没有数据"渲染成 0** —— 应引导用户去产生数据。
+                        properties:
+                          students: { type: boolean }
+                          attendance: { type: boolean }
+                          scores: { type: boolean }
+                          hours: { type: boolean }
+                          evaluations: { type: boolean, description: v18 起有 class_evaluations 表，有数据即为 true }
+                          knowledge: { type: boolean, description: v18 起有 knowledge_points 表，有数据即为 true }
+                          timeline: { type: boolean, description: v18 新增：成长时间轴是否已有数据 }
+                          kpAssessments: { type: boolean, description: v18 新增：知识点评定是否已有数据 }
+                          questions: { type: boolean, description: 当前库尚无 questions 表，恒为 false }
+                      data_version: { type: string, example: v18 }
+        "401":
+          description: 未登录 / 凭证失效
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/agent/classes/{id}/overview:
+    get:
+      tags: [AI 只读网关]
+      summary: 班级概览（学员 + 考勤/成绩/课时聚合，不含金额）
+      description: |
+        只读端点：不含任何金额、家长姓名与电话，学员仅保留编号与姓名。
+        `attendance.rate` 与 `avg_rate` / `trend` 在无记录时返回 null（区别于 0）。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+          description: 班级 ID
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      class:
+                        type: object
+                        properties:
+                          id: { type: integer }
+                          name: { type: string }
+                          grade: { type: string }
+                      summary:
+                        type: object
+                        properties:
+                          student_count: { type: integer }
+                          attendance_sessions: { type: integer }
+                          absent_total: { type: integer }
+                          score_avg: { type: number, nullable: true }
+                          excellent_rate: { type: number, nullable: true }
+                          scored_students: { type: integer }
+                      students:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            no: { type: string }
+                            name: { type: string }
+                            gender: { type: string }
+                            status: { type: string }
+                            enroll_date: { type: string }
+                            attendance:
+                              type: object
+                              properties:
+                                total: { type: integer }
+                                normal: { type: integer }
+                                late: { type: integer }
+                                early: { type: integer }
+                                absent: { type: integer }
+                                leave: { type: integer }
+                                rate: { type: number, nullable: true }
+                            exams:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  name: { type: string }
+                                  date: { type: string }
+                                  full: { type: number }
+                                  score: { type: number }
+                                  rate: { type: number }
+                            hours:
+                              type: object
+                              properties:
+                                total: { type: number }
+                                remain: { type: number }
+                            avg_rate: { type: number, nullable: true }
+                            trend: { type: number, nullable: true }
+                      capabilities:
+                        type: object
+                        description: 同 /api/agent/context
+                      data_version: { type: string }
+        "400":
+          description: 班级 ID 非正整数
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: teacher 访问非本班
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404":
+          description: 班级不存在
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/feedback:
+    post:
+      tags: [使用反馈]
+      summary: 提交使用反馈
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FeedbackInput" }
+      responses:
+        "200":
+          description: 提交成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: integer, example: 12 }
+        "400":
+          description: 描述过短（< 5 字）或过长（> 2000 字）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: 未登录
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    get:
+      tags: [使用反馈]
+      summary: 全部反馈（仅 admin，待处理优先）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, default: 20, maximum: 50 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [待处理, 处理中, 已处理, 已忽略] }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      list:
+                        type: array
+                        items: { $ref: "#/components/schemas/FeedbackItem" }
+                      total: { type: integer }
+                      page: { type: integer }
+                      pageSize: { type: integer }
+        "403":
+          description: 非 admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/feedback/mine:
+    get:
+      tags: [使用反馈]
+      summary: 我的反馈（含管理员回复）
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      list:
+                        type: array
+                        items: { $ref: "#/components/schemas/FeedbackItem" }
+                      total: { type: integer }
+
+  /api/feedback/summary:
+    get:
+      tags: [使用反馈]
+      summary: 反馈统计（仅 admin）
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      待处理: { type: integer }
+                      处理中: { type: integer }
+                      已处理: { type: integer }
+                      已忽略: { type: integer }
+        "403":
+          description: 非 admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/feedback/options:
+    get:
+      tags: [使用反馈]
+      summary: 可选值字典（分类 / 状态）
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      categories:
+                        type: array
+                        items: { type: string }
+                      statuses:
+                        type: array
+                        items: { type: string }
+
+  /api/feedback/{id}:
+    put:
+      tags: [使用反馈]
+      summary: 处理反馈（仅 admin：改状态 / 写回复）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [待处理, 处理中, 已处理, 已忽略]
+                admin_reply:
+                  type: string
+                  description: 管理员回复，最长 2000 字
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { nullable: true }
+        "400":
+          description: 状态取值不合法
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: 非 admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404":
+          description: 反馈不存在
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  # ────────────────────────────────────────────────────────────────
+  # 成长路径（v18）
+  #
+  # ★ 人群分离：教务系统（:8080）给校区负责人/非一线教学人员；
+  #   教学 AI 工作台（:8082）给一线老师。**老师要用的功能一律收在工作台**，
+  #   因此采集端（eval-form / class-eval / kp-assessment）与查询端的入口都在工作台。
+  #
+  # ★ 工作台凭证（type=ai_agent）对 /api/growth 整体放行 ——
+  #   读写必须同权：曾只放行写而挡住读，导致老师能写却看不到自己写的数据，
+  #   成长路径页整页 403。安全边界靠 canManageClass（跨班 403），不靠"挡住读"。
+  #   唯一例外：PUT /thresholds 属管理动作，仍仅 admin。
+  # ────────────────────────────────────────────────────────────────
+  /api/growth/eval-form:
+    get:
+      tags: [Growth]
+      summary: 课后采集预填数据（名单 + 可评知识点 + 今日已评）
+      description: |
+        老师打开「授课流程」页时的预填数据 —— 不让老师自己找该评什么。
+
+        **`knowledge_points[]` 只含叶子知识点（可评定对象）**，单元节点被后端过滤。
+        `knowledge_points` 是两级结构：单元（`seq=0` / `parent_id IS NULL`）与其下的
+        知识点（`seq>0` / `parent_id=单元 id`）。单元是分组标题，老师无法打勾；
+        不过滤会有两个后果：① 出现无法操作的行；② 单元节点占掉 LIMIT 名额，
+        把真正可评的知识点挤出去。单元名以 `unit_name` 带下来做分组标题。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: class_id
+          in: query
+          required: true
+          schema: { type: integer }
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, format: date, example: "2026-09-20" }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/GrowthEvalForm" }
+        "400":
+          description: 参数不合法
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: 无权操作该班
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/growth/class-eval:
+    post:
+      tags: [Growth]
+      summary: 提交课堂评价（老师课后 10 秒动作）
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClassEvalInput" }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      saved: { type: integer, description: 写入/覆盖的评价条数 }
+                      appended: { type: integer, description: 向时间轴追加的事件数 }
+                      eval_date: { type: string }
+                      class_id: { type: integer }
+        "403":
+          description: 无权操作该班
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/growth/kp-assessment:
+    post:
+      tags: [Growth]
+      summary: 批量知识点评定（老师课后 1 分钟动作）
+      description: |
+        每条评定都会向时间轴追加一条 `kp_assessment` 事件（含 `from` 上次等级与 `changed`）。
+        **即使等级未变也写** —— 这条记录本身就是"老师每节课都看了学生状态"的过程证据，
+        跳过未变化的评定会让成长路径退化成"起点→终点"两点，丢失中间过程。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KpAssessmentInput" }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      students: { type: integer }
+                      records: { type: integer }
+        "403":
+          description: 无权操作该班
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/growth/students/{id}/timeline:
+    get:
+      tags: [Growth]
+      summary: 单学员成长时间轴
+      description: 既有三表（考勤/成绩/课时）UNION + 新事件，已按 `(type, date)` 去重。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/StudentTimeline" }
+        "403":
+          description: 非本班学员
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/growth/students/{id}/growth:
+    get:
+      tags: [Growth]
+      summary: 单学员成长画像
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/StudentGrowth" }
+        "403":
+          description: 非本班学员
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/growth/classes/{id}/growth:
+    get:
+      tags: [Growth]
+      summary: 整班成长概览
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/ClassGrowth" }
+        "403":
+          description: 无权查看该班
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/growth/knowledge-points:
+    get:
+      tags: [Growth]
+      summary: 知识点列表
+      description: |
+        返回**含单元节点的完整层级**（带 `parent_id`），供展示层做树/分组用。
+        与 `eval-form` 的区别：`eval-form` 返回可评集合（仅叶子），本端点返回完整层级 ——
+        两者定位不同，不应合并。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: course_id
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/KnowledgePoint" }
+
+  /api/growth/thresholds:
+    get:
+      tags: [Growth]
+      summary: 成长阈值（8 条）
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/GrowthThresholds" }
+    put:
+      tags: [Growth]
+      summary: 修改成长阈值（仅 admin）
+      description: |
+        ★ 管理动作 —— 改的是全局阈值，属配置而非教学行为。
+        因此这是 `/api/growth` 内**唯一**不对工作台凭证（type=ai_agent）放行的路径，
+        工作台调用会得到 403，应改用教务系统管理员账号操作。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: { type: number }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/GrowthThresholds" }
+        "403":
+          description: 非 admin，或使用了工作台凭证
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: 参数错误或业务规则拒绝
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthorized:
+      description: 未登录 / Token 失效 / 凭证已被吊销（登出、改密、改角色后 token_version 不再匹配）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    TooManyRequests:
+      description: 登录失败次数过多（默认 15 分钟内 10 次失败；`LOGIN_RATE_LIMIT_MAX` 可调）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Forbidden:
+      description: 无权限（教师越权 / 非 admin）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  schemas:
+    SuccessEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data: { type: object }
+
+    ErrorEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string, example: 该学员已有报班记录，不能删除 }
+
+    AnalyticsEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: object
+          properties:
+            metrics: { type: object, additionalProperties: true }
+            records: { type: array, items: { type: object } }
+            meta:
+              type: object
+              properties:
+                generated_at: { type: string, format: date-time }
+                period:
+                  type: object
+                  properties:
+                    start: { type: string, nullable: true }
+                    end: { type: string, nullable: true }
+                total_count: { type: integer }
+                data_version: { type: string, example: v14 }
+                dataset: { type: string }
+                dataset_label: { type: string }
+        metric_definitions:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              name: { type: string }
+              formula: { type: string }
+              note: { type: string }
+              source_table: { type: string }
+              unit: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, example: admin }
+        password: { type: string, example: admin123456 }
+        type: { type: string, enum: [password, phone, wechat], default: password }
+
+    LoginResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: object
+          properties:
+            accessToken: { type: string }
+            refreshToken: { type: string }
+            expires: { type: string, example: "2026/09/18 10:00:00" }
+            avatar: { type: string }
+            username: { type: string }
+            nickname: { type: string }
+            roles: { type: array, items: { type: string } }
+            permissions: { type: array, items: { type: string } }
+
+    Student:
+      type: object
+      properties:
+        id: { type: integer }
+        student_no: { type: string }
+        name: { type: string }
+        gender: { type: string, enum: [男, 女] }
+        phone: { type: string }
+        email: { type: string }
+        class_id: { type: integer }
+        class_name: { type: string }
+        status: { type: string, enum: [在读, 休学, 退学] }
+        parent_name: { type: string }
+        parent_phone: { type: string }
+        source_channel: { type: string }
+        enroll_date: { type: string, format: date }
+        created_at: { type: string }
+
+    StudentInput:
+      type: object
+      required: [student_no, name, class_id]
+      properties:
+        student_no: { type: string, description: 学号（全局唯一） }
+        name: { type: string }
+        class_id: { type: integer }
+        gender: { type: string, enum: [男, 女], default: 男 }
+        phone: { type: string }
+        email: { type: string }
+        status: { type: string, enum: [在读, 休学, 退学], default: 在读 }
+        parent_name: { type: string }
+        parent_phone: { type: string }
+        source_channel: { type: string }
+        enroll_date: { type: string, format: date }
+
+    AttendanceRosterItem:
+      type: object
+      properties:
+        student_id: { type: integer }
+        student_no: { type: string }
+        name: { type: string }
+        gender: { type: string }
+        status:
+          type: string
+          nullable: true
+          description: 未登记时为 null
+          enum: [正常, 迟到, 早退, 缺勤, 请假, null]
+        remark: { type: string, nullable: true }
+        attendance_id: { type: integer, nullable: true }
+
+    ExamInput:
+      type: object
+      required: [name, class_id]
+      properties:
+        name: { type: string, description: 考试名称 }
+        course_id: { type: integer }
+        class_id: { type: integer }
+        exam_date: { type: string, format: date }
+        type: { type: string, enum: [单元测, 期中, 期末], default: 单元测 }
+        full_score: { type: number, default: 100 }
+        remark: { type: string }
+
+    LeadInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        intent_course_id: { type: integer }
+        source: { type: string, enum: [转介绍, 线上, 地推, 广告], default: 转介绍 }
+        remark: { type: string }
+
+    LeadConvertInput:
+      type: object
+      required: [class_id]
+      properties:
+        class_id: { type: integer, description: 转入班级 }
+        course_id: { type: integer, description: 报班课程 }
+        student_no: { type: string, description: 缺省由后端生成 }
+        gender: { type: string, enum: [男, 女] }
+        parent_name: { type: string, description: 缺省取线索姓名 }
+        parent_phone: { type: string, description: 缺省取线索电话 }
+        amount: { type: number, default: 0 }
+        total_hours: { type: number, default: 0 }
+
+    FeedbackInput:
+      type: object
+      required: [content]
+      properties:
+        category:
+          type: string
+          enum: [功能异常, 操作不便, 数据不准, 性能问题, 功能建议, 其他]
+          default: 其他
+          description: 非法值由后端回落为「其他」
+        content:
+          type: string
+          minLength: 5
+          maxLength: 2000
+          description: 问题描述（5–2000 字）
+        page_path:
+          type: string
+          maxLength: 200
+          description: 出现问题时的页面路径（选填）
+
+    FeedbackItem:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        username: { type: string, description: 提交人账号（仅 admin 全量列表返回） }
+        user_role: { type: string, enum: [admin, teacher] }
+        category: { type: string }
+        content: { type: string }
+        page_path: { type: string }
+        status: { type: string, enum: [待处理, 处理中, 已处理, 已忽略] }
+        admin_reply: { type: string }
+        handled_by: { type: integer, nullable: true }
+        handled_at: { type: string, nullable: true }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    # ───────────── 成长路径（v18）─────────────
+    KnowledgePoint:
+      type: object
+      description: |
+        知识点（两级结构）。`parent_id IS NULL` 表示这是**单元节点**（分组标题，不可评定）；
+        非空表示**叶子知识点**（可评定对象）。
+      properties:
+        id: { type: integer }
+        parent_id: { type: integer, nullable: true }
+        code: { type: string, example: "U1-2" }
+        name: { type: string, example: "SSS 判定" }
+        course_id: { type: integer, nullable: true }
+        grade: { type: string, nullable: true }
+        unit_no: { type: integer, example: 1 }
+        seq: { type: integer, description: 单元节点为 0，叶子为 1..n }
+        difficulty: { type: integer, minimum: 1, maximum: 5 }
+
+    GrowthEvalForm:
+      type: object
+      description: 课后采集预填数据
+      properties:
+        class_id: { type: integer }
+        date: { type: string, format: date }
+        students:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              no: { type: string, description: 学号 }
+              name: { type: string }
+              evaluated: { type: boolean, description: 今日是否已评 }
+              eval:
+                nullable: true
+                type: object
+                properties:
+                  focus: { type: integer, minimum: 1, maximum: 5 }
+                  participation: { type: integer, minimum: 1, maximum: 5 }
+                  mastery: { type: integer, minimum: 1, maximum: 5 }
+                  note: { type: string }
+        knowledge_points:
+          type: array
+          description: ★ 只含叶子知识点（可评定对象），单元节点已过滤；最多 40 条
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              code: { type: string }
+              name: { type: string }
+              unit_no: { type: integer }
+              unit_name: { type: string, nullable: true, description: 所属单元名，供分组标题用 }
+              seq: { type: integer }
+              difficulty: { type: integer }
+        already_evaluated: { type: integer }
+
+    ClassEvalInput:
+      type: object
+      required: [class_id, eval_date, items]
+      properties:
+        class_id: { type: integer }
+        course_id: { type: integer, nullable: true }
+        eval_date: { type: string, format: date }
+        session_no: { type: integer, nullable: true }
+        items:
+          type: array
+          items:
+            type: object
+            required: [student_id]
+            properties:
+              student_id: { type: integer }
+              focus: { type: integer, minimum: 1, maximum: 5, description: 越界自动夹取，缺省 3 }
+              participation: { type: integer, minimum: 1, maximum: 5 }
+              mastery: { type: integer, minimum: 1, maximum: 5 }
+              note: { type: string }
+
+    KpAssessmentInput:
+      type: object
+      required: [class_id, assessed_at, kps]
+      properties:
+        class_id: { type: integer }
+        course_id: { type: integer, nullable: true }
+        assessed_at: { type: string, format: date }
+        session_no: { type: integer, nullable: true }
+        kps:
+          type: array
+          items:
+            type: object
+            required: [kp_id, level]
+            properties:
+              kp_id: { type: integer }
+              level:
+                type: string
+                enum: [未掌握, 部分掌握, 已掌握]
+        student_ids:
+          type: array
+          description: 缺省 = 全班在读学员
+          items: { type: integer }
+        overrides:
+          type: array
+          description: 个别学员单独调整
+          items:
+            type: object
+            properties:
+              student_id: { type: integer }
+              kp_id: { type: integer }
+              level:
+                type: string
+                enum: [未掌握, 部分掌握, 已掌握]
+
+    StudentTimeline:
+      type: object
+      properties:
+        studentId: { type: integer }
+        from: { type: string }
+        to: { type: string }
+        count: { type: integer }
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { type: string, example: "kp_assessment" }
+              label: { type: string }
+              date: { type: string }
+              summary: { type: string }
+              payload: { type: object, additionalProperties: true }
+
+    StudentGrowth:
+      type: object
+      description: 单学员成长画像
+      properties:
+        studentId: { type: integer }
+        attendance: { type: object, additionalProperties: true }
+        evalTrend: { type: array, items: { type: object, additionalProperties: true } }
+        examSeries: { type: array, items: { type: object, additionalProperties: true } }
+        kpProgress: { type: array, items: { type: object, additionalProperties: true } }
+        milestones: { type: array, items: { type: object, additionalProperties: true } }
+        range:
+          type: object
+          properties:
+            from: { type: string, description: 无数据时为哨兵值 0000-01-01，前端需自行回落 }
+            to: { type: string, description: 无数据时为哨兵值 9999-12-31，前端需自行回落 }
+
+    ClassGrowth:
+      type: object
+      description: 整班成长概览
+      properties:
+        classId: { type: integer }
+        studentCount: { type: integer }
+        students:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              student_no: { type: string }
+              name: { type: string }
+        evalSeries:
+          type: array
+          items: { type: object, additionalProperties: true }
+        kpMastery:
+          type: array
+          items: { type: object, additionalProperties: true }
+        thresholds:
+          type: object
+          additionalProperties: { type: number }
+
+    GrowthThresholds:
+      type: object
+      description: 成长阈值（8 条默认值，admin 可调，不重建镜像）
+      additionalProperties: { type: number }
+
+    SiteInfo:
+      type: object
+      description: |
+        站点信息（机构名称 / Logo / 页脚）。存于 settings 表的 site.* 键。
+        所有字段均可选：
+        - `GET /api/site-info`（公开）**只返回非空的**，未配置的键直接不出现在响应里；
+        - `GET /api/site-info/admin` 与 `PUT` 的响应返回**全部 12 个键**（未配置为空串）。
+        **备案类字段留空表示不展示**，前端据此决定是否渲染对应行。
+      properties:
+        site.name: { type: string, description: 系统简称（侧边栏 / 登录页） }
+        site.title: { type: string, description: 浏览器标签页完整标题 }
+        site.orgName: { type: string, description: 版权主体（机构全称） }
+        site.sinceYear: { type: string, description: 起始年份，4 位数字 }
+        site.slogan: { type: string, description: 登录页副标题 }
+        site.contact: { type: string, description: 联系电话 }
+        site.address: { type: string, description: 地址 }
+        site.icp: { type: string, description: ICP 备案号（当前场景留空） }
+        site.policeNo: { type: string, description: 公安备案号（当前场景留空） }
+        site.copyrightExtra: { type: string, description: 页脚补充说明 }
+        site.logo: { type: string, description: Logo 路径，如 /assets/site/xxx.png }
+        site.favicon: { type: string, description: 标签页图标路径 }
+

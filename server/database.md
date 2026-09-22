@@ -175,7 +175,7 @@
 - `POST /api/site-info/upload?kind=logo|favicon`（admin）：`express.raw()` 直收二进制（**不引 multer**），2MB 上限，按**文件头魔数**判型（PNG/JPEG/GIF/WEBP/ICO/SVG），落盘 `server/data/assets/site/`，文件名 `{kind}-{yyyymmddHHMMSS}-{rand8}{ext}`，写入同 kind 新文件后**自动清理旧文件**，并把相对路径回写 `site.logo` / `site.favicon`。
 - 静态访问：`GET /assets/**` → `server/data/assets/`（禁 dotfile、禁目录列表）。
 
-> 详见 `docs/api.md` 与 `docs/decisions/ADR-008-数据资产化与AI产出层架构.md`（决策 ②「数据库只存索引，文件本体存磁盘」）。
+> 详见 `docs/04-API/API.md` 与 `docs/07-架构与决策/ADR/ADR-008-数据资产化与AI产出层架构.md`（决策 ②「数据库只存索引，文件本体存磁盘」）。
 
 ### notices（通知公告，v6 新增）
 
@@ -505,7 +505,7 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ## 待办（v19 新增 · `todos`）
 
-> 设计决议与背景见 `docs/ROADMAP.md`「五之二、通知铃铛 + 待办功能」。
+> 设计决议与背景见 `docs/07-架构与决策/ROADMAP.md`「五之二、通知铃铛 + 待办功能」。
 
 ### 为什么是「一张表 + 按角色过滤」而不是两套表
 

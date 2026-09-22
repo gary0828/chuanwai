@@ -32,7 +32,7 @@ services:
       # ★ 配成回环地址 = 跳转地址自动跟随「访问者当前使用的地址」，
       #   因此老师用 IP、域名、80 端口、HTTPS 访问都不会跳错。
       #   生产若要「统一入口（一个端口同时提供教务+工作台+/api）」，
-      #   请改用 docker-compose.unified.yml（推荐，见 docs/校区部署与升级指南.md §九）
+      #   请改用 docker-compose.unified.yml（推荐，见 docs/06-部署/校区部署与升级.md §九）
       - AI_WORKBENCH_URL=${AI_WORKBENCH_URL:-http://localhost:8082}
       # 工作台子路径前缀（统一入口部署为 /ai；独立端口部署留空）
       - AI_WORKBENCH_BASE_PATH=${AI_WORKBENCH_BASE_PATH:-}

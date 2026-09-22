@@ -39,3 +39,12 @@ _verify_test
 .workbuddy
 .git
 
+# 开发期记忆系统（memory/）与 Agent 入口约定文件 —— 只服务开发环节，不属于运行时产物。
+# 两个 Dockerfile 都是白名单式 COPY（前端只取 dist，后端只取 server/src），
+# 本就带不进镜像；这里再加一道保险，同时减小构建上下文体积。
+memory
+AGENTS.md
+CLAUDE.md
+.cursorrules
+
+
