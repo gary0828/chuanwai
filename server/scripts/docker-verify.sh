@@ -4,6 +4,13 @@
 # 说明：不使用 /tmp（部分 Git Bash 环境不可写），全部用命令替换取正文+状态码。
 set -uo pipefail
 
+# ★ 自愈 PATH（2026-09-23）：非登录 shell（如 `bash server/scripts/docker-verify.sh`）
+#   不会加载 /etc/profile，Git Bash 下 /usr/bin 可能不在 PATH，导致
+#   grep/sed/wc/cut/tr/tail 全部 "command not found"，进而让所有断言**误报 FAIL**
+#   （实测：接口明明返回 200 且 JSON 正确，却被判失败）。
+#   显式补上即可，Linux 上这两个目录本就存在，无副作用。
+PATH="/usr/bin:/bin:$PATH"
+
 # 对外端口：取 .env 的 WEB_PORT，缺省 18080（无域名场景）
 WEB_PORT="$(grep -E '^WEB_PORT=' .env 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')"
 WEB_PORT="${WEB_PORT:-18080}"

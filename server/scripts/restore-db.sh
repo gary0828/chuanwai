@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+# ★ 自愈 PATH（2026-09-23）：非登录 shell 下 Git Bash 可能缺 /usr/bin，
+#   导致 sed/date/cut 等 "command not found"。补上后任何调用方式都可用。
+PATH="/usr/bin:/bin:$PATH"
+
 CONTAINER="${2:-attendance-server}"
 FORCE_YES="${3:-}"
 DB_PATH="server/data/attendance.db"
