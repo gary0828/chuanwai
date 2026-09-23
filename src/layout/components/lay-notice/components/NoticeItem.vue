@@ -51,12 +51,10 @@ function hoverDescription(event, description) {
   <div
     class="notice-container border-0 border-b-[1px] border-solid border-[#f0f0f0] dark:border-[#303030]"
   >
-    <el-avatar
-      v-if="noticeItem.avatar"
-      :size="30"
-      :src="noticeItem.avatar"
-      class="notice-container-avatar"
-    />
+    <!-- 2026-09-23 内容清点 C7：此处原有 `el-avatar`（`v-if="noticeItem.avatar"`），
+         但数据组装方（lay-notice/index.vue 的 toNoticeItem / toTodoItem）**从不赋值 avatar**，
+         属 09-21 删除演示数据后留下的死字段。已移除渲染与类型定义，
+         防止将来有人把第三方图片外链填回来（那正是 C1 事故的成因）。 -->
     <div class="notice-container-text">
       <div class="notice-text-title text-[#000000d9] dark:text-white">
         <el-tooltip
@@ -120,11 +118,6 @@ function hoverDescription(event, description) {
   padding: 12px 0;
 
   // border-bottom: 1px solid #f0f0f0;
-
-  .notice-container-avatar {
-    margin-right: 16px;
-    background: #fff;
-  }
 
   .notice-container-text {
     display: flex;

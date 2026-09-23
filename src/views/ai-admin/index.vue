@@ -30,7 +30,13 @@ const usage = ref<AiUsageData | null>(null);
 const form = reactive<Record<string, string>>({});
 
 /** 字段分组（都是后端已定义的键，缺了就不显示，避免前端臆造配置） */
-const GROUPS: Array<{ title: string; tip: string; keys: string[] }> = [
+const GROUPS: Array<{
+  title: string;
+  tip: string;
+  keys: string[];
+  /** 功能尚未接入的分组：仅当**已有非空配置值**时才显示，不展示"填了也不生效"的占位项 */
+  hideWhenUnset?: boolean;
+}> = [
   {
     title: "大模型（DeepSeek / OpenAI 兼容）",
     tip: "留空即回退到服务器环境变量；改完点保存立即生效，不用重启。",
@@ -44,9 +50,13 @@ const GROUPS: Array<{ title: string; tip: string; keys: string[] }> = [
     ]
   },
   {
-    title: "Dify 工作流（暂未启用，先占位）",
-    tip: "接 Dify 后，每个场景可对应一条工作流；各场景 Key 用 JSON 填写。",
-    keys: ["difyEndpoint", "difyApiKey", "difyWorkflows"]
+    // 2026-09-23 内容清点 C9：原先标题写着「暂未启用，先占位」却把三个配置项当普通项展示，
+    // 管理者会以为填了就生效。改为：默认隐藏，仅当确实已配置过（比如早期填过）才显示出来供维护。
+    // ★ Dify 正式接入时（ROADMAP 6.5），去掉 hideWhenUnset 并把 tip 改成真实语义即可。
+    title: "Dify 工作流（规划中 · 当前版本不生效）",
+    tip: "Dify 尚未接入本系统，此处配置当前不会生效；仅在需要维护已存在的历史配置时才显示。",
+    keys: ["difyEndpoint", "difyApiKey", "difyWorkflows"],
+    hideWhenUnset: true
   },
   {
     title: "工作台接入",
@@ -61,7 +71,16 @@ const visibleGroups = computed(() =>
     fields: g.keys
       .filter(k => config.value?.fields?.[k])
       .map(k => ({ key: k, ...(config.value?.fields?.[k] as never) }))
-  })).filter(g => g.fields.length > 0)
+  }))
+    .filter(g => g.fields.length > 0)
+    // 未接入的分组：已有非空值才显示（敏感字段是掩码，非空即代表已配置过）
+    .filter(
+      g =>
+        !g.hideWhenUnset ||
+        g.fields.some(
+          f => String((f as { value?: unknown }).value ?? "").trim() !== ""
+        )
+    )
 );
 
 const sourceTag = (src: string) =>
@@ -151,8 +170,9 @@ onMounted(reloadAll);
     <div class="notice">
       <el-icon class="notice__icon"><ShieldIcon /></el-icon>
       <p>
-        本页不出现在任何菜单里，只能凭地址 <code>/ai-admin</code> 进入，教师账号访问会被拒绝；
-        已保存的 Key 只在服务器数据库中保存，页面仅回显掩码，未修改时原样保留。
+        本页不出现在任何菜单里，只能凭地址
+        <code>/ai-admin</code> 进入，教师账号访问会被拒绝； 已保存的 Key
+        只在服务器数据库中保存，页面仅回显掩码，未修改时原样保留。
       </p>
     </div>
 
@@ -183,7 +203,9 @@ onMounted(reloadAll);
           </p>
         </div>
         <p v-else class="stat-body page-hint">
-          {{ balanceError || "暂未查询到，请确认已配置 Key 且服务器可访问外网" }}
+          {{
+            balanceError || "暂未查询到，请确认已配置 Key 且服务器可访问外网"
+          }}
         </p>
       </div>
 
@@ -202,7 +224,9 @@ onMounted(reloadAll);
           </div>
           <div class="kv-row">
             <span class="kv-row__k">输入 / 输出 token</span>
-            <span class="kv-row__v num">{{ usage.tin }} / {{ usage.tout }}</span>
+            <span class="kv-row__v num"
+              >{{ usage.tin }} / {{ usage.tout }}</span
+            >
           </div>
           <div class="kv-row">
             <span class="kv-row__k">估算成本</span>

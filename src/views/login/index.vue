@@ -231,30 +231,17 @@ useEventListener(document, "keydown", ({ code }) => {
           </Motion>
 
           <!--
-            预留多端登录入口（UI 占位，本期不实现）：
-            1. 手机号登录：后端已预留 POST /api/auth/sms-code（发验证码），接入时调用
-               POST /api/auth/login，body 传 { type: 'phone', phone, code }；
-            2. 微信扫码登录：后端已预留 POST /api/auth/wechat（code 换 token），
-               与微信小程序共用 user_oauth 表绑定 openid/unionid。
-            接入时移除 disabled 占位并调用对应接口即可。
+            多端登录入口：**已按内容清点 C8 隐藏（2026-09-23）**。
+            原来这里展示「手机号登录 / 微信扫码登录」两个不可点占位（tooltip「开发中」），
+            面向所有员工可见却点不动，只会让人以为功能坏了。
+            产品边界（`docs/03-开发指南/产品边界与AI.md`）本就禁止出网触达与小程序，
+            故直接不展示；后端预留接口保持原样，将来要接入时：
+            1. 手机号登录：`POST /api/auth/sms-code` 发验证码 → `POST /api/auth/login`
+               body 传 `{ type: 'phone', phone, code }`；
+            2. 微信扫码：`POST /api/auth/wechat`（code 换 token），与小程序共用 `user_oauth` 表。
+            接入时把本块恢复并绑上真实 handler 即可。样式类 `.login-form__alt` 保留在
+            `src/style/login.css` 中，未删除（避免动共享样式表）。
           -->
-          <Motion :delay="300">
-            <div class="login-form__alt">
-              <el-tooltip
-                content="手机号登录功能开发中，敬请期待"
-                placement="bottom"
-              >
-                <span>手机号登录</span>
-              </el-tooltip>
-              <el-divider direction="vertical" />
-              <el-tooltip
-                content="微信扫码登录功能开发中，敬请期待"
-                placement="bottom"
-              >
-                <span>微信扫码登录</span>
-              </el-tooltip>
-            </div>
-          </Motion>
         </el-form>
       </main>
 

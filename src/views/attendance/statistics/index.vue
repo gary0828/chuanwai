@@ -593,7 +593,7 @@ onMounted(() => {
                 </el-table-column>
                 <template #empty>
                   <el-empty
-                    description="近 {{ warnings.range.days }} 天暂无低出勤率学生"
+                    :description="`近 ${warnings.range.days} 天暂无低出勤率学生`"
                     :image-size="60"
                   />
                 </template>
@@ -642,7 +642,7 @@ onMounted(() => {
                 </el-table-column>
                 <template #empty>
                   <el-empty
-                    description="近 {{ warnings.range.days }} 天暂无连续缺勤学生"
+                    :description="`近 ${warnings.range.days} 天暂无连续缺勤学生`"
                     :image-size="60"
                   />
                 </template>
