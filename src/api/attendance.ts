@@ -79,12 +79,21 @@ export const deleteCourse = (id: number) => {
 
 /** ---------- 考勤 ---------- */
 
-/** 某课程某日全班考勤名单 */
+/**
+ * 某课程某日全班考勤名单。
+ * @param params { date, class_id, course_id } 旧行为（按日期+班级+课程）
+ *   传 session_id 时改按课次取名单（date/course_id/班级取自课次），含停课校验与代课人可见
+ */
 export const getAttendanceList = (params?: object) => {
   return http.request("get", "/api/attendance", { params });
 };
 
-/** 批量保存考勤 */
+/**
+ * 批量保存考勤。
+ * @param data { course_id, date, records[] } 旧行为（不传 session_id 时保持原样）
+ *   body 增可选 session_id：有则按课次 upsert + 停课阻断 + 代课人可录；
+ *   course_id/date 由后端取自课次，前端仍可传以便复用同一表格提交逻辑
+ */
 export const saveAttendanceBatch = (data: object) => {
   return http.request("post", "/api/attendance/batch", { data });
 };

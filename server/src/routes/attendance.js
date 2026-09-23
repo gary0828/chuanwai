@@ -3,22 +3,49 @@
 const express = require("express");
 const db = require("../db");
 const { auth } = require("../middleware/auth");
-const { canManageClass, canManageStudent } = require("../utils/scope");
+const {
+  classScopeClause,
+  canManageClass,
+  canManageStudent,
+  canAccessSession,
+  teacherClassPredicate
+} = require("../utils/scope");
+const { getDeductStatuses } = require("../utils/attendance-rules");
 const { parseDate } = require("../utils/validate");
 
 const router = express.Router();
 
 const STATUSES = ["正常", "迟到", "早退", "缺勤", "请假"];
 
-/** 教师数据过滤（classes 别名 c） */
-function classScopeClause(req) {
-  if (req.user.role !== "teacher") return { clause: "", params: [] };
-  return { clause: " AND c.head_teacher_id = ?", params: [req.user.id] };
-}
-
-/** 某课程某日全班考勤名单（教师仅限本班） */
+/** 某课程某日 / 某课次 的全班考勤名单（教师仅限本班；传 session_id 时含停课校验 + 代课人可看）
+ *  - 不传 session_id：旧行为（date + class_id + course_id 必填）
+ *  - 传 session_id：按课次取名单，date/course_id 取自课次，班级为课次所属班级 */
 router.get("/", auth, (req, res) => {
-  const { date, class_id, course_id } = req.query;
+  const { date, class_id, course_id, session_id } = req.query;
+
+  const sessionId = session_id != null && session_id !== "" ? Number(session_id) : null;
+  if (sessionId != null) {
+    const session = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(sessionId);
+    if (!session) {
+      return res.status(404).json({ success: false, message: "课次不存在" });
+    }
+    if (!canAccessSession(req, sessionId)) {
+      return res.status(403).json({ success: false, message: "无权查看该课次考勤" });
+    }
+    const list = db
+      .prepare(
+        `SELECT s.id AS student_id, s.student_no, s.name, s.gender,
+                a.status, a.remark, a.id AS attendance_id
+         FROM students s
+         LEFT JOIN attendances a
+           ON a.student_id = s.id AND a.session_id = ?
+         WHERE s.class_id = ? AND s.status = '在读'
+         ORDER BY s.student_no`
+      )
+      .all(sessionId, Number(session.class_id));
+    return res.json({ success: true, data: list });
+  }
+
   if (!date || !class_id || !course_id) {
     return res
       .status(400)
@@ -47,40 +74,100 @@ router.get("/", auth, (req, res) => {
  *  课时联动：状态为 正常/迟到/早退 时扣减该学员匹配课时包的剩余课时；缺勤/请假不扣；
  *  修改既有考勤时按新旧状态差异自动回补/扣减 */
 router.post("/batch", auth, (req, res) => {
-  let { date, course_id, records } = req.body || {};
-  if (!date || !course_id || !Array.isArray(records) || records.length === 0) {
+  const body = req.body || {};
+  let { date, course_id } = body;
+  const { records } = body;
+  const sessionIdIn =
+    body.session_id != null && body.session_id !== "" ? Number(body.session_id) : null;
+
+  if (!Array.isArray(records) || records.length === 0) {
     return res
       .status(400)
       .json({ success: false, message: "请先选择日期、课程并填写考勤记录" });
   }
-  // 日期必须是真实存在的 YYYY-MM-DD（2026-09-12 全面测试发现：此前任意字符串都会被接受，
-  // 且照常扣减课时，例如 date="2026-99-99" / "xxxx-xx-xx" 均返回 200 并扣 1 课时）
-  const dateRes = parseDate(date, { field: "考勤日期" });
-  if (!dateRes.ok) {
-    return res.status(400).json({ success: false, message: dateRes.message });
-  }
-  date = dateRes.value;
-  for (const r of records) {
-    if (!STATUSES.includes(r.status)) {
+
+  const getStudentClass = db.prepare("SELECT class_id FROM students WHERE id = ?");
+
+  // 课次分支：按课次 upsert（含停课阻断 + 代课人可录，Q5/Q9）
+  let session = null;
+  if (sessionIdIn != null) {
+    session = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(sessionIdIn);
+    if (!session) {
+      return res.status(404).json({ success: false, message: "课次不存在" });
+    }
+    if (!canAccessSession(req, sessionIdIn)) {
+      return res.status(403).json({ success: false, message: "无权操作该课次考勤" });
+    }
+    if (session.status === "已停课") {
       return res
         .status(400)
-        .json({ success: false, message: `考勤状态「${r.status}」不合法` });
+        .json({ success: false, message: "该课次已停课，不能点名（请先恢复）" });
     }
-    if (!canManageStudent(req, r.student_id)) {
+    for (const r of records) {
+      if (!STATUSES.includes(r.status)) {
+        return res
+          .status(400)
+          .json({ success: false, message: `考勤状态「${r.status}」不合法` });
+      }
+      const st = getStudentClass.get(Number(r.student_id));
+      if (!st || Number(st.class_id) !== Number(session.class_id)) {
+        return res
+          .status(403)
+          .json({ success: false, message: "包含不属于该课次班级的学生记录" });
+      }
+    }
+  } else {
+    if (!date || !course_id) {
       return res
-        .status(403)
-        .json({ success: false, message: "包含无权操作的学生记录" });
+        .status(400)
+        .json({ success: false, message: "请先选择日期、课程并填写考勤记录" });
+    }
+    // 日期必须是真实存在的 YYYY-MM-DD（2026-09-12 全面测试发现：此前任意字符串都会被接受，
+    // 且照常扣减课时，例如 date="2026-99-99" / "xxxx-xx-xx" 均返回 200 并扣 1 课时）
+    const dateRes = parseDate(date, { field: "考勤日期" });
+    if (!dateRes.ok) {
+      return res.status(400).json({ success: false, message: dateRes.message });
+    }
+    date = dateRes.value;
+    for (const r of records) {
+      if (!STATUSES.includes(r.status)) {
+        return res
+          .status(400)
+          .json({ success: false, message: `考勤状态「${r.status}」不合法` });
+      }
+      if (!canManageStudent(req, r.student_id)) {
+        return res
+          .status(403)
+          .json({ success: false, message: "包含无权操作的学生记录" });
+      }
     }
   }
 
+  // 有效字段：课次分支取自课次，避免与课次不一致造成脏数据
+  const effCourseId = session ? Number(session.course_id) : Number(course_id);
+  const effDate = session ? session.session_date : date;
+  const effSessionId = session ? Number(session.id) : null;
+  const effClassId = session ? Number(session.class_id) : null;
+
+  // legacy 分支：唯一键现为部分索引（WHERE session_id IS NULL），冲突目标须显式带 WHERE
   const insert = db.prepare(
     `INSERT INTO attendances (student_id, course_id, date, status, remark)
      VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(student_id, course_id, date)
+     ON CONFLICT(student_id, course_id, date) WHERE session_id IS NULL
      DO UPDATE SET status = excluded.status, remark = excluded.remark, updated_at = datetime('now', 'localtime')`
   );
   const getOld = db.prepare(
     "SELECT status FROM attendances WHERE student_id = ? AND course_id = ? AND date = ?"
+  );
+  // 课次分支：按 (session_id, student_id) 手动 select → insert/update
+  const findAttBySession = db.prepare(
+    "SELECT id FROM attendances WHERE session_id = ? AND student_id = ?"
+  );
+  const insertSessionAtt = db.prepare(
+    "INSERT INTO attendances (student_id, course_id, date, status, remark, session_id) VALUES (?, ?, ?, ?, ?, ?)"
+  );
+  const updateSessionAtt = db.prepare(
+    "UPDATE attendances SET status = ?, remark = ?, updated_at = datetime('now','localtime') WHERE session_id = ? AND student_id = ?"
   );
   // 匹配「在读 + 同一课程 + 设置了课时包」的订单做联动扣减
   // v13：扣减优先选择剩余课时最多的订单（余额为 0 跳过），避免单个订单扣空后悬挂；
@@ -98,14 +185,12 @@ router.post("/batch", auth, (req, res) => {
   const refundOrder = db.prepare(
     "UPDATE orders SET remain_hours = MIN(total_hours, remain_hours + 1), updated_at = datetime('now','localtime') WHERE id = ?"
   );
-  // 课时消耗流水：扣减/回补后落流水（date 为考勤日期，供课消统计与收入确认）
+  // 课时消耗流水：扣减/回补后落流水（date 为考勤日期，session_id 课次分支落课次 id，legacy 为 NULL）
   const insertCons = db.prepare(
-    "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, operator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, session_id, hours, type, operator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
-  const getStudentClass = db.prepare(
-    "SELECT class_id FROM students WHERE id = ?"
-  );
-  const DEDUCT_STATUSES = ["正常", "迟到", "早退"];
+  // 扣课状态集中读取点（G1-P0-12），行为不变
+  const DEDUCT_STATUSES = getDeductStatuses();
   const isDeduct = st => DEDUCT_STATUSES.includes(st);
 
   // v13 考勤↔请假联动（G11 补齐反向缺口）：
@@ -143,32 +228,41 @@ router.post("/batch", auth, (req, res) => {
   db.exec("BEGIN");
   try {
     for (const r of records) {
-      const oldRow = getOld.get(Number(r.student_id), Number(course_id), date);
-      const oldStatus = oldRow?.status;
-      insert.run(
-        Number(r.student_id),
-        Number(course_id),
-        date,
-        r.status,
-        r.remark || ""
-      );
+      const sid = Number(r.student_id);
+      const existing = session ? findAttBySession.get(effSessionId, sid) : null;
+      const oldStatus = session
+        ? existing?.status
+        : getOld.get(sid, effCourseId, effDate)?.status;
+
+      if (session) {
+        if (existing) {
+          updateSessionAtt.run(r.status, r.remark || "", effSessionId, sid);
+        } else {
+          insertSessionAtt.run(sid, effCourseId, effDate, r.status, r.remark || "", effSessionId);
+        }
+      } else {
+        insert.run(sid, effCourseId, effDate, r.status, r.remark || "");
+      }
+
       if (oldStatus !== r.status) {
         const order = (
           isDeduct(r.status) ? findDeductOrder : findRefundOrder
-        ).get(Number(r.student_id), Number(course_id));
+        ).get(sid, effCourseId);
         if (order) {
           const oldDeduct = oldStatus ? isDeduct(oldStatus) : false;
           const newDeduct = isDeduct(r.status);
-          const classId =
-            getStudentClass.get(Number(r.student_id))?.class_id ?? null;
+          const classId = session
+            ? effClassId
+            : getStudentClass.get(sid)?.class_id ?? null;
           if (!oldDeduct && newDeduct) {
             deductOrder.run(order.id);
             insertCons.run(
-              Number(r.student_id),
+              sid,
               order.id,
-              Number(course_id),
+              effCourseId,
               classId,
-              date,
+              effDate,
+              effSessionId,
               1,
               "扣减",
               req.user.id
@@ -176,11 +270,12 @@ router.post("/batch", auth, (req, res) => {
           } else if (oldDeduct && !newDeduct) {
             refundOrder.run(order.id);
             insertCons.run(
-              Number(r.student_id),
+              sid,
               order.id,
-              Number(course_id),
+              effCourseId,
               classId,
-              date,
+              effDate,
+              effSessionId,
               1,
               "回补",
               req.user.id
@@ -189,33 +284,33 @@ router.post("/batch", auth, (req, res) => {
         }
         // 缺勤通知联动
         if (r.status === "缺勤") {
-          if (hasAbsentNotice.get(Number(r.student_id), date).c === 0) {
-            const student = getStudentName.get(Number(r.student_id));
-            const course = getCourseName.get(Number(course_id));
+          if (hasAbsentNotice.get(sid, effDate).c === 0) {
+            const student = getStudentName.get(sid);
+            const course = getCourseName.get(effCourseId);
             const title = "考勤缺勤提醒";
-            const content = `${student?.name || "学员"} ${date} ${course?.name || "课程"} 缺勤，请家长关注`;
+            const content = `${student?.name || "学员"} ${effDate} ${course?.name || "课程"} 缺勤，请家长关注`;
             const parentName =
-              getParentName.get(Number(r.student_id))?.parent_name || "";
+              getParentName.get(sid)?.parent_name || "";
             insertNotice.run(
-              Number(r.student_id),
+              sid,
               title,
               content,
-              date,
+              effDate,
               parentName
             );
           }
         } else if (oldStatus === "缺勤") {
-          deleteAbsentNotice.run(Number(r.student_id), date);
+          deleteAbsentNotice.run(sid, effDate);
         }
         // v13 考勤↔请假联动（G11）：标记"请假"→ 生成待审批考勤同步请假单（幂等：覆盖任意来源的待审批/通过单则不重复）；
         //        改回其他状态 → 撤销当日同步单（待审批/已通过一并删除）+ 撤销"请假审批通过"通知
         if (r.status === "请假") {
-          if (!hasSyncLeave.get(Number(r.student_id), date, date)) {
-            insertSyncLeave.run(Number(r.student_id), date, date);
+          if (!hasSyncLeave.get(sid, effDate, effDate)) {
+            insertSyncLeave.run(sid, effDate, effDate);
           }
         } else if (oldStatus === "请假") {
-          deleteSyncLeave.run(Number(r.student_id), date, date);
-          deleteLeaveApprovedNotice.run(Number(r.student_id), date, date);
+          deleteSyncLeave.run(sid, effDate, effDate);
+          deleteLeaveApprovedNotice.run(sid, effDate, effDate);
         }
       }
     }
@@ -246,8 +341,8 @@ router.get("/records", auth, (req, res) => {
   let where = "WHERE 1=1";
   const params = [];
   if (req.user.role === "teacher") {
-    where += " AND c.head_teacher_id = ?";
-    params.push(req.user.id);
+    where += ` AND ${teacherClassPredicate("c")}`;
+    params.push(req.user.id, req.user.id);
   }
   if (date_start) {
     where += " AND a.date >= ?";
@@ -370,10 +465,10 @@ router.get("/statistics", auth, (req, res) => {
   // 汇总（教师仅统计本班）
   const summaryScope =
     req.user.role === "teacher"
-      ? " AND a.student_id IN (SELECT s.id FROM students s JOIN classes c ON s.class_id = c.id WHERE c.head_teacher_id = ?)"
+      ? ` AND a.student_id IN (SELECT s.id FROM students s JOIN classes c ON s.class_id = c.id WHERE ${teacherClassPredicate("c")})`
       : "";
   const summaryParams =
-    req.user.role === "teacher" ? [req.user.id, ...params] : [...params];
+    req.user.role === "teacher" ? [req.user.id, req.user.id, ...params] : [...params];
   const summary = db
     .prepare(
       `SELECT
@@ -529,10 +624,10 @@ router.get("/statistics/monthly", auth, (req, res) => {
   // 汇总（教师仅本班）
   const summaryScope =
     req.user.role === "teacher"
-      ? " AND a.student_id IN (SELECT s.id FROM students s JOIN classes c ON s.class_id = c.id WHERE c.head_teacher_id = ?)"
+      ? ` AND a.student_id IN (SELECT s.id FROM students s JOIN classes c ON s.class_id = c.id WHERE ${teacherClassPredicate("c")})`
       : "";
   const summaryParams =
-    req.user.role === "teacher" ? [req.user.id, ...params] : [...params];
+    req.user.role === "teacher" ? [req.user.id, req.user.id, ...params] : [...params];
   const summary = db
     .prepare(
       `SELECT COUNT(a.id) AS total,

@@ -24,7 +24,8 @@ const migrations = [
   require("./017-ai-settings"),
   require("./018-growth-timeline"),
   require("./019-todos"),
-  require("./020-user-avatar")
+  require("./020-user-avatar"),
+  require("./021-sessions-assignments")
 ];
 
 function migrate(db) {

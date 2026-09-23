@@ -7,7 +7,8 @@ const { classScopeClause, canManageClass } = require("../utils/scope");
 
 const router = express.Router();
 
-/** 冲突检测：同班同时段（class_conflict，业务上拒绝） + 同教师文本跨班同时段（teacher_warnings，警告不阻断）
+/** 冲突检测：同班同时段（class_conflict，业务上拒绝） + 同教师跨班同时段（teacher_warnings，警告不阻断）
+ *  G2：同教师检测由「courses.teacher 文本级」改为「按任课关系 teaching_assignments」。
  *  返回 { class_conflict: [], teacher_warnings: [] }，exclude_id 用于编辑/调课审批时排除当前条目 */
 function checkConflicts(db, { class_id, course_id, day_of_week, period, exclude_id }) {
   const excludeClause = exclude_id ? " AND sc.id != ?" : "";
@@ -22,13 +23,52 @@ function checkConflicts(db, { class_id, course_id, day_of_week, period, exclude_
     )
     .all(Number(class_id), Number(day_of_week), Number(period), ...excludeParams);
 
-  // 同教师文本跨班同时段（courses.teacher 为文本字段，文本级警告）
+  // 同教师跨班同时段（警告不阻断）：
+  //  (1) G2：按任课关系 teaching_assignments（本班本课程的任课教师 → 其他班同时段）；
+  //  (2) 兼容兜底：沿用既有 courses.teacher 文本级口径（保证旧行为/回归不破）。
+  //  两路结果按课表条目 id 去重合并。警告为**非阻断**提示，取并集是保守超集、无副作用。
   const teacherWarnings = [];
+  const seenWarn = new Set();
+  const pushWarn = rows => {
+    for (const r of rows) {
+      if (seenWarn.has(r.id)) continue;
+      seenWarn.add(r.id);
+      teacherWarnings.push(r);
+    }
+  };
   if (course_id) {
+    // (1) 按任课关系
+    const teachers = db
+      .prepare(
+        `SELECT DISTINCT teacher_id FROM teaching_assignments
+         WHERE class_id = ? AND course_id = ? AND teacher_id IS NOT NULL`
+      )
+      .all(Number(class_id), Number(course_id))
+      .map(r => Number(r.teacher_id));
+    if (teachers.length > 0) {
+      const ph = teachers.map(() => "?").join(",");
+      pushWarn(
+        db
+          .prepare(
+            `SELECT sc.id, sc.class_id, c.name AS class_name, sc.course_id, co.name AS course_name,
+                    u.name AS teacher_name, sc.day_of_week, sc.period
+             FROM schedules sc
+             JOIN classes c ON sc.class_id = c.id
+             JOIN courses co ON sc.course_id = co.id
+             JOIN (SELECT DISTINCT class_id, course_id, teacher_id FROM teaching_assignments) x
+               ON x.class_id = sc.class_id AND x.course_id = sc.course_id
+             JOIN users u ON u.id = x.teacher_id
+             WHERE x.teacher_id IN (${ph}) AND sc.day_of_week = ? AND sc.period = ?
+               AND sc.class_id != ?${excludeClause}`
+          )
+          .all(...teachers, Number(day_of_week), Number(period), Number(class_id), ...excludeParams)
+      );
+    }
+    // (2) 文本级兼容兜底
     const course = db.prepare("SELECT teacher FROM courses WHERE id = ?").get(Number(course_id));
     if (course && String(course.teacher || "").trim()) {
-      teacherWarnings.push(
-        ...db
+      pushWarn(
+        db
           .prepare(
             `SELECT sc.id, sc.class_id, c.name AS class_name, sc.course_id, co.name AS course_name,
                     co.teacher, sc.day_of_week, sc.period

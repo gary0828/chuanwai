@@ -58,6 +58,30 @@ const ROUTES = {
           component: "attendance/statistics/index",
           name: "Statistics",
           meta: { title: "统计报表" }
+        },
+        {
+          path: "/attendance/sessions",
+          component: "attendance/sessions/index",
+          name: "Sessions",
+          meta: { title: "周课表" }
+        },
+        {
+          path: "/attendance/sessions/migration-report",
+          component: "attendance/sessions/migration-report",
+          name: "SessionMigrationReport",
+          meta: { title: "回填报告", roles: ["admin"] }
+        },
+        {
+          path: "/attendance/teaching-assignments",
+          component: "attendance/teaching-assignments/index",
+          name: "TeachingAssignments",
+          meta: { title: "任课关系", roles: ["admin"] }
+        },
+        {
+          path: "/attendance/period-times",
+          component: "attendance/period-times/index",
+          name: "PeriodTimes",
+          meta: { title: "节次时间", roles: ["admin"] }
         }
       ]
     },
@@ -270,6 +294,12 @@ const ROUTES = {
           component: "attendance/statistics/index",
           name: "Statistics",
           meta: { title: "统计报表" }
+        },
+        {
+          path: "/attendance/sessions",
+          component: "attendance/sessions/index",
+          name: "Sessions",
+          meta: { title: "周课表" }
         }
       ]
     },

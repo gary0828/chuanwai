@@ -128,7 +128,10 @@ const AUDIT_MODULES = [
   { re: /^\/api\/makeup-classes/, name: "补课" },
   { re: /^\/api\/analytics/, name: "分析" },
   { re: /^\/api\/feedback/, name: "使用反馈" },
-  { re: /^\/api\/growth/, name: "成长记录" }
+  { re: /^\/api\/growth/, name: "成长记录" },
+  { re: /^\/api\/sessions/, name: "课次" },
+  { re: /^\/api\/teaching-assignments/, name: "任课关系" },
+  { re: /^\/api\/period-times/, name: "节次时间" }
 ];
 // 路由内已自行写审计的模块前缀（保持与上面注释一致，勿随意增删）
 const SELF_AUDITED = /^\/api\/(finance|leads|exams|schedule-adjustments|makeup-classes)(\/|$)/;
@@ -202,6 +205,9 @@ app.use("/api/ai", require("./routes/ai"));
 app.use("/api/feedback", require("./routes/feedback"));
 app.use("/api/agent", require("./routes/agent"));
 app.use("/api/growth", require("./routes/growth"));
+app.use("/api/sessions", require("./routes/sessions"));
+app.use("/api/teaching-assignments", require("./routes/teaching-assignments"));
+app.use("/api/period-times", require("./routes/period-times"));
 
 // 404
 app.use((_req, res) => {

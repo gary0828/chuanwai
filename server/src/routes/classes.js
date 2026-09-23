@@ -1,9 +1,10 @@
 // 班级管理 CRUD + 班级名单
-// 数据权限：教师仅可见/管理自己绑定（head_teacher_id）的班级；管理员不限
+// 数据权限：教师仅可见「班主任或任课」的班级；管理员不限
+// ★ 班级档案的编辑 / 删除收窄为「班主任或 admin」（任课教师对班级档案只读）
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
-const { classScopeClause, canManageClass } = require("../utils/scope");
+const { classScopeClause, canManageClass, isHeadTeacherOf } = require("../utils/scope");
 const { parseText } = require("../utils/validate");
 
 const router = express.Router();
@@ -120,14 +121,14 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
   }
 });
 
-/** 修改班级（admin / teacher，仅可改自己负责的班级）；班主任账号绑定仅 admin 可改 */
+/** 修改班级（admin / teacher；★ 收窄为仅班主任或 admin —— 任课教师对班级档案只读）；班主任账号绑定仅 admin 可改 */
 router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   const id = Number(req.params.id);
   const { name, grade, head_teacher, head_teacher_id } = req.body || {};
   if (!name) return res.status(400).json({ success: false, message: "班级名称不能为空" });
   const nameRes = parseText(name, { field: "班级名称", max: 50, required: true });
   if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
-  if (!canManageClass(req, id)) {
+  if (!isHeadTeacherOf(req, id)) {
     return res.status(403).json({ success: false, message: "无权管理该班级" });
   }
   const headTeacherId =
@@ -153,11 +154,11 @@ router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   }
 });
 
-/** 删除班级（admin / teacher，仅可删自己负责的班级；班级下存在学生时禁止删除）
+/** 删除班级（admin / teacher；★ 收窄为仅班主任或 admin；班级下存在学生时禁止删除）
  *  v13：扩展删除保护——课表/考试/调课/补课/课时流水任一存在则禁止删除（防止级联清空历史） */
 router.delete("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   const id = Number(req.params.id);
-  if (!canManageClass(req, id)) {
+  if (!isHeadTeacherOf(req, id)) {
     return res.status(403).json({ success: false, message: "无权管理该班级" });
   }
   const studentCount = db

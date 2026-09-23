@@ -1,7 +1,7 @@
 ---
 title: API 权威文档 · 教务管理系统
 status: active
-updated: 2026-09-21
+updated: 2026-09-23
 ---
 
 # API 权威文档 · 教务管理系统
@@ -9,8 +9,8 @@ updated: 2026-09-21
 > **本文件是本项目 REST API 的唯一权威文档**，人类可读；机器可读版本见 [`openapi.yaml`](openapi.yaml)（OpenAPI 3.0）。
 > 每次新增 / 修改接口**必须同时更新这两份**。
 >
-> 后端：Express 4 + `node:sqlite` ｜ 数据库版本：**v19** ｜ 文档最后整理：2026-09-21
-> 本文按接口分组编排：1 通用约定 → 2 接口总览 → 3 业务模块 → 4~8 AI / 反馈 / 成长 → 9 变更流程。
+> 后端：Express 4 + `node:sqlite` ｜ 数据库版本：**v21** ｜ 文档最后整理：2026-09-23
+> 本文按接口分组编排：1 通用约定 → 2 接口总览 → 3 业务模块 → 4~8 AI / 反馈 / 成长 → 9 课次实体与任课关系 → 10 变更流程。
 
 ---
 
@@ -92,12 +92,13 @@ updated: 2026-09-21
 | 角色 | 数据范围 |
 | --- | --- |
 | `admin` | 全量数据 + 所有管理功能 |
-| `teacher` | **仅授课相关**：`classes.head_teacher_id = 当前用户` 的班级 / 学员 / 考勤 / 请假 / 补课 / 调课申请 / 课表 / 考试与成绩 / 通知 / 学习报告与成长档案（**金额字段脱敏**）。**费用与销售数据一律不可见**——财务（订单/缴费/退费/统计）与招生线索的全部接口均为 `admin` 专属（2026-09-12 权限收紧） |
+| `teacher` | **仅授课相关**：`classes.head_teacher_id = 当前用户`**或**在 `teaching_assignments`（任课关系）中与当前用户关联的班级 / 学员 / 考勤 / 请假 / 补课 / 调课申请 / 课表 / 考试与成绩 / 通知 / 学习报告与成长档案（**金额字段脱敏**）。★ v21 起归属过滤由「仅班主任」扩为「**班主任 OR 任课教师**」（按学期生效，见 §9.6）。**费用与销售数据一律不可见**——财务（订单/缴费/退费/统计）与招生线索的全部接口均为 `admin` 专属（2026-09-12 权限收紧）。**课次级例外**：被指定为某课次**代课人**（`class_sessions.substitute_teacher_id`）的教师，可**读/录他自己代的那一节**（仅该课次），但不可见该班其它课次（不是整班可见）。 |
 
-实现位置：`server/src/utils/scope.js`（`canManageClass` / `canManageStudent` / `studentScopeWhere` / `classScopeClause`）。
+实现位置：`server/src/utils/scope.js`（`classScopeClause` / `canManageClass` / `canManageStudent` / `studentScopeWhere` / `isHeadTeacherOf` / `canAccessSession`）。
 
-> **教师权限边界（2026-09-12 收紧）**：教师仅保留授课相关权限（课程安排、课表查询、学员名单、出勤记录、教学资料、成绩管理）。
-> 四层同时生效：① 菜单——`/api/auth/async-routes` 不再向 teacher 下发财务管理与招生管理目录；② 接口——`/api/finance/**` 与 `/api/leads/**` 全部 `requireRole("admin")`，teacher 调用一律 403；③ 字段——`/api/reports/students/:id` 对 teacher 剔除订单摘要的 `amount`/`paid`，`/timeline` 剔除缴费/退费事件；④ 导出——`/api/analytics/**` 本就仅 admin，学员导出不包含费用字段。
+> **教师权限边界（2026-09-12 收紧，2026-09-23 扩任课关系）**：教师仅保留授课相关权限（课程安排、课表查询、学员名单、出勤记录、教学资料、成绩管理）。
+> 四层同时生效：① 菜单——`/api/auth/async-routes` 不再向 teacher 下发财务管理与招生管理目录（v21 后 teacher 侧边栏仅新增「周课表」）；② 接口——`/api/finance/**` 与 `/api/leads/**` 全部 `requireRole("admin")`，teacher 调用一律 403；③ 字段——`/api/reports/students/:id` 对 teacher 剔除订单摘要的 `amount`/`paid`，`/timeline` 剔除缴费/退费事件；④ 导出——`/api/analytics/**` 本就仅 admin，学员导出不包含费用字段。
+> **v21 班级档案加固**：`PUT /api/classes/:id` 与 `DELETE /api/classes/:id` 对**非班主任**的任课教师**不可用**（403）——任课教师对班级档案只读（`isHeadTeacherOf`）。
 
 ### 1.6 分页约定
 
@@ -168,8 +169,8 @@ updated: 2026-09-21
 | 课程 | POST | `/api/courses` | admin | 新增课程 |
 | 课程 | PUT | `/api/courses/:id` | admin | 修改课程 |
 | 课程 | DELETE | `/api/courses/:id` | admin | 删除课程（有考勤则 400） |
-| 考勤 | GET | `/api/attendance` | 登录 | 某课程某日全班名单（回显已登记状态） |
-| 考勤 | POST | `/api/attendance/batch` | 登录 | **批量登记（事务）** — 联动课时包 + 缺勤通知 + 请假同步单 |
+| 考勤 | GET | `/api/attendance` | 登录 | 某课程某日全班名单（回显已登记状态）。**v21**：可选 `session_id`（按课次取名单，含代课人鉴权） |
+| 考勤 | POST | `/api/attendance/batch` | 登录 | **批量登记（事务）** — 联动课时包 + 缺勤通知 + 请假同步单。**v21**：可选 `session_id`（按课次 upsert；`已停课` 课次拒绝） |
 | 考勤 | GET | `/api/attendance/records` | 登录 | 考勤记录分页查询 |
 | 考勤 | GET | `/api/attendance/statistics` | 登录 | 统计（`dimension=student\|class`） |
 | 考勤 | GET | `/api/attendance/statistics/trend` | 登录 | 出勤趋势（`period=day\|week\|month`） |
@@ -288,6 +289,25 @@ updated: 2026-09-21
 | 成长时间轴 | GET | `/api/growth/knowledge-points` | 登录 | 知识点列表（可按课程筛选） |
 | 成长时间轴 | GET | `/api/growth/thresholds` | 登录 | 读成长阈值（8 条） |
 | 成长时间轴 | PUT | `/api/growth/thresholds` | admin | 改成长阈值（立即生效，不重建镜像） |
+| 课次 | GET | `/api/sessions` | 登录（scope） | 课次列表（分页；`term_id/class_id/teacher_id/status/date_start/date_end`）。教师仅本班或本人代课课次 |
+| 课次 | GET | `/api/sessions/week` | 登录（scope） | **周课表**：一次返回 `{week_start,week_end,days[],periods[],sessions[]}`。`view=class\|teacher` |
+| 课次 | GET | `/api/sessions/:id` | 登录（scope；含该课次代课人） | 课次详情（名单 + 课评现状 + 课消流水 + 关联课次） |
+| 课次 | POST | `/api/sessions/preview` | admin | 生成预览（纯计算、只读）：`{term_id}` → `{to_create,already_exists,plan_total,classes,templates,missing_period_times,range}` |
+| 课次 | POST | `/api/sessions/generate` | admin | **生成本学期课次（幂等）**：`{term_id}` → `{created,skipped,backfilled,report_unmatched}` |
+| 课次 | POST | `/api/sessions/backfill` | admin | 历史回填（可重跑、幂等）：`{term_id?}` → `{matched,unmatched}` |
+| 课次 | GET | `/api/sessions/migration-report` | admin | 回填报告（筛选分页 + `summary{matched,unmatched,total,fail_rate}`） |
+| 课次 | POST | `/api/sessions/migration-report/:id/todo` | admin | 未匹配项一键转待办（指派 admin）→ `{todo_id}` |
+| 课次 | PUT | `/api/sessions/:id/stop` | admin | 停课（`待上课`→`已停课`） |
+| 课次 | PUT | `/api/sessions/:id/restore` | admin | 恢复（`已停课`→`待上课`） |
+| 课次 | POST | `/api/sessions/:id/reschedule` | admin | 调课（仅 `待上课`；新建新课次 + 双向关联）→ `{new_session_id}` |
+| 课次 | POST | `/api/sessions/:id/substitute` | admin | 代课（原 `teacher_id` 不变，另写 `substitute_teacher_id`） |
+| 课次 | POST | `/api/sessions` | admin | 手工新增课次（加课/补课，`origin=手工\|补课`） |
+| 任课关系 | GET | `/api/teaching-assignments` | 登录（scope：教师仅本班） | 任课关系列表（`class_id/teacher_id/term_id` 筛选分页） |
+| 任课关系 | POST | `/api/teaching-assignments` | admin | 新增任课关系（班级 × 课程 × 教师可空 × 学期可空） |
+| 任课关系 | PUT | `/api/teaching-assignments/:id` | admin | 修改任课关系 |
+| 任课关系 | DELETE | `/api/teaching-assignments/:id` | admin | 删除任课关系 |
+| 节次时间 | GET | `/api/period-times` | 登录 | 节次时间表（1–8 节起止时间，供周历与生成快照） |
+| 节次时间 | PUT | `/api/period-times` | admin | 批量保存节次时间（仅 1–8 节，HH:mm 或空串） |
 | 健康 | GET | `/api/health` | 公开 | 容器健康检查 |
 
 ---
@@ -304,12 +324,13 @@ updated: 2026-09-21
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| date | string | 是 | 日期 `YYYY-MM-DD` |
-| course_id | number | 是 | 课程 ID |
+| date | string | 否* | 日期 `YYYY-MM-DD`（不传 `session_id` 时必填） |
+| course_id | number | 否* | 课程 ID（不传 `session_id` 时必填） |
 | records | array | 是 | 考勤记录数组，不允许为空 |
 | records[].student_id | number | 是 | 学员 ID |
 | records[].status | string | 是 | `正常` / `迟到` / `早退` / `缺勤` / `请假` |
 | records[].remark | string | 否 | 备注 |
+| session_id | number | 否 | **v21 新增**：传则按课次 upsert（`date`/`course_id` 取自课次，校验学员属于该课次班级） |
 
 > 说明：班级由学员档案（`students.class_id`）决定，**请求体不需要传 `class_id`**。
 
@@ -342,13 +363,15 @@ updated: 2026-09-21
 - 状态变为 `请假` → 生成待审批请假同步单（`leaves.source='考勤同步'`）；幂等：覆盖该日期已有任意来源的待审批 / 已通过单则不重复生成。
 - 状态由 `请假` 改为其他 → 撤销当日同步单（待审批 / 已通过一并删除）并撤销「请假审批通过」通知。
 - 保存语义为 `ON CONFLICT(student_id, course_id, date) DO UPDATE`（**重复提交覆盖**）。
+- **v21 课次分支（传 `session_id`）**：按 `(session_id, student_id)` upsert（手动 select→insert/update）；`date`/`course_id`/`class_id` **一律取自课次**（避免与课次不一致的脏数据）；学员必须属于该课次班级，否则 403；该课次的**代课人可录入**（Q5）；`status='已停课'` 的课次**拒绝点名**（400，须先恢复，Q9）。不传 `session_id` 时行为与旧版完全一致。
 
 **错误**：
 
 | HTTP | 场景 |
 | --- | --- |
-| 400 | `date` / `course_id` / `records` 缺失或 `records` 为空；状态值非法 |
-| 403 | 包含无权操作的学员记录 |
+| 400 | `records` 为空；不传 `session_id` 时 `date`/`course_id` 缺失；状态值非法；课次已停课（`session_id` 分支） |
+| 403 | 包含无权操作的学员记录；代课人操作非其代课课次 |
+| 404 | `session_id` 对应课次不存在 |
 
 ---
 
@@ -438,6 +461,9 @@ updated: 2026-09-21
 | date | string | 是 | 日期 `YYYY-MM-DD` |
 | class_id | number | 是 | 班级 ID |
 | course_id | number | 是 | 课程 ID |
+| session_id | number | 否 | **v21 新增**：传则按课次取名单（`date`/`class_id`/`course_id` 被忽略，取自课次）；含代课人鉴权（`canAccessSession`） |
+
+> **v21 课次分支**：传 `session_id` 时返回该课次所属班级的在读学员名单，`status`/`remark` 取自 `attendances.session_id = ?`，代课人亦可读取他代的那一节。未传时保持旧行为。
 
 **响应示例**：
 
@@ -1041,12 +1067,13 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 
 | 项 | 值 |
 | --- | --- |
-| 权限 | auth + 本班 |
-| 请求体 | `{ class_id, course_id, eval_date, session_no, items: [{ student_id, focus, participation, mastery, note }] }` |
+| 权限 | auth + 本班（传 `session_id` 时，该课次代课人亦可录） |
+| 请求体 | `{ class_id, course_id, eval_date, session_no, session_id?, items: [{ student_id, focus, participation, mastery, note }] }` |
 | 取值范围 | 三维均为 1–5（越界自动夹取，缺省 3） |
-| 幂等 | `UNIQUE(student_id, course_id, eval_date)`，重复提交覆盖 |
+| 幂等 | 不传 `session_id`：`UNIQUE(student_id, course_id, eval_date)`，重复提交覆盖；**v21 传 `session_id`**：按 `(session_id, student_id)` upsert |
 | 联动 | 向 `student_timeline` **追加**一条 `class_eval` 事件（历史不可改） |
 | 越权保护 | 学员不属于该班时静默跳过 |
+| 课次校验（v21） | `session_id` 的班级须与 `class_id` 一致，且 `已停课` 课次拒绝录课评（400） |
 | 返回 | `{ saved, appended, eval_date, class_id }` |
 
 ### 9.4 POST /api/growth/kp-assessment
@@ -1125,7 +1152,70 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 
 ---
 
-## 9. 新增 / 修改 API 的流程（必须遵守）
+## 9. 课次实体与任课关系（`/api/sessions`、`/api/teaching-assignments`、`/api/period-times`，v21 新增）
+
+> 本次为 G1（课次实体）+ G2（任课关系）增量。核心概念：**排课模板**（`schedules`：班级 × 星期 × 节次）→ 批量生成 **课次实例**（`class_sessions`：具体日期的一节课，唯一键 `(class_id, session_date, period)`）；考勤 / 课消 / 课评 / 补课改挂课次 `session_id`。
+> 迁移 **v21**：新增 `class_sessions` / `teaching_assignments` / `period_times` / `session_migration_report` 4 张表；重建 `attendances` / `class_evaluations` 唯一键为**双条件（部分）唯一索引**（`session_id IS NULL` 保留历史去重、`session_id` 非空按课次去重）；`hour_consumptions` / `makeup_classes` 加 `session_id`。
+
+### 9.1 响应与常量
+
+- 响应沿用 `{ success, data?, message? }`。
+- 课次状态：`待上课 / 已上课 / 已停课 / 已调课 / 已取消`；来源：`模板生成 / 调课 / 补课 / 手工`。
+- 节次固定 **1–8**（Q3）；周基准 `week_start` 为**周一**；日期 `YYYY-MM-DD`，时间 `HH:mm`。
+
+### 9.2 生成（预览 → 确认 + 回填，均 admin）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/sessions/preview` | 纯计算只读，返回 `{to_create, already_exists, plan_total, classes, templates, missing_period_times[], range}`；**预览与执行共用同一展开函数**，故「预览到的=将生成的」 |
+| POST | `/api/sessions/generate` | 按「学期模板 × 日期」展开生成；**幂等**（`ON CONFLICT(class_id,session_date,period) DO NOTHING`，Q1 跳过已存在）；生成后立即回填历史；单事务 |
+| POST | `/api/sessions/backfill` | 独立回填，可重跑、幂等 |
+
+- **生成时定初始状态**：`session_date < 今天` → `已上课`；`>= 今天` → `待上课`。
+- **节次时间快照**：`start_time/end_time` 生成时取自 `period_times` 写入课次；**日后改 `period_times` 不回写已有课次**，新生成的才带新时间。
+- **回填口径**：对 `attendances` / `hour_consumptions` / `class_evaluations` 中 `session_id IS NULL` 的行按 `(班级+课程+日期)` 反查课次；恰好 1 条→回填；0 条→报告「当天无对应课次」；>1 条→报告「同日同课程多个课次，无法唯一确定」；课程为空→报告「课程为空」。`session_migration_report` 以 `UNIQUE(source_table, source_id)` 保证幂等。
+
+### 9.3 变更（停课 / 恢复 / 调课 / 代课，均 admin）
+
+| 方法 | 路径 | 语义 |
+| --- | --- | --- |
+| PUT | `/api/sessions/:id/stop` | `待上课`→`已停课`（仅待上课可停，否则 400） |
+| PUT | `/api/sessions/:id/restore` | `已停课`→`待上课`（仅已停课可恢复，Q9） |
+| POST | `/api/sessions/:id/reschedule` | **仅 `待上课` 可调课**（Q4）；事务内新建课次（`origin=调课`）+ 原课次标 `已调课`，`related_session_id` **双向关联**；已调课不可再调；返回 `{new_session_id}` |
+| POST | `/api/sessions/:id/substitute` | 写 `substitute_teacher_id`；**原 `teacher_id` 保持不变**；返回 `null` |
+| POST | `/api/sessions` | 手工新增（`origin=手工\|补课`，`schedule_id` 可空）；同 `(class_id,session_date,period)` 重复被拒（唯一约束） |
+
+### 9.4 查询
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/api/sessions` | 登录（scope） | 列表（`term_id/class_id/teacher_id/status/date_start/date_end/page/pageSize`）；教师仅本班（班主任或任课）或本人代课课次 |
+| GET | `/api/sessions/week` | 登录（scope） | 一次取全 `{week_start,week_end,days[],periods[],sessions[]}`；`view=class`（需 `class_id`，教师须本班）或 `view=teacher`（teacher 角色默认锁定本人，Q8） |
+| GET | `/api/sessions/:id` | 登录（scope；含该课次代课人） | 详情：`{session, students[], evaluations[], consumptions[], related}` |
+| GET | `/api/sessions/migration-report` | admin | 回填报告（筛选分页 + `summary{matched,unmatched,total,fail_rate}`） |
+| POST | `/api/sessions/migration-report/:id/todo` | admin | 一键转待办（Q6 仅指派 admin）→ `{todo_id}` |
+
+### 9.5 任课关系与节次时间
+
+| 方法 | 路径 | 权限 |
+| --- | --- | --- |
+| GET | `/api/teaching-assignments` | 登录（教师仅本班） |
+| POST / PUT / DELETE | `/api/teaching-assignments[/:id]` | admin（唯一键 `(class_id, course_id, term_id)`；`term_id` 为空时另有部分唯一索引 `ux_ta_no_term`） |
+| GET | `/api/period-times` | 登录 |
+| PUT | `/api/period-times` | admin（`{items:[{period,start_time,end_time,label}]}`，仅 1–8 节，`HH:mm` 或空串） |
+
+### 9.6 ★归属过滤与可见性（G2）
+
+- 教师可见班级 = `classes.head_teacher_id = me` **OR** 存在 `teaching_assignments(ta)` 满足 `ta.class_id = class.id AND ta.teacher_id = me`。
+- **任课关系按学期生效**：`ta.term_id IS NULL`（长期）**或** `ta.term_id = (SELECT id FROM terms WHERE is_current = 1)` 时可见；**其它学期**的任课记录**不可见**。
+- **兜底**：系统不存在 `is_current=1` 的学期时**不过滤**（有任课记录即见），避免误挡所有人。
+- **代课人课次级可见（Q5）**：`canAccessSession` = admin / 该课次代课人 / 该班班主任或任课教师。代课人**仅**能读/录他代的那一节，不能查看整班周课表、亦不能操作同班其它课次（**不做整班越权**）。
+- **班级档案加固**：`PUT` / `DELETE /api/classes/:id` 仅班主任或 admin（`isHeadTeacherOf`），任课教师只读。
+- **DEDUCT_STATUSES 集中读取点**：扣课状态由 `server/src/utils/attendance-rules.js` 单一来源提供（G1-P0-12，行为不变：`正常/迟到/早退`）。
+
+---
+
+## 10. 新增 / 修改 API 的流程（必须遵守）
 
 1. 在 `server/src/routes/<module>.js` 中实现，复用 `auth` / `requireRole` / `utils/scope.js`。
 2. 需要新表 / 新字段 → **新增迁移脚本**（`server/src/migrations/0NN-*.js`，版本连续递增），同步更新 `server/database.md`。

@@ -25,7 +25,7 @@ const express = require("express");
 const db = require("../db");
 const { auth } = require("../middleware/auth");
 const { requireRole } = require("../middleware/auth");
-const { canManageClass, canManageStudent } = require("../utils/scope");
+const { canManageClass, canManageStudent, canAccessSession } = require("../utils/scope");
 const timeline = require("../utils/timeline");
 
 const router = express.Router();
@@ -151,7 +151,7 @@ router.get("/eval-form", auth, (req, res) => {
  * student_timeline 是「历史事实」（不可改）。
  */
 router.post("/class-eval", auth, (req, res, next) => {
-  const { class_id, course_id, eval_date, items, session_no } = req.body || {};
+  const { class_id, course_id, eval_date, items, session_no, session_id } = req.body || {};
   const classId = Number(class_id);
   if (!Number.isInteger(classId) || classId <= 0) {
     return res.status(400).json({ success: false, message: "class_id 不合法" });
@@ -162,7 +162,22 @@ router.post("/class-eval", auth, (req, res, next) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ success: false, message: "items 不能为空" });
   }
-  if (!canManageClass(req, classId)) {
+  // 课次分支（G1-P0-4）：可选。传入时按时课次 upsert，并允许该课次代课人录入（Q5）
+  const sessionId = session_id != null && session_id !== "" ? Number(session_id) : null;
+  let sessionRow = null;
+  if (sessionId != null) {
+    sessionRow = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(sessionId);
+    if (!sessionRow) {
+      return res.status(400).json({ success: false, message: "课次不存在" });
+    }
+    if (Number(sessionRow.class_id) !== classId) {
+      return res.status(400).json({ success: false, message: "课次不属于该班级" });
+    }
+    if (sessionRow.status === "已停课") {
+      return res.status(400).json({ success: false, message: "该课次已停课，不能录课评" });
+    }
+  }
+  if (!canManageClass(req, classId) && !(sessionId != null && canAccessSession(req, sessionId))) {
     return res.status(403).json({ success: false, message: "无权操作该班级" });
   }
 
@@ -171,22 +186,47 @@ router.post("/class-eval", auth, (req, res, next) => {
     return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 3;
   };
 
+  // 课次序号由课次推算（不再手填）：该班截至本课次日期（含）的课次总数
+  let sessionNo = Number(session_no) || 0;
+  if (sessionRow) {
+    sessionNo = db
+      .prepare("SELECT COUNT(*) AS c FROM class_sessions WHERE class_id = ? AND session_date <= ?")
+      .get(classId, sessionRow.session_date).c;
+  }
+
   try {
     db.exec("BEGIN");
     let saved = 0;
     let appended = 0;
 
-    const upsert = db.prepare(
+    // legacy（无课次）：唯一键为部分索引，冲突目标须显式带 WHERE session_id IS NULL
+    const legacyUpsert = db.prepare(
       `INSERT INTO class_evaluations
          (class_id, course_id, student_id, eval_date, session_no,
           focus, participation, mastery, teacher_note, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(student_id, course_id, eval_date) DO UPDATE SET
+       ON CONFLICT(student_id, course_id, eval_date) WHERE session_id IS NULL DO UPDATE SET
          focus = excluded.focus,
          participation = excluded.participation,
          mastery = excluded.mastery,
          teacher_note = excluded.teacher_note,
          updated_at = datetime('now','localtime')`
+    );
+    // 课次分支：按 (session_id, student_id) 手动 select → insert/update
+    const findEvalBySession = db.prepare(
+      "SELECT id FROM class_evaluations WHERE session_id = ? AND student_id = ?"
+    );
+    const insertEvalSession = db.prepare(
+      `INSERT INTO class_evaluations
+         (class_id, course_id, student_id, eval_date, session_id, session_no,
+          focus, participation, mastery, teacher_note, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const updateEvalSession = db.prepare(
+      `UPDATE class_evaluations
+       SET focus = ?, participation = ?, mastery = ?, teacher_note = ?,
+           updated_at = datetime('now','localtime')
+       WHERE session_id = ? AND student_id = ?`
     );
 
     for (const it of items) {
@@ -201,10 +241,21 @@ router.post("/class-eval", auth, (req, res, next) => {
       const mastery = clamp(it.mastery);
       const note = typeof it.note === "string" ? it.note.slice(0, 200) : "";
 
-      upsert.run(
-        classId, course_id || null, sid, eval_date, Number(session_no) || 0,
-        focus, participation, mastery, note, req.user.id
-      );
+      if (sessionRow) {
+        if (findEvalBySession.get(sessionId, sid)) {
+          updateEvalSession.run(focus, participation, mastery, note, sessionId, sid);
+        } else {
+          insertEvalSession.run(
+            classId, course_id || null, sid, eval_date, sessionId, sessionNo,
+            focus, participation, mastery, note, req.user.id
+          );
+        }
+      } else {
+        legacyUpsert.run(
+          classId, course_id || null, sid, eval_date, sessionNo,
+          focus, participation, mastery, note, req.user.id
+        );
+      }
       saved++;
 
       // 只增不改：每次提交都追加一条历史事件（payload 不含敏感字段）

@@ -826,3 +826,60 @@ Key 由 `LLM_API_KEY` / 配置中心持有，服务端做二次脱敏，用量�
 - `WORKBUDDY.md`：新增 **§四·五 数据资产化规则**（10 条硬规则）+ §十一 约束补 2 条
 - `../06-部署/校区部署与升级.md`：Dify 由「现在不需要」改为「本期不装、已纳入规划」／ 备份说明补 `assets/` 目录
 
+---
+
+## G1 课次实体 + G2 任课关系 · 交付完成（2026-09-23）
+
+> 来源：`ROADMAP.md` §七之四（《需求确认》+《开发计划》）+ `ADR-009-课次实体与课消归属`。
+> **本文只记已完成事实**；待决策事项一律进 `ROADMAP.md`。
+
+### 一、交付内容
+
+| 层 | 内容 |
+| --- | --- |
+| **迁移 v21** | 新增 `class_sessions`（课次实例）· `teaching_assignments`（任课关系）· `period_times`（节次时间表）· `session_migration_report`（回填报告）；**重建** `attendances` / `class_evaluations` 并改唯一键为「双条件部分唯一索引」；`hour_consumptions` / `makeup_classes` 加 `session_id` |
+| **后端** | 新增 `routes/sessions.js` · `teaching-assignments.js` · `period-times.js`、`utils/session-engine.js` · `utils/attendance-rules.js`；`utils/scope.js` 归属谓词扩为「班主任 OR 任课教师（按学期生效）」；改造 `attendance.js` · `growth.js` · `schedules.js` · `classes.js` · `auth.js` · `index.js` |
+| **前端** | 新增 `api/sessions.ts` + 6 个页面：**周课表（自绘 CSS Grid 时间网格）** · 课次详情抽屉（点名/课评/课消/调课记录）· 生成课次三步弹窗 · 任课关系维护 · 回填报告 · 节次时间表 |
+| **测试** | 新增 `server/scripts/verify-sessions.mjs`（双角色对照专项） |
+
+### 二、验收基线（2026-09-23 实测）
+
+| 套件 | 结果 |
+| --- | --- |
+| `verify-sessions.mjs`（专项） | **100/100** |
+| `ui-sessions-verify.py`（浏览器双角色） | **42/42** |
+| `e2e-lifecycle.mjs` | **80/80** |
+| `analytics-smoke.mjs` | **22/22** |
+| `check-openapi.mjs` | **exit 0**（74 路径 / 147 `$ref` 全解析） |
+| `pnpm build` | **退出码 0** |
+| 本次改动 ESLint | **0 error** |
+
+### 三、关键结论（可复查）
+
+- **同一课程同一天两节的考勤与课评不再撞唯一约束** —— 此前 `UNIQUE(student_id, course_id, date)` 导致第二节课**签不进**
+- **任课教师登录后能看到自己任课班级的教学数据** —— 此前只认 `classes.head_teacher_id`（班主任），任课老师什么都看不到
+- **代课人可看可录，但仅限他代的那一节**（同班其它课次 403）
+- **「仅教学类」靠角色门禁保证**：`finance.js` / `leads.js` 全端点本就 `requireRole("admin")`，扩归属谓词**不外溢**
+- **课次时间在生成时快照写入** —— 改节次时间**不改写**历史课次（历史不可篡改）
+- **调课只允许「待上课」**；**停课课次阻止点名与课消**
+- **零新增依赖**（前后端均未加包）
+- 本地库已升 v21；**升级前已备份** `server/data/backups/local-pre-v21-<时间戳>.db`
+
+### 四、本轮修掉的工程隐患
+
+- **残缺的旧 `dist/`**（无 `index.html`、45/65 js）：`pnpm build` 的 `rimraf dist` 会触碰本机安全删除护栏，导致门槛无法原样跑通；清理后 `pnpm build` 恢复 exit 0
+- `docs/` 根目录曾散落两个冗余 `.mermaid`（违反文档地图 + 双份真相），已移除
+
+### 五、遗留（**不在本次范围**）
+
+- **20 处既有 prettier lint error**（`src/views/**` 等 12 个文件）：已用 `git status --porcelain` / `git diff --quiet HEAD` 交叉证明**均不在本次改动集内**，属既有债务，建议单独清理
+- 教室资源与三重冲突 · 规则矩阵配置页 · 周历教室视角 · 教学大纲录入界面（→ `ROADMAP.md` §5.2 G 系列 P2/P3）
+
+### 六、同步修改的文档
+
+- 新建 `../07-架构与决策/ADR/ADR-009~012`
+- `../07-架构与决策/ROADMAP.md`：新增 §5.2（G 系列 + RICE）· §七之三 · §七之四；§三 Non-goals 标注「作业」「优惠/赠课」**部分解除**
+- `../00-导航.md`：ADR 索引新增 009~012；§7 Non-goals 增列解除项；§6 当前状态速览更新
+- `docs/04-API/API.md` 新增 §9；`docs/04-API/openapi.yaml` 新增 13 组 paths + 11 schemas
+- `server/database.md`：v21 版本历史 + 新表结构 + 双条件唯一索引
+

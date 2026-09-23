@@ -6,9 +6,11 @@ info:
     仅 `admin` / `teacher` 两种员工角色；学生、家长无账号、不登录。
 
     本文件是机器可读规范，人类可读的完整说明见 `docs/04-API/API.md`。
-    覆盖范围：认证 + 四个 P0 模块（考勤签到 / 学生 / 成绩 / 招生线索）+ 通知 + AI 分析端点。
+    覆盖范围：认证 + 四个 P0 模块（考勤签到 / 学生 / 成绩 / 招生线索）+ 通知 + AI 分析端点 + 课次实体与任课关系（v21）。
     统一响应包裹：成功 `{ success: true, data }`；失败 `{ success: false, message }`。
     `/api/analytics/*` 使用独立的「AI 分析信封」。
+    v21（2026-09-23）：新增 `/api/sessions/*`（课次）、`/api/teaching-assignments`（任课关系）、`/api/period-times`（节次时间）；
+    `POST /api/attendance/batch`、`GET /api/attendance`、`POST /api/growth/class-eval` 增加可选 `session_id`。
   version: 1.0.0
   contact:
     name: 教务管理系统
@@ -37,6 +39,12 @@ tags:
     description: 学生成长路径与课堂采集（采集入口在 AI 教学工作台）
   - name: SiteInfo
     description: 站点信息（机构名称 / Logo / 页脚）与图片上传
+  - name: Sessions
+    description: 课次实例（周课表 / 生成 / 停课调课代课 / 回填报告，v21）
+  - name: TeachingAssignments
+    description: 任课关系（班级 × 课程 × 教师 × 学期，v21）
+  - name: PeriodTimes
+    description: 节次时间表（1–8 节起止时间，v21）
 
 security:
   - bearerAuth: []
@@ -1753,6 +1761,431 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
 
+  /api/sessions:
+    get:
+      tags: [Sessions]
+      summary: 课次列表（分页；教师仅本班或本人代课课次）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: query, name: term_id, schema: { type: integer } }
+        - { in: query, name: class_id, schema: { type: integer } }
+        - { in: query, name: teacher_id, schema: { type: integer } }
+        - { in: query, name: status, schema: { type: string, enum: [待上课, 已上课, 已停课, 已调课, 已取消] } }
+        - { in: query, name: date_start, schema: { type: string } }
+        - { in: query, name: date_end, schema: { type: string } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: pageSize, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      list: { type: array, items: { $ref: "#/components/schemas/Session" } }
+                      total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Sessions]
+      summary: 手工新增课次（加课 / 补课，仅 admin）
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionInput" }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties: { id: { type: integer } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/sessions/week:
+    get:
+      tags: [Sessions]
+      summary: 周课表（一次取全 days / periods / sessions）
+      description: |
+        班级视角需 `class_id`（教师须为本班）；教师视角 teacher 角色默认锁定本人（Q8）。
+        前端据此建 `map[date|period]`，同格 ≥2 张即冲突（前端计算）。
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: query, name: view, schema: { type: string, enum: [class, teacher], default: class } }
+        - { in: query, name: class_id, schema: { type: integer } }
+        - { in: query, name: teacher_id, schema: { type: integer } }
+        - { in: query, name: week_start, schema: { type: string } }
+        - { in: query, name: statuses, schema: { type: string, description: 逗号分隔状态过滤 } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SessionWeek" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/sessions/preview:
+    post:
+      tags: [Sessions]
+      summary: 生成预览（纯计算只读，仅 admin）
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [term_id]
+              properties: { term_id: { type: integer } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SessionPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/sessions/generate:
+    post:
+      tags: [Sessions]
+      summary: 生成本学期课次（幂等，仅 admin）
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [term_id]
+              properties: { term_id: { type: integer } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SessionGenerateResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/sessions/backfill:
+    post:
+      tags: [Sessions]
+      summary: 历史回填（可重跑、幂等，仅 admin）
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { term_id: { type: integer } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SessionBackfillResult" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/sessions/migration-report:
+    get:
+      tags: [Sessions]
+      summary: 回填报告（筛选分页 + 汇总，仅 admin）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: query, name: data_type, schema: { type: string, enum: [考勤, 课消, 课评] } }
+        - { in: query, name: class_id, schema: { type: integer } }
+        - { in: query, name: date_start, schema: { type: string } }
+        - { in: query, name: date_end, schema: { type: string } }
+        - { in: query, name: reason, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string, enum: [未匹配, 已转待办] } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: pageSize, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/MigrationReport" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/sessions/migration-report/{id}/todo:
+    post:
+      tags: [Sessions]
+      summary: 未匹配项一键转待办（仅 admin，Q6 指派 admin）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties: { todo_id: { type: integer } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 报告记录不存在, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+
+  /api/sessions/{id}:
+    get:
+      tags: [Sessions]
+      summary: 课次详情（名单 / 课评 / 课消 / 关联课次）
+      description: 含该课次代课人（Q5 代课人可读他代的那一节）。
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: "#/components/schemas/SessionDetail" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 课次不存在, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+
+  /api/sessions/{id}/stop:
+    put:
+      tags: [Sessions]
+      summary: 停课（待上课 → 已停课，仅 admin）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/SuccessEnvelope" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/sessions/{id}/restore:
+    put:
+      tags: [Sessions]
+      summary: 恢复（已停课 → 待上课，仅 admin，Q9）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/SuccessEnvelope" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/sessions/{id}/reschedule:
+    post:
+      tags: [Sessions]
+      summary: 调课（仅待上课；新建课次 + 双向关联，仅 admin，Q4）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_date, period]
+              properties:
+                session_date: { type: string }
+                period: { type: integer, minimum: 1, maximum: 8 }
+                room_id: { type: integer, nullable: true }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties: { new_session_id: { type: integer } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/sessions/{id}/substitute:
+    post:
+      tags: [Sessions]
+      summary: 代课（原 teacher_id 不变，另写 substitute_teacher_id，仅 admin）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [substitute_teacher_id]
+              properties:
+                substitute_teacher_id: { type: integer }
+                room_id: { type: integer, nullable: true }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/SuccessEnvelope" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/teaching-assignments:
+    get:
+      tags: [TeachingAssignments]
+      summary: 任课关系列表（教师仅本班）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: query, name: class_id, schema: { type: integer } }
+        - { in: query, name: teacher_id, schema: { type: integer } }
+        - { in: query, name: term_id, schema: { type: integer } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: pageSize, schema: { type: integer, default: 10 } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      list: { type: array, items: { $ref: "#/components/schemas/TeachingAssignment" } }
+                      total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [TeachingAssignments]
+      summary: 新增任课关系（仅 admin）
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeachingAssignmentInput" }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties: { id: { type: integer } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/teaching-assignments/{id}:
+    put:
+      tags: [TeachingAssignments]
+      summary: 修改任课关系（仅 admin）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeachingAssignmentInput" }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/SuccessEnvelope" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 任课关系不存在, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+    delete:
+      tags: [TeachingAssignments]
+      summary: 删除任课关系（仅 admin）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/SuccessEnvelope" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 任课关系不存在, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+
+  /api/period-times:
+    get:
+      tags: [PeriodTimes]
+      summary: 节次时间表（1–8 节起止时间）
+      security: [{bearerAuth: []}]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { type: array, items: { $ref: "#/components/schemas/PeriodTime" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [PeriodTimes]
+      summary: 批量保存节次时间（仅 admin，仅 1–8 节）
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [period]
+                    properties:
+                      period: { type: integer, minimum: 1, maximum: 8 }
+                      start_time: { type: string, description: HH:mm 或空串 }
+                      end_time: { type: string, description: HH:mm 或空串 }
+                      label: { type: string, maxLength: 20 }
+      responses:
+        "200": { description: 成功, content: { application/json: { schema: { $ref: "#/components/schemas/SuccessEnvelope" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2165,4 +2598,183 @@ components:
         site.copyrightExtra: { type: string, description: 页脚补充说明 }
         site.logo: { type: string, description: Logo 路径，如 /assets/site/xxx.png }
         site.favicon: { type: string, description: 标签页图标路径 }
+
+    Session:
+      type: object
+      description: 课次实例（class_sessions）
+      properties:
+        id: { type: integer }
+        term_id: { type: integer, nullable: true }
+        schedule_id: { type: integer, nullable: true }
+        class_id: { type: integer }
+        class_name: { type: string }
+        course_id: { type: integer }
+        course_name: { type: string }
+        teacher_id: { type: integer, nullable: true }
+        teacher_name: { type: string, nullable: true }
+        substitute_teacher_id: { type: integer, nullable: true }
+        substitute_teacher_name: { type: string, nullable: true }
+        room_id: { type: integer, nullable: true }
+        session_date: { type: string, description: YYYY-MM-DD }
+        period: { type: integer, minimum: 1, maximum: 8 }
+        start_time: { type: string, description: 生成时快照 }
+        end_time: { type: string, description: 生成时快照 }
+        status: { type: string, enum: [待上课, 已上课, 已停课, 已调课, 已取消] }
+        origin: { type: string, enum: [模板生成, 调课, 补课, 手工] }
+        related_session_id: { type: integer, nullable: true }
+        related_date: { type: string, nullable: true }
+        topic: { type: string }
+
+    SessionInput:
+      type: object
+      required: [class_id, course_id, session_date, period]
+      properties:
+        class_id: { type: integer }
+        course_id: { type: integer }
+        teacher_id: { type: integer, nullable: true }
+        session_date: { type: string }
+        period: { type: integer, minimum: 1, maximum: 8 }
+        room_id: { type: integer, nullable: true }
+        origin: { type: string, enum: [手工, 补课], default: 手工 }
+
+    SessionWeek:
+      type: object
+      properties:
+        week_start: { type: string }
+        week_end: { type: string }
+        days:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string }
+              day_of_week: { type: integer }
+              label: { type: string }
+              is_today: { type: boolean }
+        periods:
+          type: array
+          items:
+            type: object
+            properties:
+              period: { type: integer }
+              label: { type: string }
+              start_time: { type: string }
+              end_time: { type: string }
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/Session" }
+
+    SessionPreview:
+      type: object
+      properties:
+        to_create: { type: integer }
+        already_exists: { type: integer }
+        plan_total: { type: integer }
+        classes: { type: integer }
+        templates: { type: integer }
+        missing_period_times:
+          type: array
+          items:
+            type: object
+            properties:
+              period: { type: integer }
+              label: { type: string }
+        range:
+          type: object
+          properties:
+            start: { type: string }
+            end: { type: string }
+
+    SessionGenerateResult:
+      type: object
+      properties:
+        created: { type: integer }
+        skipped: { type: integer }
+        backfilled: { type: integer }
+        report_unmatched: { type: integer }
+
+    SessionBackfillResult:
+      type: object
+      properties:
+        matched: { type: integer }
+        unmatched: { type: integer }
+
+    MigrationReport:
+      type: object
+      properties:
+        list:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              data_type: { type: string, enum: [考勤, 课消, 课评] }
+              source_table: { type: string }
+              source_id: { type: integer }
+              class_id: { type: integer, nullable: true }
+              class_name: { type: string, nullable: true }
+              course_id: { type: integer, nullable: true }
+              student_id: { type: integer, nullable: true }
+              student_name: { type: string, nullable: true }
+              date: { type: string }
+              reason: { type: string }
+              status: { type: string, enum: [未匹配, 已转待办] }
+              todo_id: { type: integer, nullable: true }
+        total: { type: integer }
+        summary:
+          type: object
+          properties:
+            matched: { type: integer }
+            unmatched: { type: integer }
+            total: { type: integer }
+            fail_rate: { type: number }
+
+    SessionDetail:
+      type: object
+      properties:
+        session: { $ref: "#/components/schemas/Session" }
+        students:
+          type: array
+          items:
+            type: object
+            properties:
+              student_id: { type: integer }
+              student_no: { type: string }
+              name: { type: string }
+              status: { type: string, nullable: true }
+              remark: { type: string, nullable: true }
+              attendance_id: { type: integer, nullable: true }
+        evaluations: { type: array, items: { type: object } }
+        consumptions: { type: array, items: { type: object } }
+        related: { type: object, nullable: true }
+
+    TeachingAssignment:
+      type: object
+      properties:
+        id: { type: integer }
+        class_id: { type: integer }
+        class_name: { type: string }
+        course_id: { type: integer }
+        course_name: { type: string }
+        teacher_id: { type: integer, nullable: true }
+        teacher_name: { type: string, nullable: true }
+        term_id: { type: integer, nullable: true }
+        term_name: { type: string, nullable: true }
+
+    TeachingAssignmentInput:
+      type: object
+      required: [class_id, course_id]
+      properties:
+        class_id: { type: integer }
+        course_id: { type: integer }
+        teacher_id: { type: integer, nullable: true, description: 可空=未定教师 }
+        term_id: { type: integer, nullable: true, description: 可空=长期有效 }
+
+    PeriodTime:
+      type: object
+      properties:
+        period: { type: integer, minimum: 1, maximum: 8 }
+        start_time: { type: string }
+        end_time: { type: string }
+        label: { type: string }
 
