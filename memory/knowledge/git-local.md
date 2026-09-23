@@ -27,6 +27,45 @@ git reset --mixed HEAD          # 同步索引
 git checkout <good-commit> -- <path>      # checkout 是安全的
 ```
 
+## ★★ K-039 · 推送凭据：非交互会话里 GCM 会**卡住或直接失败**（2026-09-23）
+
+> **症状**：`git push gitee main` **挂住不动**（实测 >3 分钟零输出）或秒失败
+> `fatal: could not read Username for 'https://gitee.com': terminal prompts disabled`。
+> ★ 上一轮 G1+G2 交付就是**因为这一条卡住没推上去**（当时定性为"凭据不可用"），
+> 别把它当"网络问题"重排一遍。
+
+**已排除的**（别再重复排查）：网络通（`ls-remote` 秒回）、凭据确实存在
+（Windows 凭据管理器 `LegacyGeneric:target=git:https://gitee.com`）。
+
+**根因**：`~/.gitconfig` 用的是 PortableGit 的 **GCM**
+（`credential.helper=…/git-credential-manager.exe` + `credential.https://gitee.com.provider=generic`）
+→ 它在**非交互 shell 里取不到凭据**：要么等一个看不见的提示把命令挂死，要么直接 `terminal prompts disabled`。
+★ 本机**没有 `wincred`**，换 helper 那条路走不通。
+
+**可靠姿势（2026-09-23 实测 9 秒推成功）——先单独把凭据取出来，再用内联 helper 推：**
+
+```bash
+unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+
+CRED=$(printf "protocol=https\nhost=gitee.com\n\n" | GIT_TERMINAL_PROMPT=0 git credential-manager get)
+GIT_USER=$(printf '%s\n' "$CRED" | sed -n 's/^username=//p')
+GIT_PASS=$(printf '%s\n' "$CRED" | sed -n 's/^password=//p')
+
+GIT_TERMINAL_PROMPT=0 GIT_USER="$GIT_USER" GIT_PASS="$GIT_PASS" \
+timeout 180 git -c http.proxy= -c https.proxy= \
+  -c credential.helper= \
+  -c credential.helper='!f() { echo username=$GIT_USER; echo password=$GIT_PASS; }; f' \
+  push gitee main
+```
+
+- **关键点**：`git credential-manager get` **单独调用能非交互取到**（它只是不能在 git 的交互流程里工作）；
+  `-c credential.helper=`（空）**先清空 helper 列表**，再加自己的 —— 否则是按「追加」语义，GCM 仍会被调用。
+- **安全**：凭据只经环境变量传递，**不写进 `.git/config`**（推完已 `grep` 核实为 0）；命令里也别 `echo` 密码。
+- 备选：让用户在自己终端手动 `git push gitee main`（会弹 GCM 登录），成功后本机凭据即刷新。
+
+**顺带一颗雷**：`~/.gitconfig` 的 `http.proxy = https.proxy = http://127.0.0.1:7890` 是**失效死代理**
+→ **任何不带 `-c http.proxy=` 覆盖的远端操作都会失败**（K-024）。**建议直接删掉这两行**，不必每次靠覆盖绕过。
+
 ## ★ 被中断的命令会留孤儿 git 进程 + `.git/index.lock`
 
 症状：后续所有 git 操作**静默失败** ——
