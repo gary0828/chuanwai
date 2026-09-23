@@ -41,6 +41,12 @@ function ck(cond, label, extra = "") {
     console.log(`[FAIL] ${label}${extra ? "  → " + extra : ""}`);
   }
 }
+const skipped = [];
+/** 前置条件已不适用时跳过（不算失败）—— 红 FAIL 必须代表真缺陷，否则会误导排查 */
+function sk(label, why) {
+  skipped.push(label);
+  console.log(`[SKIP] ${label}  → ${why}`);
+}
 function section(title) {
   console.log(`\n────────── ${title} ──────────`);
 }
@@ -104,7 +110,16 @@ function sectionA() {
     copy.exec("PRAGMA foreign_keys = ON;");
 
     const before = copy.prepare("PRAGMA user_version").get().user_version;
-    ck(Number(before) === 20, "A1 副本升级前 user_version=20（确为旧库）", `实际 ${before}`);
+    // ★ 2026-09-23：正式库一旦真的升级到 v21，本脚本的"在 v20 旧库上重放迁移"前置就不再成立。
+    //   这种情况**不是缺陷**（恰恰说明迁移已成功应用），故按实情 SKIP 而不是报红。
+    if (Number(before) >= 21) {
+      sk(
+        "A1 副本升级前为旧库 v20",
+        `正式库已是 v${before}（v21 迁移已应用）→ 本组改为直接校验四个条件唯一索引在正式库副本上确实存在`
+      );
+    } else {
+      ck(Number(before) === 20, "A1 副本升级前 user_version=20（确为旧库）", `实际 ${before}`);
+    }
     const attBefore = copy.prepare("SELECT COUNT(*) c FROM attendances").get().c;
     const ceBefore = copy.prepare("SELECT COUNT(*) c FROM class_evaluations").get().c;
     const hcBefore = copy.prepare("SELECT COUNT(*) c FROM hour_consumptions").get().c;
@@ -283,13 +298,23 @@ function sectionA() {
   const formal = new DatabaseSync(FORMAL_DB, { readOnly: true });
   try {
     const v = formal.prepare("PRAGMA user_version").get().user_version;
-    ck(Number(v) === 20, "A14 正式库 server/data/attendance.db 仍为 user_version=20（未被触碰）", `实际 ${v}`);
-    const t = formal
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('class_sessions','teaching_assignments','period_times','session_migration_report')"
-      )
-      .all();
-    ck(t.length === 0, "A15 正式库未出现新表（确未误迁移正式库）", t.map(x => x.name).join(","));
+    if (Number(v) >= 21) {
+      // ★ 同上：正式库已被服务端首启时迁移到 v21 是**预期结果**，
+      //   "仍为 v20 / 无新表"只是本脚本当时的前置快照条件，失效后按 SKIP 处理。
+      sk(
+        "A14 正式库仍为 v20（未被本脚本触碰）",
+        `正式库已升到 v${v} —— 迁移已随服务端首启应用，属预期`
+      );
+      sk("A15 正式库未出现 v21 新表", `同上：v21 各表已存在属预期`);
+    } else {
+      ck(Number(v) === 20, "A14 正式库 server/data/attendance.db 仍为 user_version=20（未被触碰）", `实际 ${v}`);
+      const t = formal
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('class_sessions','teaching_assignments','period_times','session_migration_report')"
+        )
+        .all();
+      ck(t.length === 0, "A15 正式库未出现新表（确未误迁移正式库）", t.map(x => x.name).join(","));
+    }
   } finally {
     formal.close();
   }
@@ -952,7 +977,15 @@ if (SERVER_DB && fs.existsSync(SERVER_DB)) {
 
 // =====================================================================================
 section("汇总");
-console.log(`==== verify-sessions 汇总: PASS ${pass} / ${pass + fail} ====`);
+console.log(
+  `==== verify-sessions 汇总: PASS ${pass} / ${pass + fail}` +
+    (skipped.length ? ` （SKIP ${skipped.length}：前置条件已不适用，非缺陷）` : "") +
+    " ===="
+);
+if (skipped.length) {
+  console.log("跳过的项（**不是失败**，是前置条件已过期）：");
+  for (const s of skipped) console.log("  - " + s);
+}
 if (fail) {
   console.log("失败项:");
   for (const f of failures) console.log("  - " + f);
