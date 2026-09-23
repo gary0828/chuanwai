@@ -1,0 +1,254 @@
+/* AI 教学助手 · 设计系统
+   ⚠️ 2026-09-18 统一：色值全部对齐教务系统主站的 src/style/tokens.scss，
+   使统一入口下的工作台（/ai/）与教务系统（/）看起来是同一套产品。
+   改色之前先看那份 token —— 它是全站唯一权威源，不要在本文件另立一套。 */
+:root {
+  /* 品牌色阶（深靛蓝 = 教务系统 --brand-*） */
+  --c-primary: #1f5c99; /* brand-600 */
+  --c-primary-dark: #17456f; /* brand-700 */
+  --c-primary-soft: #e8f0f8; /* brand-100 */
+  --c-primary-line: #c9dcef; /* brand-200 */
+
+  --c-bg: #f4f7fa; /* --surface-page */
+  --c-surface: #ffffff; /* --surface-card */
+  --c-surface-2: #f6f9fb; /* --ink-50 */
+  --c-border: #dde5ec; /* --ink-200 */
+  --c-border-strong: #c3ceda; /* --ink-300 */
+
+  --c-text: #0f1a24; /* --ink-900 */
+  --c-text-2: #4a5c6d; /* --ink-600 */
+  --c-text-3: #64798a; /* --ink-500 */
+
+  /* 语义色（去糖果化 = 教务系统 --status-*）；浅底统一用 color-mix 派生 */
+  --c-success: #2e7d5b;
+  --c-success-soft: color-mix(in srgb, var(--c-success) 10%, #fff);
+  --c-warn: #b7791f;
+  --c-warn-soft: color-mix(in srgb, var(--c-warn) 10%, #fff);
+  --c-danger: #b3453c;
+  --c-danger-soft: color-mix(in srgb, var(--c-danger) 10%, #fff);
+  --c-info: #64798a;
+  --c-info-soft: color-mix(in srgb, var(--c-info) 10%, #fff);
+
+  --radius-sm: 5px;
+  --radius: 7px;
+  --radius-lg: 10px;
+
+  --shadow-sm: 0 1px 2px rgb(15 26 36 / 5%);
+  --shadow: 0 1px 2px rgb(15 26 36 / 6%), 0 1px 3px rgb(15 26 36 / 4%);
+
+  --el-color-primary: #1f5c99;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--c-text);
+  background: var(--c-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 通用卡片 */
+.card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.card-body {
+  padding: 18px;
+}
+
+.card-sub {
+  font-size: 12px;
+  color: var(--c-text-3);
+  font-weight: 400;
+}
+
+/* 段落小标题 */
+.sec-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.sec-title::before {
+  content: "";
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--c-primary);
+}
+
+/* 状态标签 */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.tag-blue {
+  color: var(--c-primary-dark);
+  background: var(--c-primary-soft);
+}
+
+/* 标签文字色统一由语义色派生，不再硬编码第二套色板 */
+.tag-green {
+  color: color-mix(in srgb, var(--c-success) 78%, #000);
+  background: var(--c-success-soft);
+}
+
+.tag-amber {
+  color: color-mix(in srgb, var(--c-warn) 80%, #000);
+  background: var(--c-warn-soft);
+}
+
+.tag-red {
+  color: color-mix(in srgb, var(--c-danger) 82%, #000);
+  background: var(--c-danger-soft);
+}
+
+.tag-gray {
+  color: var(--c-text-2);
+  background: var(--c-surface-2);
+}
+
+.tag-cyan {
+  color: color-mix(in srgb, var(--c-info) 80%, #000);
+  background: var(--c-info-soft);
+}
+
+/* 数字指标 */
+.metric {
+  padding: 14px 16px;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+}
+
+.metric-label {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.metric-value {
+  margin-top: 4px;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--c-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-value small {
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--c-text-3);
+}
+
+/* AI 产出区：浅品牌底 + 品牌色描边，用于把「AI 生成」与「人工录入」区分开 */
+.ai-block {
+  position: relative;
+  padding: 16px 18px;
+  background: linear-gradient(180deg, var(--c-primary-soft) 0%, #ffffff 100%);
+  border: 1px solid var(--c-primary-line);
+  border-radius: var(--radius);
+}
+
+.ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--c-primary-dark);
+  background: #fff;
+  border: 1px solid var(--c-primary-line);
+  border-radius: 999px;
+}
+
+/* 空状态 */
+.empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--c-text-3);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d8dce3;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #c2c8d2;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 打印：仅输出报告主体 */
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-area {
+    box-shadow: none !important;
+    border: none !important;
+  }
+}
