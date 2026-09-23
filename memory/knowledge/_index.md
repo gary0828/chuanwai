@@ -10,7 +10,7 @@
 | `memory/knowledge/deploy.md` | 部署形态 / 端口 18080 / 数据保命 / 构建与脚本坑 | K-008 K-022 K-026 K-029 | `docker-compose*.yml` · `deploy/**` · `Dockerfile*` · `server/scripts/*.sh` · `.env*` |
 | `memory/knowledge/frontend.md` | 两端差异 / 构建期 env / 样式坑 / 白屏排查口诀 | K-002 K-003 K-025 | `src/**` · `ai-workbench/**` · `.env.*` · `vite.config.ts` |
 | `memory/knowledge/backend-data.md` | node:sqlite / WAL / 迁移与评审 / 数据资产化 / AI 架构 | K-005 K-006 K-015 K-017 | `server/**` · `docs/04-API/**` |
-| `memory/knowledge/process.md` | 测试与验证 / 记忆系统原则 / 结构性护栏 | K-011 K-030 | **always** |
+| `memory/knowledge/process.md` | 测试与验证 / 记忆系统原则与能力边界 / 结构性护栏 | K-011 K-030 K-031 | **always** |
 | `memory/knowledge/git-local.md` | 本机 git 红线（`git rm` / index.lock / 死代理） | K-013 K-024 K-028 | **always** |
 | `memory/knowledge/preferences.md` | 用户偏好与拍板（门禁 / 版本策略 / 产品定案） | K-016 K-018 K-019 K-020 K-021 K-027 | **always** |
 
