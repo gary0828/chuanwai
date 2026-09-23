@@ -31,4 +31,5 @@ K-023 | Convention | 文档 | 文档体系已按规范重组（00-导航 / 01-�
 K-024 | Convention | 推送·公开仓库 | 推公开仓库前必扫 `.env`/`*.db`/`evidence/` 等敏感数据；本机 git 配了失效死代理(127.0.0.1:7890/.env 14564)，直连用 `git -c http.proxy= -c https.proxy=` + 清 `HTTP(S)_PROXY` 绕过 | memory/logs/2026-09-21.md#20:10 | active | 2026-09-21 | 推 gitee 实测
 K-025 | Pitfall | 前端·构建期env | `.env.production` 曾被 `.gitignore` 的 `.env.*` 误排除 → `git clone` 部署时 `VITE_ROUTER_HISTORY`=undefined → `getHistoryMode` 里 `undefined.split` 启动即崩、整页白屏。已修：三个构建期 env 入库 + `getHistoryMode` 默认值兜底 | memory/logs/2026-09-23.md | active | 2026-09-23 | 生产白屏事故
 K-026 | Convention | 部署·保数据 | 重部署保数据：数据在项目目录 `server/data/`（bind mount），**同目录 `git pull` + 重建**才原地保留；**另开新目录 clone** 会灌种子演示数据（真数据仍在旧目录）；升级前先 `backup-db.sh`；`.env` 一并带走（否则 JWT_SECRET 变→全员重登） | docs/06-部署/校区部署与升级.md#5 | active | 2026-09-23 | 用户提问重部署
+K-027 | Preference | 版本策略 | ★ **本地=服务器**（同一份统一入口编排、端口 18080）；**老三端口彻底废弃**（资产一并删）；**只推 gitee，不推 GitHub** | memory/logs/2026-09-23.md | active | 2026-09-23 | 用户拍板
 ```

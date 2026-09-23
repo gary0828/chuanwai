@@ -110,11 +110,9 @@ if (existsSync(logsDir)) {
 // 记忆系统是开发期工具，不允许出现在任何部署产物 / 配置文件中。
 const DEPLOY_FILES = [
   "server/Dockerfile",
-  "ai-workbench/Dockerfile",
   "deploy/Dockerfile.unified",
   "docker-compose.yml",
   "docker-compose.verify.yml",
-  "ai-workbench/nginx.conf",
   "deploy/nginx-unified.conf",
   ".dockerignore",
 ];
