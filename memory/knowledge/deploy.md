@@ -38,6 +38,30 @@ fileMatchPattern:
   ```bash
   PATH="/usr/bin:/bin:$PATH"
   ```
+- **K-040 · `docker compose up -d --no-build` 不一定会重建容器**（2026-09-23 实测踩中）
+  ★ 两步法建完新镜像后跑它，输出是 `Container xxx Running` 而**不是 `Recreate`** →
+  **容器仍在跑旧镜像**。实测证据：容器 `image=b3510bcf…`（20:50 建的），而刚构建的镜像是 `8e659029…`。
+  → **必须显式加 `--force-recreate`**：
+  ```bash
+  docker compose up -d --force-recreate --no-build
+  ```
+  取证命令（别凭"我刚 build 过"下结论）：
+  ```bash
+  docker images --format "{{.Repository}} {{.ID}}" | grep attendance-system
+  docker inspect -f '{{.Name}} image={{.Image}} started={{.State.StartedAt}}' attendance-server attendance-unified
+  ```
+  → 两边 ID 前缀一致才算真的在跑最新版。
+
+## QA 断言的前置条件会过期（K-041 · 2026-09-23）
+
+> 迁移类验证脚本常写"正式库仍是旧版本 / 无新表"这类**前置快照断言**。
+> 一旦迁移真的应用了，这些断言**必然失败** —— 但这恰恰是成功的结果，**不是缺陷**。
+
+- 处置：前置条件不适用时**改为 SKIP 并写明原因**，而不是留红 FAIL
+  （`server/scripts/verify-sessions.mjs` A1/A14/A15 已按此改造，新增 `sk()` + 汇总里**单独列出跳过项**
+  并注明「不是失败」）。
+- ★ 红 FAIL 只应代表**真缺陷**；否则下次排障会被虚假红灯带偏（与 K-011「断言打印实际值」同源）。
+- 判断口诀：**这条断言失败，说明功能坏了，还是说明环境状态变了？** 后者 → SKIP。
 - **中文目录**：`docker compose up --build` 必失败（Docker Desktop gRPC 不支持非 ASCII 路径）→ 两步法：
   ```bash
   docker build -t attendance-system-server  -f server/Dockerfile .
