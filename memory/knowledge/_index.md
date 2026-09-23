@@ -34,4 +34,5 @@ K-026 | Convention | 部署·保数据 | 数据在 `server/data/`：同目录 `g
 K-027 | Preference | 版本策略 | ★ 本地=服务器（同一份统一入口编排、18080）；老三端口彻底废弃；只推 gitee | memory/logs/2026-09-23.md | active | 2026-09-23 | 用户拍板
 K-028 | Pitfall | git·本机 | ★★ 禁用 `git rm`（会清空整个目录）；删文件用 `git update-index --force-remove` + `os.remove` | memory/logs/2026-09-23.md#11:20 | active | 2026-09-23 | 真实事故
 K-029 | Pitfall | 脚本·Windows | 非登录 shell 缺 `/usr/bin` → `grep/sed/wc` 全 not found → **断言误报 FAIL**；脚本开头加 `PATH="/usr/bin:/bin:$PATH"` | server/scripts/docker-verify.sh | active | 2026-09-23 | 本地实测
+K-030 | Preference | 记忆系统 | ★ 记忆系统**有用优先，体积可超**（用户 2026-09-23）。考核"是否真帮上开发 + 省 token"，不考核文件大小；体积检查降为软上限，护栏查**结构性**问题（文件消失/死链/僵尸/多源真相） | memory/logs/2026-09-23.md#11:30 | active | 2026-09-23 | 用户拍板
 ```
