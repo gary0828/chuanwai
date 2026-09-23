@@ -6,10 +6,12 @@
 ## 主线位置
 
 **内容清点这一轮已闭环**：C4 全量走查（35 页）→ C6–C9 全部修复 → 已推送 gitee `9aef4a9`。
-**当前主线**：**G1+G2（课次实体 + 任课关系）开发完成、环境已就绪，⏳ 等你在浏览器实测（门禁③）**。
-团队 `software-jiaowu`（PM/架构师/工程师/QA）走完 SOP；QA 判定 **NoOne（无源码缺陷）**：专项 100/100 · e2e 80/80 · analytics 22/22 · check-openapi exit 0 · 浏览器双角色 42/42 · `pnpm build` exit 0。**未 commit、未 push、未动生产容器。**
-**测试环境**：本地统一入口已重建（含 v21 代码）→ `http://localhost:18080` ｜ 本地库已升 **v21**，**测试前已备份** `server/data/backups/local-pre-v21-20260923-204933.db`（+ wal/shm）｜ 抽查：`/` 200、登录 OK、teacher 对 leads/finance 均 403。
-**本轮新增产出**：**商用化蓝图 v2.2**（`docs/08-参考/教务功能补全分析-2026-09-23.md`）· `PRD借鉴分析` · **ADR-009~012** · `ROADMAP` **§5.2（G 系列）+ §七之四（G1+G2）** · 迁移 **v21** · `server/docs/021-*-PRD.md` 与 `-设计.md` · 测试脚本 `server/scripts/verify-sessions.mjs` + `_verify_test/ui-sessions-verify.py`。
+**当前主线**：G1+G2 已交付并**本地提交 `444f6e9`**（40 files，+8964/−150；文档已同步：`00-导航` v21 + `PROGRESS` 回填 + `API.md`/`openapi.yaml`；五轴审查 Approve）。
+⏳ **唯一卡点：推送 gitee 失败 —— 凭据不可用**（`could not read Username for 'https://gitee.com'`）。网络通（`-c http.proxy= ls-remote` 成功）、凭据在 Windows 凭据管理器里，但 **GCM 在非交互会话取不到**；本机未装 wincred。
+　→ **待用户**：终端手动 `git push gitee main`（GCM 弹窗登录）或提供 gitee 令牌。
+　⚠️ 另发现 `~/.gitconfig` 有**失效死代理** `http.proxy=http://127.0.0.1:7890` —— 不带 `-c http.proxy=` 覆盖的任何远端操作都会失败，**建议直接删掉这两行**（K-024）。
+**本轮新增产出**：**商用化蓝图 v2.2** · `PRD借鉴分析` · **ADR-009~012** · `ROADMAP` **§5.2 + §七之三 + §七之四** · 迁移 **v21** · `server/docs/021-*-PRD.md` 与 `-设计.md` · `server/scripts/verify-sessions.mjs`。
+**测试环境**：本地统一入口已重建（含 v21 代码）→ `http://localhost:18080` ｜ 本地库 **v21**，测试前已备份 `server/data/backups/local-pre-v21-20260923-204933.db`。
 **下一步范围待用户拍板**（见下）。生产容器**未动**（用户明确暂不动）。
 
 | 项 | 状态 |
