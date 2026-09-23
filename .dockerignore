@@ -39,8 +39,13 @@ _verify_test
 .workbuddy
 .git
 
+# 真密钥文件不进构建上下文。
+# ★ 只排除 .env（含 JWT_SECRET 等真密钥）与 *.local；构建期仍需 .env.development /
+#   .env.production 等 VITE_* 变量 —— 它们不含密钥、必须保留在上下文中，否则前端会白屏。
+.env
+
 # 开发期记忆系统（memory/）与 Agent 入口约定文件 —— 只服务开发环节，不属于运行时产物。
-# 两个 Dockerfile 都是白名单式 COPY（前端只取 dist，后端只取 server/src），
+# 各 Dockerfile 都是白名单式 COPY（前端只取 dist / ai-workbench/dist，后端只取 server/src），
 # 本就带不进镜像；这里再加一道保险，同时减小构建上下文体积。
 memory
 AGENTS.md

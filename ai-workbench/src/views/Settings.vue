@@ -156,7 +156,7 @@ const ALLOWED = [
                 <span class="dot-on" />{{ llmStatus.model }}
               </template>
               <template v-else>
-                <span class="dot-off" />未配置（教务后端 LLM_API_KEY 为空）
+                <span class="dot-off" />未配置（请在教务端「AI 配置中心」填写 Key）
               </template>
             </span>
           </div>
@@ -175,8 +175,8 @@ const ALLOWED = [
 
           <div class="tip">
             <IconInfo class="tip-icon" />
-            在教务后端 <code>server/.env</code> 配置 <code>LLM_API_KEY</code>（可选
-            <code>LLM_MODEL</code>、<code>LLM_BASE_URL</code>），重启后端后本页即显示当前模型。
+            请在教务端「<b>AI 配置中心</b>」页面（<code>/#/ai-admin</code>）填写大模型 Key 与模型，
+            保存后本页即显示当前模型。
             <b>Key 只存在于服务端，本工作台不提供任何密钥输入入口。</b>
           </div>
         </div>

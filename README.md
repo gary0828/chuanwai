@@ -31,7 +31,7 @@
 | --- | --- |
 | 前端 | Vue 3.5、TypeScript、Vite 7、Element Plus 2、Pinia、TailwindCSS 4、ECharts 6 |
 | 后端 | Node.js ≥ 22.13（内置 `node:sqlite`，零原生依赖）、Express 4、JWT 双 Token、bcryptjs |
-| 部署 | Docker Compose：nginx 前端 + node 后端 + SQLite 数据卷 |
+| 部署 | Docker Compose（统一入口单端口）：nginx 托管双前端 + node 后端 + SQLite 数据卷 |
 
 ---
 
@@ -43,14 +43,18 @@
 # 1. 生成密钥（后端必需，缺失时拒绝启动）
 export JWT_SECRET=$(openssl rand -hex 32)
 
-# 2. 构建并启动
+# 2. 指定对外端口（无域名建议 18080，避开需备案的 80/443）
+echo "WEB_PORT=18080" >> .env
+
+# 3. 构建并启动（统一入口：一个端口同时提供教务 / 工作台 /api）
 docker compose up -d --build
 ```
 
 | 服务 | 地址 |
 | --- | --- |
-| 前端 | http://localhost:8080 |
-| 后端 API | http://localhost:3000/api |
+| 教务系统（唯一入口） | http://localhost:18080 |
+| AI 工作台（子路径 `/ai/`） | http://localhost:18080/ai/ |
+| 后端 API（经 nginx 反代） | http://localhost:18080/api |
 
 > ⚠️ 上线前必做两件事：注入 `JWT_SECRET`（否则任何拿到源码的人都能自签管理员 Token）、修改默认口令。
 
@@ -91,8 +95,8 @@ pnpm install && pnpm dev
 │   ├── scripts/         # 回归与验证脚本
 │   └── database.md      # 数据库 schema 权威清单
 ├── docs/                # 全部文档（入口：docs/00-导航.md）
-├── Dockerfile           # 前端镜像（pnpm 构建 + nginx 托管）
-└── docker-compose.yml   # 前后端 + 数据卷编排
+├── deploy/              # 部署资产：统一入口 Dockerfile / nginx / Linux 一键脚本
+└── docker-compose.yml   # 唯一编排 —— 统一入口单端口（教务 / ＋ 工作台 /ai/ ＋ 后端 /api）
 ```
 
 ---

@@ -109,13 +109,11 @@ if (existsSync(logsDir)) {
 // ── 5. 部署排除护栏 ───────────────────────────────────────────
 // 记忆系统是开发期工具，不允许出现在任何部署产物 / 配置文件中。
 const DEPLOY_FILES = [
-  "Dockerfile",
   "server/Dockerfile",
   "ai-workbench/Dockerfile",
+  "deploy/Dockerfile.unified",
   "docker-compose.yml",
-  "docker-compose.unified.yml",
   "docker-compose.verify.yml",
-  "nginx.conf",
   "ai-workbench/nginx.conf",
   "deploy/nginx-unified.conf",
   ".dockerignore",

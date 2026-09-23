@@ -1,35 +1,25 @@
 # CURSOR · 当前进度（L0）
 
-> ★ 每次会话必读，每次会话**整体覆写**（不是追加）。
-> 覆写时间：2026-09-21 20:10
+> ★ 每次会话必读，每次会话**整体覆写**。覆写时间：2026-09-23 10:30
+
 ## 主线位置
 
-**教务系统已全闭环验证通过（09-20），具备部署条件；当前处于「上线前收尾 + 工作方式基建」。文档体系 v2 已提交并推送到 gitee。**
+**生产白屏已修复（开发+本地验证完成）；Docker 已统一单端口；LLM 归「AI 配置中心」。卡在：等用户实测 → 推送 gitee → 生产重建。**
 
 | 项 | 状态 |
 |---|---|
-| 教务功能闭环 | ✅ 09-20 全绿（28/28·80/80·22/22·31/31·9/9·49/49） |
-| 生产 Docker 部署 | ⏸ 未执行（铁律：最后一步，单独问用户） |
-| 校区实地使用 | ⏸ 未开始 |
-| AI 工作台新功能 | ⏸ 冻结（D14：教务优先） |
-| 文档体系 v2 | ✅ 09-21 完成，已提交 `235ca18` 并推送 gitee |
-
-## 最近完成（3 天内）
-
-| 日期 | 内容 | 提交 |
-|---|---|---|
-| 09-21 | **文档体系 v2 提交+推送 gitee**：README 54k→7k、docs/ 八域重组+archive、CONTRIBUTING/CHANGELOG/文档规范、术语+版本口径统一（v19）、敏感数据已扫 | `235ca18` |
-| 09-21 | 待办 L2/L3、铃铛 L1、记忆系统 v2 | `b3480df`/`b5b32a6`/`920016c`/`4b602ae` |
+| 白屏（`.env.production` 被 gitignore 吞） | ✅ 已修 + 本地验证（0 pageerror） |
+| Docker 统一单端口 / LLM 移出 `.env` | ✅ 已改 |
+| 用户实测 → 推送 → 生产重建 | ⏸ 待用户 |
 
 ## 进行中 / 阻塞
 
-- ✅ **未提交改动已清空**：记忆系统 + 文档 v2 两批已随 `235ca18` 提交并推送
-- ✅ **推送状态已核实**：`gitee/main` = `235ca18`（远端已确认）；`main` 已设跟踪 `gitee/main`。**注**：git 全局/环境配了失效死代理（127.0.0.1:7890 / :14564），直连才通，已用 `-c http.proxy=` 绕过
+- ⏸ 本批改动未提交（清单见 `logs/2026-09-23.md`）
+- ⚠ 遗留待拍板：① 本地验证脚本端口（`_verify_test/` 已改 21 个；4 个含 `:8082` 语义断言的文件需人工判断）② 根 `Dockerfile`/`nginx.conf` 已删；`ai-workbench/{Dockerfile,nginx.conf}` 保留（供工作台单独部署）
+- ⚠ git 死代理仍在（127.0.0.1:7890）：推送须加 `-c http.proxy=`
 
 ## 下一步
 
-1. 生产 Docker 重建 —— 需用户许可（容器内已是最新代码，非阻塞）
-2. 如需同步到 github（origin）备份：直连后 `git push -u origin main`（同样绕代理）
-3. 继续校区实地使用 / AI 工作台（按用户节奏）
-
-★ 上一轮「下一步」执行情况：②③ 已完成（文档 v2 提交并推送 gitee，死代理已定位绕过）；① 生产 Docker 仍待用户许可。
+1. 用户实测：同目录 `git pull`（**不要新目录 clone**）→ `docker compose up -d --build`，数据在 `server/data/` bind mount 不丢
+2. 通过后推送：`git -c http.proxy= -c https.proxy= push gitee main`
+3. 生产重建（K-020 单独问）：先 `docker rm -f attendance-server attendance-unified attendance-web attendance-ai-workbench 2>/dev/null || true` 再 up

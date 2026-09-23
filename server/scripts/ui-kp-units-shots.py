@@ -8,7 +8,7 @@ import sys
 import os
 from playwright.sync_api import sync_playwright
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8082"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18080/ai"
 TOKEN = sys.argv[2] if len(sys.argv) > 2 else ""
 EVID = "evidence/ai-workbench-growth"
 os.makedirs(EVID, exist_ok=True)

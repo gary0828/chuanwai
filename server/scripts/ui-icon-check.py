@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""校验修复后的图标在「生产构建」中确实渲染为 <svg>（针对 Docker :8080）"""
+"""校验修复后的图标在「生产构建」中确实渲染为 <svg>（针对统一入口，默认 :18080）"""
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 from playwright.sync_api import sync_playwright
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8080"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:18080"
 
 # (路由, 用于定位的可见文字)
 CASES = [

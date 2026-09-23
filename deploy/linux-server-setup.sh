@@ -5,20 +5,20 @@
 #
 #  用法（在装有本项目的目录里执行）：
 #      sudo bash deploy/linux-server-setup.sh
-#  带 DeepSeek Key 一次跑完：
-#      sudo bash deploy/linux-server-setup.sh --llm-key sk-xxxxxx
 #  指定对外端口（默认 18080，避开需备案的 80/443）：
 #      sudo bash deploy/linux-server-setup.sh --web-port 18080
 #
 #  它会依次完成：
 #    1. 安装 Docker + Compose 插件
 #    2. 配置 Docker 镜像加速器（国内网络，可跳过）
-#    3. 生成 .env（随机 JWT 密钥；Key 只写进后端容器，绝不下发前端）
+#    3. 生成 .env（随机 JWT 密钥）
 #    4. 启动「统一入口」编排（对外只开一个端口）
 #    5. 设置开机自启 + 防火墙 + 每日数据备份
 #
 #  跑完后还需要你在【路由器 / 云安全组】把公网端口映射到本机 WEB_PORT，
-#  外网才能访问 —— 见 docs/校区部署与升级指南.md §九。
+#  外网才能访问 —— 见 docs/06-部署/校区部署与升级.md §九。
+#
+#  大模型 Key 不在这里配：登录后在「AI 配置中心」页面(/#/ai-admin)填写。
 #
 #  幂等：重复执行安全，不会破坏已有数据。
 # ============================================================
@@ -28,10 +28,9 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$APP_DIR"
 
 # 对外端口。默认 18080：无域名场景下 80/443 需 ICP 备案，
-# 用高位端口可合规对外提供访问（详见 docs/校区部署与升级指南.md §九 合规章节）。
+# 用高位端口可合规对外提供访问（详见 docs/06-部署/校区部署与升级.md §九 合规章节）。
 # 若要改成 80（已备案域名场景）：--web-port 80
 WEB_PORT="${WEB_PORT:-18080}"
-LLM_KEY=""
 SKIP_MIRROR="${SKIP_MIRROR:-0}"
 
 say()  { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
@@ -41,7 +40,6 @@ die()  { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --llm-key)    LLM_KEY="${2:-}"; shift 2 ;;
     --web-port)   WEB_PORT="${2:-}"; shift 2 ;;
     --skip-mirror) SKIP_MIRROR=1; shift ;;
     -h|--help)    sed -n '2,23p' "$0"; exit 0 ;;
@@ -52,7 +50,7 @@ done
 # ---------- 0. 前置检查 ----------
 say "检查运行环境"
 [[ "$(id -u)" -eq 0 ]] || die "请用 root 执行：sudo bash $0"
-[[ -f docker-compose.unified.yml ]] || die "没找到 docker-compose.unified.yml，请在项目根目录执行"
+[[ -f docker-compose.yml ]] || die "没找到 docker-compose.yml，请在项目根目录执行"
 case "$(uname -m)" in x86_64|aarch64) ok "架构 $(uname -m) 支持" ;; *) die "不支持的架构 $(uname -m)" ;; esac
 [[ "${APP_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]] || die "项目路径含非 ASCII 字符：${APP_DIR}\nDocker 构建会把目录编码进请求头，中文路径必然构建失败，请换到 /opt/jx-system 之类的路径"
 
@@ -108,9 +106,6 @@ if [[ -z "$JWT_SECRET" ]]; then
   JWT_SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   ok "已生成随机 JWT 密钥"
 fi
-if [[ -z "$LLM_KEY" && -n "${LLM_API_KEY:-}" ]]; then
-  LLM_KEY="$LLM_API_KEY"; ok "沿用已有 DeepSeek Key"
-fi
 
 cat > .env <<ENV
 # 本文件由部署脚本生成，含密钥，已加入 .gitignore，切勿提交
@@ -119,25 +114,24 @@ WEB_PORT=${WEB_PORT}
 # 同源部署：AI 助手跳转自动跟随访问者地址
 AI_WORKBENCH_URL=http://localhost
 AI_WORKBENCH_BASE_PATH=/ai
-# DeepSeek（留空则工作台走规则引擎，零出网）
-LLM_API_KEY=${LLM_KEY}
-LLM_MODEL=${LLM_MODEL:-deepseek-flash}
-LLM_BASE_URL=${LLM_BASE_URL:-https://api.deepseek.com}
 ENV
 chmod 600 .env
-[[ -n "$LLM_KEY" ]] && ok "DeepSeek Key 已写入（仅注入后端容器）" || warn "未配置 Key，工作台将使用规则引擎（零出网）"
+ok "大模型 Key 不在本文件配置：登录后在「AI 配置中心」页面(/#/ai-admin)填写即可"
 
 # .gitignore 兜底
 grep -qxF '.env' .gitignore 2>/dev/null || echo '.env' >> .gitignore
 
 # ---------- 4. 启动 ----------
 say "构建并启动（首次约 3–8 分钟，取决于网络）"
-docker compose -f docker-compose.unified.yml up -d --build
+# 清理旧编排（三端口形态 / 旧统一入口）遗留的同名容器，避免 name conflict；
+# 数据在 bind mount ./server/data，删容器不会丢数据。
+docker rm -f attendance-server attendance-unified attendance-web attendance-ai-workbench >/dev/null 2>&1 || true
+docker compose up -d --build
 
 say "等待服务就绪"
 for i in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:${WEB_PORT}/api/health" >/dev/null 2>&1; then ok "后端已就绪"; break; fi
-  [[ $i -eq 60 ]] && { docker compose -f docker-compose.unified.yml logs --tail 40 server; die "服务未就绪，请检查上方日志"; }
+  [[ $i -eq 60 ]] && { docker compose logs --tail 40 server; die "服务未就绪，请检查上方日志"; }
   sleep 3
 done
 
@@ -198,12 +192,12 @@ cat <<TIP
 
   ⚠ 接下来必须做：
     1. 用 admin 登录，立刻修改默认口令（个人中心）
-    2. 在「AI 配置中心」确认大模型已生效（页面上能看到余额与用量即通）
+    2. 在「AI 配置中心」页面填写大模型 Key（页面上能看到余额与用量即通）
     3. 让老师用 IP 访问，不要在本地之外用 localhost
 
   常用命令
-    查看状态：docker compose -f docker-compose.unified.yml ps
-    查看日志：docker compose -f docker-compose.unified.yml logs -f server
+    查看状态：docker compose ps
+    查看日志：docker compose logs -f server
     备份数据：/usr/local/bin/jx-backup.sh
 ────────────────────────────────────────────
 TIP

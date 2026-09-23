@@ -63,7 +63,8 @@ cp "$SRC" "$DB_PATH"
 docker start "$CONTAINER" >/dev/null
 
 for i in $(seq 1 30); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health 2>/dev/null || true)"
+  # 统一入口单端口（2026-09-23 起后端不再单独暴露 3000）；如改过 WEB_PORT 可 export 覆盖
+  code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${WEB_PORT:-18080}/api/health 2>/dev/null || true)"
   [ "$code" = "200" ] && break
   sleep 1
 done

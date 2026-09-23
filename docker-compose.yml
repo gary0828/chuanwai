@@ -1,14 +1,37 @@
-# 学生考勤系统 全栈 Docker 部署
-# 启动：docker compose up -d --build
-# 访问：http://localhost:8080 （前端），后端 API：http://localhost:3000/api
+# ═══════════════════════════════════════════════════════════════════
+# 教务管理系统 · 统一入口部署（唯一编排文件）
 #
-# 显式指定项目名：Compose 默认用「所在目录名」推导项目名，且要求小写字母/数字/-/_。
-# 本项目目录名可能为纯中文（如 教学管理系统），清洗后为空字符串，
-# 会导致 `docker compose up` 直接报错 `project name must not be empty`。
+# 形态：一个 nginx 同时托管「教务系统 + AI 工作台」，并把 /api 反代到后端。
+#   /        → 教务系统
+#   /ai/     → AI 教学工作台
+#   /api/    → 教务后端
+#
+# 为什么只有这一份（2026-09-23 起统一）：
+#   1. 「AI 助手」跳转地址 = 访问者当前 origin，天然兼容 IP / 域名 / 端口 / HTTPS；
+#   2. 对外只需放行 1 个端口，公网暴露面最小；
+#   3. 后端 CORS 天然同源，无需维护来源白名单；
+#   4. 取消原先并存的「三端口」形态，开发与部署共用同一条编排，彻底消除脱同步。
+#
+# 启动：docker compose up -d --build
+# 端口：对外端口取 .env 里的 WEB_PORT（缺省 80）。
+#       ⚠ 无域名场景请用高位端口（如 18080）—— 大陆 80/443 对外服务需 ICP 备案。
+#       部署脚本 deploy/linux-server-setup.sh 默认即为 18080。
+#       手动执行时：echo "WEB_PORT=18080" >> .env
+#
+# 大模型 Key：不再经 .env / compose 注入 —— 登录后到「AI 配置中心」页面
+#   (http://<地址>/#/ai-admin) 在页面里配置。Key 存数据库 settings 表、改完即生效、
+#   永不下发前端（见 ADR-007）。
+#
+# ⚠ 首次从旧版本升级：旧编排的容器名与新的一致，请先清理再起，避免 name conflict：
+#   docker rm -f attendance-server attendance-unified attendance-web attendance-ai-workbench 2>/dev/null || true
+#   docker compose up -d --build
+#   （数据在 bind mount ./server/data，删容器不会丢数据）
+# ═══════════════════════════════════════════════════════════════════
 name: attendance-system
 
 services:
   server:
+    image: attendance-system-server
     build:
       context: .
       dockerfile: server/Dockerfile
@@ -23,31 +46,17 @@ services:
       #   2) 直接在执行 `docker compose up` 的 shell 中 export JWT_SECRET=...
       # `:?` 语法确保变量为空时 compose 直接报错，避免带病启动。
       - JWT_SECRET=${JWT_SECRET:?未设置 JWT_SECRET，请先执行 export JWT_SECRET=$(openssl rand -hex 32)}
-      # CORS 允许的来源（逗号分隔）。默认放开本机常用端口；生产请改为实际访问地址。
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080,http://localhost:8848,http://127.0.0.1:8848}
+      # 同源部署下浏览器发的是同源请求（无 Origin 头，或 Origin 就是本站），CORS 不会拦；
+      # 此处保留本机调试来源即可。
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost,http://localhost:8080}
       # 登录失败限速：窗口内最大尝试次数（默认 10 次 / 15 分钟）
       - LOGIN_RATE_LIMIT_MAX=${LOGIN_RATE_LIMIT_MAX:-10}
-      # AI 教学工作台入口地址（用于生成免登跳转链接）
-      # 注意：8081 已被 Dify 占用，工作台用 8082
-      # ★ 配成回环地址 = 跳转地址自动跟随「访问者当前使用的地址」，
-      #   因此老师用 IP、域名、80 端口、HTTPS 访问都不会跳错。
-      #   生产若要「统一入口（一个端口同时提供教务+工作台+/api）」，
-      #   请改用 docker-compose.unified.yml（推荐，见 docs/06-部署/校区部署与升级.md §九）
-      - AI_WORKBENCH_URL=${AI_WORKBENCH_URL:-http://localhost:8082}
-      # 工作台子路径前缀（统一入口部署为 /ai；独立端口部署留空）
-      - AI_WORKBENCH_BASE_PATH=${AI_WORKBENCH_BASE_PATH:-}
-      # 大模型（可选）：配置后工作台可切「服务端模型」；留空则一律走规则引擎
-      # Key 只注入后端容器，不下发前端
-      # 实测可用模型：deepseek-flash（快）/ deepseek-v4-pro（慢约 3.6 倍），两者均为推理型
-      - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_MODEL=${LLM_MODEL:-deepseek-flash}
-      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.deepseek.com}
-      # 输出额度：推理型模型的思维链先占额度，给不足会导致正文被截断为空
-      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
-      # 思维链强度：none = 关闭推理（文案类推荐，输出 token 直降约 90%）；可改 minimal/low/medium/high
-      - LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-none}
-    ports:
-      - "3000:3000"
+      # ★ 同源部署的关键两行：配成回环地址 = 「跟随访问者 origin」
+      #   AI_WORKBENCH_URL 故意配成回环地址，后端会把它替换为访问者实际访问的地址，
+      #   因此无论老师用 IP、域名、还是 HTTPS，跳转都不会错。
+      - AI_WORKBENCH_URL=${AI_WORKBENCH_URL:-http://localhost}
+      # 工作台挂在 /ai/ 子路径下，跳转 URL 需要带上该前缀
+      - AI_WORKBENCH_BASE_PATH=${AI_WORKBENCH_BASE_PATH:-/ai}
     volumes:
       # SQLite 数据持久化（首次启动自动建表 + 种子数据）
       - ./server/data:/app/data
@@ -57,30 +66,22 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+    # 不对外暴露 3000：只允许 nginx 经内部网络访问，公网扫不到后端
+    expose:
+      - "3000"
 
-  web:
+  # 统一入口：一个 nginx 同时托管教务系统 / + AI 工作台 /ai/ + 反代 /api
+  unified:
+    image: attendance-system-unified
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: attendance-web
+      dockerfile: deploy/Dockerfile.unified
+    container_name: attendance-unified
     restart: unless-stopped
     depends_on:
       server:
         condition: service_healthy
     ports:
-      - "8080:80"
-
-  # AI 教学工作台（独立部署，登录态由教务系统统一提供）
-  # 访问：http://localhost:8082 ｜ 从教务系统顶栏「AI 助手」按钮免登进入
-  # 注意：8081 已被 Dify 占用，工作台落到 8082；AI_WORKBENCH_URL 必须与此处保持一致
-  ai-workbench:
-    build:
-      context: .
-      dockerfile: ai-workbench/Dockerfile
-    container_name: attendance-ai-workbench
-    restart: unless-stopped
-    depends_on:
-      server:
-        condition: service_healthy
-    ports:
-      - "8082:80"
+      # 对外唯一入口，端口取 .env 的 WEB_PORT（缺省 80）。
+      # 无域名请设 18080 等高位端口（见文件头说明）。
+      - "${WEB_PORT:-80}:80"

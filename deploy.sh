@@ -4,6 +4,9 @@
 # 做五件事：检查 Docker → 生成 .env（自动造 JWT 密钥）→ 准备镜像（优先用离线包，
 # 不联网）→ 启动 → 自检并打印访问地址。
 #
+# 部署形态（2026-09-23 起统一）：**统一入口单端口** —— 一个 nginx 同时托管
+# 教务系统(/)、AI 工作台(/ai/)、后端 API(/api)。不再有独立的「三端口」形态。
+#
 # 说明：本脚本刻意用 `docker build` + `compose up --no-build`，而不用
 # `compose up --build` —— 后者在中文目录下会因 Docker Desktop 的 gRPC 缺陷
 # 必然失败（详见 README 排障小节）。
@@ -29,17 +32,24 @@ echo "✓ Docker 可用"
 step "2/5 准备环境配置 .env"
 if [ ! -f .env ]; then
   cp .env.example .env
-  SECRET="$(openssl rand -hex 32 2>/dev/null || cat /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)"
-  # 把模板里的占位密钥换成随机值（Windows 下 sed -i 需要备份后缀写法）
-  if [ -n "$SECRET" ]; then
-    sed -i.bak "s|^JWT_SECRET=.*|JWT_SECRET=${SECRET}|" .env && rm -f .env.bak
-  fi
-  echo "✓ 已生成 .env（JWT 密钥已随机生成，无需手动填写）"
-  echo "  提示：AI 功能需要 DeepSeek Key，可稍后在系统里「AI 配置中心」页面填写，"
-  echo "        也可以现在编辑 .env 加一行 LLM_API_KEY=sk-xxx"
+  echo "✓ 已从 .env.example 生成 .env"
 else
   echo "✓ .env 已存在，保持不变"
 fi
+# JWT 签名密钥（后端缺它直接拒绝启动）
+if ! grep -q '^JWT_SECRET=' .env 2>/dev/null; then
+  SECRET="$(openssl rand -hex 32 2>/dev/null || cat /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)"
+  echo "JWT_SECRET=${SECRET}" >> .env
+  echo "✓ 已生成并写入随机 JWT 密钥"
+fi
+# 对外端口（默认 18080；大陆 80/443 对外服务需 ICP 备案）
+if ! grep -q '^WEB_PORT=' .env 2>/dev/null; then
+  echo 'WEB_PORT=18080' >> .env
+fi
+WEB_PORT="$(grep -E '^WEB_PORT=' .env | tail -1 | cut -d= -f2 | tr -d ' ')"
+WEB_PORT="${WEB_PORT:-18080}"
+echo "  对外端口：${WEB_PORT}"
+echo "  提示：大模型 Key 不用改 .env —— 登录后在系统「AI 配置中心」页面填写即可"
 
 step "3/5 准备镜像"
 TARBALL="$(ls -1t attendance-offline-images*.tar.gz 2>/dev/null | head -1 || true)"
@@ -48,27 +58,29 @@ if [ -n "$TARBALL" ]; then
   docker load -i "$TARBALL"
   UP_FLAG="--no-build"
 elif docker image inspect attendance-system-server > /dev/null 2>&1 &&
-     docker image inspect attendance-system-web > /dev/null 2>&1; then
+     docker image inspect attendance-system-unified > /dev/null 2>&1; then
   echo "本机已有镜像，直接复用"
   UP_FLAG="--no-build"
 else
   echo "未找到离线包，改为在线构建（需要联网，较慢）"
-  docker build -t attendance-system-server       -f server/Dockerfile .
-  docker build -t attendance-system-web          -f Dockerfile .
-  docker build -t attendance-system-ai-workbench -f ai-workbench/Dockerfile .
+  docker build -t attendance-system-server  -f server/Dockerfile .
+  docker build -t attendance-system-unified -f deploy/Dockerfile.unified .
   UP_FLAG="--no-build"
 fi
 
 step "4/5 启动服务"
+# 清理旧编排（三端口形态 / 旧统一入口）遗留的同名容器，避免 name conflict；
+# 数据在 bind mount ./server/data，删容器不会丢数据。
+docker rm -f attendance-server attendance-unified attendance-web attendance-ai-workbench >/dev/null 2>&1 || true
 docker compose up -d $UP_FLAG
 
 step "5/5 等待就绪并自检"
-for i in $(seq 1 40); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health 2>/dev/null || true)"
+for i in $(seq 1 60); do
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${WEB_PORT}/api/health" 2>/dev/null || true)"
   [ "$code" = "200" ] && break
   sleep 1
 done
-if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health 2>/dev/null || true)" = "200" ]; then
+if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${WEB_PORT}/api/health" 2>/dev/null || true)" = "200" ]; then
   echo "✓ 后端已就绪"
 else
   echo "✗ 后端未就绪，执行 docker compose logs server 查看原因"
@@ -80,11 +92,11 @@ echo ""
 echo "────────────────────────────────────────────"
 echo "  部署完成"
 echo ""
-echo "  本机访问：        http://localhost:8080"
-[ -n "$IP" ] && echo "  同局域网其他电脑：http://${IP}:8080"
+echo "  本机访问：        http://localhost:${WEB_PORT}"
+[ -n "$IP" ] && echo "  同局域网其他电脑：http://${IP}:${WEB_PORT}"
 echo ""
 echo "  默认账号：admin / admin123456  ← 正式使用前务必改密码"
-echo "  AI 配置中心：    http://localhost:8080/#/ai-admin（仅管理员，不出现在菜单）"
+echo "  AI 配置中心：    http://localhost:${WEB_PORT}/#/ai-admin（仅管理员，不出现在菜单）"
 echo "────────────────────────────────────────────"
 echo ""
 echo "  提醒：老师在别的电脑上打开时，请让他们用上面的 IP 地址访问；"

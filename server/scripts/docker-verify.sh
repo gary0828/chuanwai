@@ -4,8 +4,13 @@
 # 说明：不使用 /tmp（部分 Git Bash 环境不可写），全部用命令替换取正文+状态码。
 set -uo pipefail
 
-FE="http://localhost:8080"
-BE="http://localhost:3000"
+# 对外端口：取 .env 的 WEB_PORT，缺省 18080（无域名场景）
+WEB_PORT="$(grep -E '^WEB_PORT=' .env 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ')"
+WEB_PORT="${WEB_PORT:-18080}"
+# ★ 2026-09-23 起 Docker 统一为「统一入口单端口」：教务 / ＋ 工作台 /ai/ ＋ 后端 /api 同端口。
+#   后端 3000 不再对外暴露，所有请求（含 /api）都经同一个 nginx 入口。
+FE="http://localhost:${WEB_PORT}"
+BE="http://localhost:${WEB_PORT}"
 PASS=0
 FAIL=0
 

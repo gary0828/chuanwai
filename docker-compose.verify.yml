@@ -7,7 +7,7 @@
 # 用法（端口 9080 避开常见占用）：
 #   WEB_PORT=9080 docker compose \
 #     -p attendance-unified-test \
-#     -f docker-compose.unified.yml \
+#     -f docker-compose.yml \
 #     -f docker-compose.verify.yml up -d
 #
 # 验收：
@@ -15,7 +15,7 @@
 #
 # 清理：
 #   docker compose -p attendance-unified-test \
-#     -f docker-compose.unified.yml -f docker-compose.verify.yml down
+#     -f docker-compose.yml -f docker-compose.verify.yml down
 services:
   server:
     container_name: attendance-server-verify

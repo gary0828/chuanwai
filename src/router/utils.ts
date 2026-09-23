@@ -334,10 +334,19 @@ function addAsyncRoutes(arrRoutes: Array<RouteRecordRaw>) {
   return arrRoutes;
 }
 
-/** 获取路由历史模式 https://next.router.vuejs.org/zh/guide/essentials/history-mode.html */
-function getHistoryMode(routerHistory): RouterHistory {
+/**
+ * 获取路由历史模式 https://next.router.vuejs.org/zh/guide/essentials/history-mode.html
+ *
+ * ★ 兜底（2026-09-23 生产白屏事故）：
+ *   `VITE_ROUTER_HISTORY` 由构建期的 `.env.production` 提供。若构建机缺少该文件
+ *   （典型场景：git clone 后 `.env.*` 被误加入 .gitignore），该变量会被内联成
+ *   undefined —— 而本函数在应用启动、路由创建时即被调用，对 undefined 调 `.split`
+ *   会让整个应用在挂载前崩溃、页面全白。故此处必须容错：参数给默认值，任何
+ *   非法 / 缺失取值一律回退 hash 模式，保证应用总能起来。
+ */
+function getHistoryMode(routerHistory: string = "hash"): RouterHistory {
   // len为1 代表只有历史模式 为2 代表历史模式中存在base参数 https://next.router.vuejs.org/zh/api/#%E5%8F%82%E6%95%B0-1
-  const historyMode = routerHistory.split(",");
+  const historyMode = String(routerHistory ?? "hash").split(",");
   const leftMode = historyMode[0];
   const rightMode = historyMode[1];
   // no param
@@ -355,6 +364,8 @@ function getHistoryMode(routerHistory): RouterHistory {
       return createWebHistory(rightMode);
     }
   }
+  // 非法 / 缺失值兜底：回退 hash 模式（宁可模式不对，也不要整页白屏）
+  return createWebHashHistory("");
 }
 
 /** 获取当前页面按钮级别的权限 */

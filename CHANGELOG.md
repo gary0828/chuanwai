@@ -17,6 +17,24 @@
 
 ---
 
+## [2026-09-23]
+
+### 修复
+
+- **生产部署整页白屏**（控制台 `Cannot read properties of undefined (reading 'split')`）：`git clone` 部署时 `.env.production` 被 `.gitignore` 的 `.env.*` 规则一并排除，`VITE_ROUTER_HISTORY` 被构建内联为 `undefined`，路由在应用启动瞬间崩溃。修复：① `getHistoryMode` 增加默认参数与非法值兜底 —— env 缺失也不再崩；② `.gitignore` 收窄为**只忽略真密钥**（`.env` / `*.local`），把 `.env.development` / `.env.production` / `.env.staging` 纳入版本库（三者只含 `VITE_*`，无密钥）
+- `.dockerignore` 排除真密钥 `.env`，真密钥不再进入构建上下文
+
+### 变更
+
+- **Docker 部署统一为一份编排**：删除并存的「三端口」形态，`docker-compose.yml` 即统一入口单端口（教务 `/` + 工作台 `/ai/` + 后端 `/api`）；移除 `docker-compose.unified.yml`；`deploy/linux-server-setup.sh`、`deploy.sh`、部署文档同步
+- **大模型 Key 移出 `.env`**：不再经 `.env` / compose 注入，只在「AI 配置中心」页面（`/#/ai-admin`）配置（存数据库 `settings` 表）；`config.js` 保留环境变量作末位兜底默认
+
+### 文档
+
+- 同步更新 README、安装与启动、环境变量、AI 与大模型、校区部署与升级、运维约定，部署口径统一
+
+---
+
 ## [2026-09-21]
 
 ### 新增
