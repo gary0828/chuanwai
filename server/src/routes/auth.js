@@ -1,9 +1,17 @@
 // 认证相关接口：登录（多方式扩展）、用户信息、动态菜单、刷新 token、登出
+// 2026-09-23 追加：自助改密码 / 个人资料 / 头像上传（admin 与 teacher 均可用自己的凭证调用）
 const express = require("express");
+const path = require("path");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../db");
 const { auth, signTokens, revokeTokens, SECRET } = require("../middleware/auth");
+const { audit } = require("../utils/audit");
+// 上传判型与落盘走公共实现，与「站点 Logo」共用同一份（防止两处漂移）
+const { MAX_UPLOAD_BYTES, saveImage } = require("../utils/image");
+
+// 头像落盘目录（ADR-008：DB 只存相对路径，文件本体在 data/assets 下，随 data/ 一起备份）
+const AVATAR_DIR = path.join(__dirname, "..", "..", "data", "assets", "avatars");
 
 const router = express.Router();
 
@@ -353,7 +361,7 @@ function buildLoginData(user) {
   const tokens = signTokens(user);
   return {
     ...tokens,
-    avatar: "",
+    avatar: user.avatar || "",
     username: user.username,
     nickname: user.name,
     roles: [user.role],
@@ -415,7 +423,7 @@ router.post("/wechat", (_req, res) => {
 router.get("/info", auth, (req, res) => {
   const user = db
     .prepare(
-      "SELECT id, username, name, role, phone, created_at FROM users WHERE id = ?"
+      "SELECT id, username, name, role, phone, avatar, created_at FROM users WHERE id = ?"
     )
     .get(req.user.id);
   if (!user) {
@@ -427,13 +435,143 @@ router.get("/info", auth, (req, res) => {
       username: user.username,
       name: user.name,
       nickname: user.name,
-      avatar: "",
+      avatar: user.avatar || "",
       phone: user.phone || "",
       roles: [user.role],
       permissions: rolePermissions(user.role)
     }
   });
 });
+
+/**
+ * 自助修改密码（admin / teacher 都能改**自己**的）
+ *
+ * 口径（2026-09-23 用户拍板）：**必须校验原密码** + 改完**吊销本人全部已签发凭证** → 强制重登。
+ * 与 H2 保持一致：管理员「重置他人密码」仍走 `PUT /api/users/:id/password`（仅 admin），两者并存。
+ * 前端收到成功响应后应清理本地会话并跳登录页。
+ */
+router.put("/password", auth, (req, res) => {
+  const { old_password, password } = req.body || {};
+  if (!old_password || !password) {
+    return res
+      .status(400)
+      .json({ success: false, message: "请输入原密码与新密码" });
+  }
+  if (String(password).length < 8) {
+    return res
+      .status(400)
+      .json({ success: false, message: "新密码长度至少 8 位" });
+  }
+  if (String(old_password) === String(password)) {
+    return res
+      .status(400)
+      .json({ success: false, message: "新密码不能与原密码相同" });
+  }
+  const user = db
+    .prepare("SELECT id, password_hash FROM users WHERE id = ?")
+    .get(req.user.id);
+  if (!user) {
+    return res.status(401).json({ success: false, message: "用户不存在" });
+  }
+  if (!bcrypt.compareSync(String(old_password), user.password_hash)) {
+    return res.status(400).json({ success: false, message: "原密码不正确" });
+  }
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
+    bcrypt.hashSync(String(password), 10),
+    req.user.id
+  );
+  revokeTokens(req.user.id);
+  audit(req.user, "修改密码", "自助修改登录密码");
+  res.json({ success: true, data: null });
+});
+
+/**
+ * 自助修改个人资料（姓名 / 手机号）
+ * ★ 用户名与角色**不可自助修改** —— 用户名是登录标识，角色是权限边界，只能由 admin 在员工账号页改。
+ * ★ 部分更新语义（2026-09-23 代码审查修正）：**未传的字段不改动**；传空串才表示清空手机号。
+ *   否则只传 `{name}` 就会把手机号静默清掉 —— 那是最难查的一类数据丢失。
+ */
+router.put("/profile", auth, (req, res) => {
+  const { name, phone } = req.body || {};
+  const newName = String(name ?? "").trim();
+  if (!newName) {
+    return res.status(400).json({ success: false, message: "姓名不能为空" });
+  }
+  if (newName.length > 50) {
+    return res.status(400).json({ success: false, message: "姓名过长（上限 50 字）" });
+  }
+  const hasPhone = phone !== undefined && phone !== null;
+  let newPhone = null;
+  if (hasPhone) {
+    // 手机号允许传空串清空；非空时校验 11 位大陆手机号
+    newPhone = String(phone).trim();
+    if (newPhone && !/^1[3-9]\d{9}$/.test(newPhone)) {
+      return res.status(400).json({ success: false, message: "手机号格式不正确" });
+    }
+  }
+  try {
+    if (hasPhone) {
+      db.prepare("UPDATE users SET name = ?, phone = ? WHERE id = ?").run(
+        newName,
+        newPhone || null,
+        req.user.id
+      );
+    } else {
+      db.prepare("UPDATE users SET name = ? WHERE id = ?").run(newName, req.user.id);
+    }
+  } catch (err) {
+    if (String(err.message).includes("UNIQUE")) {
+      return res
+        .status(400)
+        .json({ success: false, message: "该手机号已被其他账号使用" });
+    }
+    throw err;
+  }
+  audit(req.user, "修改个人资料", "更新姓名 / 手机号");
+  const updated = db
+    .prepare("SELECT username, name, phone, avatar FROM users WHERE id = ?")
+    .get(req.user.id);
+  res.json({
+    success: true,
+    data: {
+      username: updated.username,
+      name: updated.name,
+      phone: updated.phone || "",
+      avatar: updated.avatar || ""
+    }
+  });
+});
+
+/**
+ * 自助上传头像（admin / teacher 均可）
+ * 落盘 `data/assets/avatars/`，DB **只存相对路径**（ADR-008）。
+ * 前缀带用户 id → 清理旧头像时只删本人文件，不会误删他人。
+ */
+router.post(
+  "/avatar",
+  auth,
+  express.raw({
+    type: ["image/*", "application/octet-stream"],
+    limit: MAX_UPLOAD_BYTES + 1024
+  }),
+  (req, res) => {
+    const uid = req.user.id;
+    const saved = saveImage({
+      dir: AVATAR_DIR,
+      prefix: `avatar-${uid}`,
+      buf: req.body
+    });
+    if (!saved.ok) {
+      return res
+        .status(saved.status)
+        .json({ success: false, message: saved.message });
+    }
+    const url = `/assets/avatars/${saved.filename}`;
+    db.prepare("UPDATE users SET avatar = ? WHERE id = ?").run(url, uid);
+    audit(req.user, "上传头像", saved.filename);
+    res.json({ success: true, data: { avatar: url } });
+  }
+);
 
 /** 动态路由菜单（按角色下发，配合前端 initRouter 使用） */
 router.get("/async-routes", auth, (req, res) => {

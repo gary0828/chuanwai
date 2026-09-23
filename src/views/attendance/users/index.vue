@@ -187,7 +187,10 @@ onMounted(() => {
 
 <template>
   <div class="app-page">
-    <AppPageHeader title="员工账号" description="教务管理员与任课教师的账号、角色与数据权限" />
+    <AppPageHeader
+      title="员工账号"
+      description="教务管理员与任课教师的账号、角色与数据权限"
+    />
     <el-card shadow="never">
       <!-- 搜索 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">
@@ -222,6 +225,14 @@ onMounted(() => {
       <!-- 表格 -->
       <el-table v-loading="loading" :data="dataList" border stripe>
         <el-table-column type="index" label="#" width="60" align="center" />
+        <el-table-column label="头像" width="72" align="center">
+          <template #default="{ row }">
+            <el-avatar v-if="row.avatar" :size="32" :src="row.avatar" />
+            <span v-else class="avatar-fallback">
+              {{ (row.name || row.username || "-").slice(0, 1) }}
+            </span>
+          </template>
+        </el-table-column>
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column prop="name" label="姓名" min-width="100" />
         <el-table-column label="角色" width="100" align="center">
@@ -336,3 +347,18 @@ onMounted(() => {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+/* 未上传头像时回落「姓名首字」，避免一整列空头像 */
+.avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 13px;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border-radius: 50%;
+}
+</style>

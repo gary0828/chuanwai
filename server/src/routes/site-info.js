@@ -8,12 +8,12 @@
 //
 // 说明：数据复用既有 settings 表（key/value），无需新建表、无需迁移。
 const express = require("express");
-const fs = require("fs");
 const path = require("path");
-const crypto = require("crypto");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { audit } = require("../utils/audit");
+// 上传判型与落盘走公共实现，与「员工头像」共用同一份（防止两处漂移）
+const { MAX_UPLOAD_BYTES, saveImage } = require("../utils/image");
 
 const router = express.Router();
 
@@ -38,31 +38,6 @@ const SITE_KEYS = Object.keys(SITE_DEFAULTS);
 
 // ── 上传配置 ──────────────────────────────────────────────────────────
 const ASSETS_DIR = path.join(__dirname, "..", "..", "data", "assets", "site");
-const ALLOWED_EXT = [".png", ".jpg", ".jpeg", ".svg", ".webp", ".ico"];
-// 单文件上限 2MB（Logo 用，不需要更大）
-const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
-// 文件头魔数校验，防止改扩展名绕过
-function sniffImage(buf) {
-  if (buf.length < 8) return null;
-  // PNG
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return ".png";
-  // JPEG
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return ".jpg";
-  // GIF
-  if (buf.slice(0, 3).toString("ascii") === "GIF") return ".gif";
-  // WEBP (RIFF....WEBP)
-  if (
-    buf.slice(0, 4).toString("ascii") === "RIFF" &&
-    buf.slice(8, 12).toString("ascii") === "WEBP"
-  )
-    return ".webp";
-  // ICO
-  if (buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x01 && buf[3] === 0x00) return ".ico";
-  // SVG（文本，含 <svg）
-  const head = buf.slice(0, 512).toString("utf8").trimStart();
-  if (head.startsWith("<svg") || head.startsWith("<?xml")) return ".svg";
-  return null;
-}
 
 /** 读取全部站点信息（内部用，返回含默认值） */
 function readSiteInfo() {
@@ -147,35 +122,12 @@ router.post(
       // 这里是双保险，防止将来有人调大 express.raw 的 limit 却忘了同步此处。
       return res.status(413).json({ success: false, message: "文件过大，上限 2MB" });
     }
-    // 魔数嗅探，得到可信扩展名（忽略客户端声明）
-    const ext = sniffImage(buf);
-    if (!ext) {
-      return res
-        .status(400)
-        .json({ success: false, message: "文件格式不支持（仅 png / jpg / webp / svg / ico）" });
+    // 魔数嗅探 + 落盘 + 清理同 kind 旧文件（公共实现）
+    const saved = saveImage({ dir: ASSETS_DIR, prefix: kind, buf });
+    if (!saved.ok) {
+      return res.status(saved.status).json({ success: false, message: saved.message });
     }
-    if (!ALLOWED_EXT.includes(ext)) {
-      return res.status(400).json({ success: false, message: "文件格式不支持" });
-    }
-
-    fs.mkdirSync(ASSETS_DIR, { recursive: true });
-    // 文件名：kind-时间戳-随机 8 位.ext（不保留原名，防路径穿越 / 中文兼容问题）
-    const stamp = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14);
-    const rand = crypto.randomBytes(4).toString("hex");
-    const filename = `${kind}-${stamp}-${rand}${ext}`;
-    const absPath = path.join(ASSETS_DIR, filename);
-    fs.writeFileSync(absPath, buf);
-
-    // 清理同 kind 的旧文件（避免磁盘堆积）
-    try {
-      for (const f of fs.readdirSync(ASSETS_DIR)) {
-        if (f.startsWith(`${kind}-`) && f !== filename) {
-          fs.unlinkSync(path.join(ASSETS_DIR, f));
-        }
-      }
-    } catch {
-      /* 清理失败不影响主流程 */
-    }
+    const filename = saved.filename;
 
     const url = `/assets/site/${filename}`;
     // 同时把路径写入 settings，便于前端一次性拿到

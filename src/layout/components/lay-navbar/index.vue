@@ -8,10 +8,12 @@ import LaySidebarBreadCrumb from "../lay-sidebar/components/SidebarBreadCrumb.vu
 import LaySidebarTopCollapse from "../lay-sidebar/components/SidebarTopCollapse.vue";
 
 import LogoutCircleRLine from "~icons/ri/logout-circle-r-line";
+import UserSettingsLine from "~icons/ri/user-settings-line";
 import Setting from "~icons/ri/settings-3-line";
 import AiIcon from "~icons/ep/magic-stick";
 
 import { ref } from "vue";
+import { useRouter } from "vue-router";
 import { getAiTicket } from "@/api/ai";
 import { message } from "@/utils/message";
 
@@ -27,7 +29,13 @@ const {
   toggleSideBar
 } = useNav();
 
+const router = useRouter();
 const aiLoading = ref(false);
+
+/** 个人中心：刻意不进菜单，只能从顶栏下拉进入（与 /ai-admin 同理） */
+function goProfile() {
+  router.push("/profile");
+}
 
 /**
  * 进入 AI 教学工作台：
@@ -93,6 +101,13 @@ async function openAiWorkbench() {
         </span>
         <template #dropdown>
           <el-dropdown-menu class="logout">
+            <el-dropdown-item @click="goProfile">
+              <IconifyIconOffline
+                :icon="UserSettingsLine"
+                style="margin: 5px"
+              />
+              个人中心
+            </el-dropdown-item>
             <el-dropdown-item @click="logout">
               <IconifyIconOffline
                 :icon="LogoutCircleRLine"

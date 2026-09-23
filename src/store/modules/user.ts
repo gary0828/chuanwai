@@ -85,13 +85,15 @@ export const useUserStore = defineStore("pure-user", {
           });
       });
     },
-    /** 登出：通知服务端吊销凭证（best-effort）后清理本地状态 */
-    logOut() {
-      // 先读取当前 token 并显式带上，避免清理本地凭证后请求取不到 Authorization
-      const accessToken = getToken()?.accessToken;
-      if (accessToken) {
-        logoutApi(formatToken(accessToken)).catch(() => {});
-      }
+    /**
+     * 仅清理本地登录态并回登录页（**不通知服务端**）。
+     *
+     * 用途：凭证**已经在服务端被吊销**的场景 —— 目前是「自助改密码之后」。
+     * 那种情况下再调 `/api/auth/logout` 必然拿到 401，
+     * 而 401 会走全局 `handleAuthFailure` 弹出红色「登录状态已失效」——
+     * 用户刚改密成功却看到报错（2026-09-23 代码审查发现的 UX 缺陷）。
+     */
+    resetLoginState() {
       this.username = "";
       this.roles = [];
       this.permissions = [];
@@ -102,6 +104,15 @@ export const useUserStore = defineStore("pure-user", {
       //   会复用上一个账号的菜单与路由，导致越权可见或菜单缺失。
       resetAsyncRoutesState();
       router.push("/login");
+    },
+    /** 登出：通知服务端吊销凭证（best-effort）后清理本地状态 */
+    logOut() {
+      // 先读取当前 token 并显式带上，避免清理本地凭证后请求取不到 Authorization
+      const accessToken = getToken()?.accessToken;
+      if (accessToken) {
+        logoutApi(formatToken(accessToken)).catch(() => {});
+      }
+      this.resetLoginState();
     },
     /** 刷新`token`（失败时 reject，避免调用方永久等待） */
     async handRefreshToken(data) {

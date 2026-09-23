@@ -334,6 +334,77 @@ H3（前端令牌改 HttpOnly Cookie）、H5（逻辑删除未过滤）、H9（�
 
 ---
 
+## 七之二、个人中心 + 员工头像（C3 / C2，2026-09-23 启动，**🔄 进行中**）
+
+> **来源**：§6「内容清点待办」的 **C3（个人中心/自助改密码，P1）** 与 **C2（用户头像，P2）**。
+> **过程**：按 `feature-dev-flow` 走 —— ① 需求澄清（`grill-me`：先给建议答案，能用代码查证的不问用户）→ ② 现状扫描 + 横向同类扫描 + 开发计划 → 用户逐项拍板（4 项决策全部采纳推荐值）。
+> **本节即 ①② 的产出物**（《需求确认》+《开发计划》），先归档再动手。
+> **方向调整**：用户 2026-09-23 拍板「先不搞 AI 工作台，先把教务系统搞完善」—— 与 D14「教务系统闭环优先于一切新功能」一致；服务器原地升级**延后**至这轮本地改动验收通过之后。
+
+### 要解决的业务问题
+
+| # | 问题 | 严重性 |
+|---|---|---|
+| 1 | **老师无法自助改密码**：`PUT /api/users/:id/password` 仅 admin；`auth.js` **无任何自助改密端点** → 员工改密码只能找管理员，与「上线必改默认口令」的安全要求**直接冲突** | P1 硬伤 |
+| 2 | 顶栏头像是**写死的占位图**：`auth.js` 在 `buildLoginData` 与 `GET /api/auth/info` **两处硬编码 `avatar: ""`**，前端空值回落内置静态图 → 全链路（表 → 接口 → UI）缺失 | P2 |
+
+### 《需求确认》（用户逐项拍板）
+
+| 项 | 结论 |
+|---|---|
+| 谁用 | **admin + teacher 双角色**，各自只能改**自己** |
+| 形态 | 顶栏**现有**下拉里加「个人中心」→ **独立页面**（`/#/profile`，走 `remaining.ts` 静态路由，**不进菜单**，与 `/ai-admin` 同理） |
+| 改密口径 | 校验原密码 + 新密码 ≥8 位 + 新旧不得相同 + **成功后吊销本人全部已签发凭证（强制重登）** —— 与 H2 一致 |
+| 头像 | `users.avatar`（迁移 **v20**）+ 本人自助上传，落盘 `server/data/assets/avatars/`，**DB 只存相对路径**（ADR-008）；**员工管理页列表也显示头像** |
+| 可改字段 | 姓名 + 手机号 + 头像（**用户名与角色不可自助修改**：前者是登录标识、后者是权限边界） |
+| 明确不做 | 头像裁剪/水印 · 短信验证改手机号 · 头像删除恢复默认 · admin 替员工设头像 · 进菜单 |
+
+### 《开发计划》与横向同类扫描（五问，逐条扫过）
+
+| # | 扫什么 | 结论 |
+|---|---|---|
+| 1 | 多份同步配置 | nginx 只剩一份 `deploy/nginx-unified.conf`（`client_max_body_size 20m`）→ 2MB 头像**无 413 风险**，不用改 |
+| 2 | **同类可编辑内容** | 站点 Logo 已有上传 → `sniffImage` 若在头像里再写一份必然漂移 → **抽 `server/src/utils/image.js` 让两处共用**（本次一并做） |
+| 3 | 同类 bug | 无（属新功能） |
+| 4 | **同类硬编码** | `avatar: ""` 在 `auth.js` 有 **2 处**（`buildLoginData` / `/info`）→ **两处都要改**，只改一处会「登录后头像生效、刷新后失效」 |
+| 5 | 同类页面写法 | 个人中心页照抄 `views/attendance/users/index.vue`（`AppPageHeader` + `el-card` + Tailwind 工具类 + `el-form`）与 `views/system/settings/index.vue`（`el-upload` + `before-upload` + `http-request` + 413 文案翻译） |
+
+### 改动清单
+
+| 层 | 文件 | 动作 |
+|---|---|---|
+| 后端 | `server/src/utils/image.js` | **新增**：公共魔数判型 + 落盘 + 清理旧文件 |
+| 后端 | `server/src/routes/site-info.js` | 改为复用公共实现（删本地 `sniffImage`） |
+| 后端 | `server/src/migrations/020-user-avatar.js` + `index.js` | **新增迁移 v20** |
+| 后端 | `server/src/routes/auth.js` | 两处 `avatar:""` 修真；新增 `PUT /password`、`PUT /profile`、`POST /avatar` |
+| 后端 | `server/src/routes/users.js` | 员工列表补 `avatar` 字段 |
+| 前端 | `src/api/attendance.ts` | 新增 `getMyProfile` / `updateMyPassword` / `updateMyProfile` / `uploadMyAvatar` |
+| 前端 | `src/views/system/profile/index.vue` | **新增**个人中心页 |
+| 前端 | `src/router/modules/remaining.ts` | 加 `/profile`（不进菜单） |
+| 前端 | `src/layout/components/lay-navbar/index.vue` | 现有下拉加「个人中心」项 |
+| 前端 | `src/views/attendance/users/index.vue` | 表格加头像列（无头像回落「姓名首字」） |
+| 文档 | `docs/04-API/API.md` · `docs/04-API/openapi.yaml` · `server/database.md` | 同步（**跑 `_verify_test/check-openapi.mjs`**） |
+| 测试 | `_verify_test/verify-profile.mjs` | **新增**：**双角色对照** API 验证（改密驳回/吊销凭证/越权提权/魔数拒绝/旧头像清理/teacher 被拒 admin 端点） |
+| 工具 | `_verify_test/check-openapi.mjs` | **修正路径漂移**：原写 `docs/openapi.yaml`（不存在）→ 改为 `docs/04-API/openapi.yaml` |
+
+**不改**（已逐项核查确认，非遗漏）：nginx（唯一一份，20m 已足够）· `docker-compose.yml` · `docs/decisions/ADR-*` · 权限中间件（新端点挂在 `/api/auth` 下，`auth` 中间件对双角色均放行）。
+
+### 已识别的遗留项（**待用户拍板**，不在本次范围）
+
+| # | 事项 | 说明 | 优先级 |
+|---|---|---|---|
+| I1 | 删除员工时清理其头像文件 | `DELETE /api/users/:id` 目前只删库行，磁盘 `avatar-{id}-*` 留存（≤2MB/人）。属真实的孤儿文件来源；多数删号场景已被"审计记录/发布过公告/班主任"保护拦住 | P3 |
+| I2 | 头像「恢复默认」（清空） | 本次边界明确不做；若要支持需新增"清空头像 + 删文件"端点 | P3 |
+
+### 待用户实测（K-019：统一入口 **18080**）
+
+1. `http://localhost:18080/#/profile`（或顶栏右上角下拉 →「个人中心」）
+2. **admin 与 teacher 各测一遍**：改姓名/手机号 → 保存后顶栏昵称变化；上传头像 → 顶栏头像立即变化
+3. 改密码：原密码填错应被拒；填对后提示「请用新密码重新登录」并跳登录页
+4. 员工管理页（admin）：列表应出现头像列
+
+---
+
 ## 8. 关键设计决策（落地前需确认口径）
 
 ### 6.1 学员账户口径（建议值，上线前请校长确认一次）

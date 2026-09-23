@@ -5,6 +5,7 @@ inclusion: always
 # 过程与测试（L2 · 主题 · 常驻）
 
 > 深读：`docs/03-开发指南/测试与验证.md`。**流程门禁（需求确认 / 交付门禁 / 生产重建）见 `preferences.md`。**
+> 条目：K-011（写验证脚本的规矩）· K-030（记忆系统原则）· K-031（能力边界）· **K-035（跑脚本的环境事实）**
 
 ## 写验证脚本的规矩（K-011）
 
@@ -12,6 +13,20 @@ inclusion: always
 - 浏览器验证要用**生产构建产物**，不要用 dev server（dev 无 nginx 层，测不出真实问题）。
 - 断言要**打印实际值**，别只打 PASS/FAIL（否则像 K-029 那样误报时无从判断）。
 - ⚠ Windows 下用 `bash xxx.sh` 调脚本时记着 `PATH` 陷阱（见 `deploy.md` K-029）。
+
+## 跑脚本的环境事实（K-035 · 2026-09-23 实测）
+
+> 这三条**每次重跑验证都要用**，写下来免得每次重新试。
+
+- **Playwright 脚本用系统 Python**：`"C:\Program Files\Python314\python"`（已装 `playwright` + `requests`）。
+  ★ **managed python（`~/.workbuddy/binaries/python/.../3.13.12`）没装这两个包** —— 直接 `python xxx.py` 会 `ModuleNotFoundError`。
+- **本地生产构建**：`node node_modules/vite/bin/vite.js build`（配 `NODE_OPTIONS=--max-old-space-size=8192`），**约 33 秒**。
+  - `pnpm build` 在本机会 `MODULE_NOT_FOUND`（缺 `rimraf`）→ 别用它
+  - `npx vite build` 会**卡死**（本次实测 >15 分钟无输出，已中止）→ 别用它
+  - 容器内不受影响（`Dockerfile.unified` 内 `pnpm build` 正常）
+- **契约门禁**：`node _verify_test/check-openapi.mjs`（路径已修正为 `docs/04-API/openapi.yaml`）。
+- ★ **`el-upload` 会往 DOM 注隐藏 `input[type=file]`** → Playwright 里**别用 `input:not([disabled])` / `input[type=password]` 这类宽泛选择器**
+  去抓表单控件（会命中不可见元素、`fill` 超时 30s）；**一律按 `placeholder` 精确定位**。
 
 ## 项目级 skill（强约束）
 

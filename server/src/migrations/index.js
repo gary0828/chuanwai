@@ -23,7 +23,8 @@ const migrations = [
   require("./016-feedback"),
   require("./017-ai-settings"),
   require("./018-growth-timeline"),
-  require("./019-todos")
+  require("./019-todos"),
+  require("./020-user-avatar")
 ];
 
 function migrate(db) {

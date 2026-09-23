@@ -137,7 +137,10 @@ updated: 2026-09-21
 | 模块 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- | --- |
 | 认证 | POST | `/api/auth/login` | 公开 | 统一登录入口（`type=password`） |
-| 认证 | GET | `/api/auth/info` | 登录 | 当前用户信息 |
+| 认证 | GET | `/api/auth/info` | 登录 | 当前用户信息（含 `avatar`、`phone`；`avatar` 为空串表示未上传头像） |
+| 认证 | PUT | `/api/auth/password` | 登录 | **自助改密码**：需 `old_password` + `password`（≥8 位）；成功后**吊销本人全部已签发凭证 → 强制重新登录**（与 H2 一致）。管理员重置他人密码仍走 `PUT /api/users/:id/password` |
+| 认证 | PUT | `/api/auth/profile` | 登录 | **自助改资料**：仅 `name` / `phone`；**用户名与角色不可自助修改**（用户名是登录标识、角色是权限边界） |
+| 认证 | POST | `/api/auth/avatar` | 登录 | **上传头像**：原始二进制直传，`express.raw()` 直收（不引 multer），**文件头魔数校验**，≤2MB，落盘 `server/data/assets/avatars/`，DB 只存相对路径，**上传后自动清理该用户旧头像** |
 | 认证 | GET | `/api/auth/async-routes` | 登录 | 动态菜单路由（按角色） |
 | 认证 | POST | `/api/auth/refresh-token` | 公开 | 刷新 Token |
 | 认证 | POST | `/api/auth/logout` | 登录 | 退出登录 |

@@ -34,7 +34,9 @@
 | v18  | 学生成长时间轴     | 新增 5 张表，为 AI 工作台的「学生成长路径」提供数据地基：`student_timeline`（成长时间轴，**只增不改**）、`knowledge_points`（知识点体系，课时级粒度）、`class_evaluations`（课堂评价，3 维 1–5 分）、`kp_assessments`（知识点掌握评定，三档）、`growth_thresholds`（成长阈值，8 条默认值，可按真实分布调整不重建镜像）。**既有业务表一张未动**：出勤/成绩/课时仍由原表承载，读取时 UNION 合并 —— 见下文「★ 分工铁律」 |
 | v19  | 待办               | 新增 `todos`（待办）。**双端共用一张表 + 按角色过滤**，而不是两套表：`owner_id` 区分归属（教务端校区负责人 / AI 工作台一线老师读同一张表），`creator_id` 记录谁建的，`source` 区分 `manual`（手工）/ `auto`（L3 由业务事件自动生成）。★ 建 `(source_type, source_ref_id, owner_id)` **部分唯一索引** —— 这是 **L3 自动生成的幂等去重键**，提前在 v19 建好，L3 无需再迁移。**既有业务表一张未动** |
 
-当前最新版本：**v19**（`PRAGMA user_version` = 19）
+| v20  | 员工头像           | `users` 新增 `avatar TEXT NOT NULL DEFAULT ''`（**只存相对路径**，如 `/assets/avatars/avatar-3-20260923...png`）。配套三个自助端点（改密码 / 改资料 / 上传头像，admin 与 teacher 均只改自己）。文件本体落盘 `server/data/assets/avatars/`，**随 `server/data/` 一起备份**（只备份 db 会丢文件）。上传判型与落盘复用公共实现 `server/src/utils/image.js`，与站点 Logo 同一套魔数校验 |
+
+当前最新版本：**v20**（`PRAGMA user_version` = 20）
 
 > 📌 **不占版本号的表结构复用**：站点信息（`site.*`，见「settings」节）**复用 v6 的 `settings` 键值表**，**没有为它单独建迁移**。判断标准：只有**新建/改动表结构**才需要迁移；往既有 K-V 表里加键位属于纯数据写入，不算 schema 变更。
 > （例：v19 是「建 `todos` 表」所以占版本号；`site.*` 只是往 v6 的 `settings` 里加行，所以不占。）
@@ -52,6 +54,7 @@
 | role          | TEXT    | NOT NULL, DEFAULT 'teacher', CHECK IN ('admin','teacher')（v14 收紧） | 角色：管理员/教师（学生/家长无账号） |
 | phone         | TEXT    | UNIQUE                                                                | 手机号                               |
 | token_version | INTEGER | NOT NULL, DEFAULT 0（v15 新增）                                       | 凭证版本号；登录时写入 JWT 的 `tv` 声明，鉴权时比对。递增即吊销该员工全部已签发凭证（登出/改密/改角色） |
+| avatar        | TEXT    | NOT NULL, DEFAULT ''（v20 新增）                                      | 头像**相对路径**（`/assets/avatars/...`），空串表示未上传 → 前端回落内置占位图。**不存二进制**（ADR-008） |
 | created_at    | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')                         | 创建时间                             |
 
 ### user_oauth（第三方/多端绑定，预留微信小程序）

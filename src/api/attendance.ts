@@ -145,6 +145,31 @@ export const deleteUser = (id: number) => {
   return http.request("delete", `/api/users/${id}`);
 };
 
+/** ---------- 个人中心（自助：admin / teacher 都只改自己的） ---------- */
+
+/** 我的资料（用户名 / 姓名 / 手机号 / 头像） */
+export const getMyProfile = () => {
+  return http.request("get", "/api/auth/info");
+};
+
+/** 自助改密码：需原密码；成功后后端吊销本人全部凭证 → 调用方应登出并跳登录页 */
+export const updateMyPassword = (data: object) => {
+  return http.request("put", "/api/auth/password", { data });
+};
+
+/** 自助改资料（姓名 / 手机号；用户名与角色不可改） */
+export const updateMyProfile = (data: object) => {
+  return http.request("put", "/api/auth/profile", { data });
+};
+
+/** 上传头像：原始二进制直传，后端做魔数校验（与站点 Logo 同一套判型） */
+export const uploadMyAvatar = (file: File) => {
+  return http.request("post", "/api/auth/avatar", {
+    data: file,
+    headers: { "Content-Type": file.type || "application/octet-stream" }
+  });
+};
+
 /** ---------- 班级详情 / 学生导入导出 ---------- */
 
 /** 班级学生名单 + 今日出勤概况 */

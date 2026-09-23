@@ -53,6 +53,27 @@ export default [
       }
     ]
   },
+  // 个人中心：**不出现在菜单里**，从顶栏右上角下拉进入（admin / teacher 都可用自己的凭证改自己的资料）。
+  // 与 /ai-admin 同理放在 remaining —— 保证它永远不会被下发成菜单项。
+  {
+    path: "/profile",
+    component: Layout,
+    meta: {
+      title: "个人中心",
+      showLink: false
+    },
+    children: [
+      {
+        path: "/profile",
+        name: "Profile",
+        component: () => import("@/views/system/profile/index.vue"),
+        meta: {
+          title: "个人中心",
+          showLink: false
+        }
+      }
+    ]
+  },
   {
     path: "/redirect",
     component: Layout,

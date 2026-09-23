@@ -183,10 +183,79 @@ paths:
   /api/auth/info:
     get:
       tags: [Auth]
-      summary: 当前用户信息
+      summary: 当前用户信息（含 avatar / phone）
+      description: >-
+        `avatar` 为头像**相对路径**；空串表示未上传头像，前端回落内置占位图。
       responses:
         "200": { description: 成功 }
         "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/password:
+    put:
+      tags: [Auth]
+      summary: 自助修改密码（admin / teacher 均可改自己的）
+      description: >-
+        必须校验原密码；新密码至少 8 位且不能与原密码相同。成功后递增该账号的
+        `users.token_version`（H2 口径），**该账号全部已签发凭证立即失效**，前端应登出并跳登录页。
+        管理员重置**他人**密码仍走 `PUT /api/users/:id/password`（仅 admin）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_password, password]
+              properties:
+                old_password: { type: string }
+                password: { type: string, minLength: 8 }
+      responses:
+        "200": { description: 已修改，凭证已吊销 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/profile:
+    put:
+      tags: [Auth]
+      summary: 自助修改个人资料（姓名 / 手机号）
+      description: >-
+        只能改自己的 `name` 与 `phone`。**用户名与角色不可自助修改**（用户名是登录标识、
+        角色是权限边界，只能由 admin 在员工账号页改）。手机号允许传空串清空；非空时校验 11 位大陆手机号，
+        与他人重复返回 400。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 50 }
+                phone: { type: string }
+      responses:
+        "200": { description: 已更新，返回最新资料 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/avatar:
+    post:
+      tags: [Auth]
+      summary: 自助上传头像（原始二进制直传）
+      description: >-
+        请求体为图片二进制（`express.raw()` 直收，不引 multer）。按**文件头魔数**判型
+        （png / jpg / webp / svg / ico，忽略客户端声明的 MIME），上限 2MB（超限由 nginx 层返回 413）。
+        落盘 `server/data/assets/avatars/`，文件名 `avatar-{用户id}-{时间戳}-{rand8}{ext}`；
+        **DB 只存相对路径**（ADR-008），上传后自动清理该用户上一张头像。
+        与站点 Logo 上传（`POST /api/site-info/upload`）共用同一份判型实现 `server/src/utils/image.js`。
+      requestBody:
+        required: true
+        content:
+          image/*:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: 已上传，返回头像相对路径
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { description: 文件过大（上限 2MB） }
 
   /api/auth/async-routes:
     get:

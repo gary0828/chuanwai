@@ -33,7 +33,7 @@ router.get("/", auth, requireRole("admin"), (req, res) => {
     .get(...params).c;
   const list = db
     .prepare(
-      `SELECT u.id, u.username, u.name, u.role, u.phone, u.created_at
+      `SELECT u.id, u.username, u.name, u.role, u.phone, u.avatar, u.created_at
        FROM users u
        ${where}
        ORDER BY u.id DESC LIMIT ? OFFSET ?`

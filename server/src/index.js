@@ -85,6 +85,23 @@ const loginLimiter = rateLimit({
 });
 app.use("/api/auth/login", loginLimiter);
 
+// ── 自助改密码限速（同样只计失败）─────────────────────────────────────
+// 2026-09-23 新增：登录有限速，但"已登录后改密码"此前没有 —— 凭证一旦被窃，
+// 攻击者可在这里离线式地反复猜原密码，猜中即可**持久化**接管（改密不像 token 可被吊销）。
+// skipSuccessfulRequests：正常改密成功不该占额度。
+const passwordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: config.loginRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: {
+    success: false,
+    message: "原密码错误次数过多，请 15 分钟后再试"
+  }
+});
+app.use("/api/auth/password", passwordLimiter);
+
 // ── 审计中间件：自动记录登录用户的所有 /api 写操作（成功响应后写入）──
 // 注：finance / leads / exams / schedule-adjustments / makeup-classes 这 5 个模块
 //     在各自路由内已调用 audit() 写入语义化动作名（如「修改报班订单」），
