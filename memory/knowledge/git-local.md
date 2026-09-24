@@ -33,6 +33,10 @@ git checkout <good-commit> -- <path>      # checkout 是安全的
 > `fatal: could not read Username for 'https://gitee.com': terminal prompts disabled`。
 > ★ 上一轮 G1+G2 交付就是**因为这一条卡住没推上去**（当时定性为"凭据不可用"），
 > 别把它当"网络问题"重排一遍。
+>
+> ✅ **2026-09-23 后记**：删掉死代理（见下方 K-024）后，**直接 `git push gitee main` 已实测成功**
+> （`ls-remote` / `push --dry-run` / 真实 push 三条全绿，全程无 `-c` 覆盖）。
+> **先试裸推**；只有真的挂住/报 `terminal prompts disabled` 时，才启用下面这套内联 helper 戏法。
 
 **已排除的**（别再重复排查）：网络通（`ls-remote` 秒回）、凭据确实存在
 （Windows 凭据管理器 `LegacyGeneric:target=git:https://gitee.com`）。
@@ -63,8 +67,8 @@ timeout 180 git -c http.proxy= -c https.proxy= \
 - **安全**：凭据只经环境变量传递，**不写进 `.git/config`**（推完已 `grep` 核实为 0）；命令里也别 `echo` 密码。
 - 备选：让用户在自己终端手动 `git push gitee main`（会弹 GCM 登录），成功后本机凭据即刷新。
 
-**顺带一颗雷**：`~/.gitconfig` 的 `http.proxy = https.proxy = http://127.0.0.1:7890` 是**失效死代理**
-→ **任何不带 `-c http.proxy=` 覆盖的远端操作都会失败**（K-024）。**建议直接删掉这两行**，不必每次靠覆盖绕过。
+~~**顺带一颗雷**：`~/.gitconfig` 的 `http.proxy = https.proxy = http://127.0.0.1:7890` 是**失效死代理**~~
+→ ✅ **已于 2026-09-23 按用户要求删除**（见下方 K-024 顶部）。**不再需要任何 `-c http.proxy=` 覆盖。**
 
 ## ★ 被中断的命令会留孤儿 git 进程 + `.git/index.lock`
 
@@ -73,15 +77,60 @@ timeout 180 git -c http.proxy= -c https.proxy= \
 
 处置：先 `tasklist /FI "IMAGENAME eq git.exe"` 找 PID → `taskkill /F /PID <pid>` → 再删 `.git/index.lock`。
 
-## K-024 · 推送（本机配了失效的死代理）
+## K-024 · 推送（~~本机配了失效的死代理~~ → ✅ **已根治，2026-09-23**）
 
-- 本机 git 配了 `http.proxy=127.0.0.1:7890`（已失效）→ 推送会卡死。**必须绕开：**
+> ★ **这颗雷已经拆了，别再绕。** 用户原话：「删除掉那两个代理，确保以后不会再出现不能推送到 gitee 的情况」。
+>
+> **处置**（已执行，备份在 `~/.gitconfig.bak-20260923`）：
+> ```bash
+> cp ~/.gitconfig ~/.gitconfig.bak-20260923
+> git config --global --unset http.proxy
+> git config --global --unset https.proxy
+> git config --global --get-regexp proxy   # 应无输出（exit=1）
+> ```
+> **根治后实测**（均**不带**任何 `-c` 覆盖）：
+> - `git ls-remote --heads gitee` → exit=0，返回 `ea873ba… refs/heads/main`
+> - `git push --dry-run gitee main` → exit=0，`Everything up-to-date`
+> - 真实 `git push gitee main` → 成功（本次提交即证据）
+>
+> 因此：**下面的"绕法"和 K-039 的凭据戏法只在"GCM 恰好抽风"时才用得上，日常 push 直接 `git push gitee main` 即可。**
+
+<details><summary>历史（死代理还在时的症状，仅供排查时对照）</summary>
+
+- 本机 git 曾配 `http.proxy=127.0.0.1:7890`（已失效）→ 推送会卡死。**当时**必须绕开：
   ```bash
   git -c http.proxy= -c https.proxy= push gitee main
   ```
   同时清掉环境变量 `HTTP_PROXY` / `HTTPS_PROXY` / `http_proxy` / `https_proxy`。
+- 不带覆盖时 `ls-remote` 直接报 `Failed to connect to gitee.com:443 over proxy 127.0.0.1 after 2059 ms`。
+</details>
+
+剩下仍然成立的两条**纪律**（与代理无关）：
 - 推**公开**仓库前必扫敏感数据：`.env`、`*.db`（学员数据）、`evidence/`（截图）。
 - 只推 **gitee**，不推 GitHub（用户 2026-09-23 拍板）。
+
+### K-024 补充 · 2026-09-23 晚推送失败的正确排查姿势（**省时间的，先看这里**）
+
+> ⚠️ 本次**没先读本文件**，从零试了 8 轮并给出错误结论 → 立此四条。
+
+- **死代理的影响面比原先记的更大**：**任何**不带 `-c http.proxy=` 覆盖的远端操作都会失败。
+  实测：不带覆盖时 `ls-remote` 直接报
+  `Failed to connect to gitee.com:443 over proxy 127.0.0.1 after 2059 ms`。
+- **`git push --dry-run` 是分诊利器**：它完成认证 + 协商但**不传对象**。
+  - 实测 **4 秒失败 exit=128** → 说明**不是网络卡住**（别往"网络慢/超时"方向查）
+  - 对照 `ls-remote` **1.2 秒成功** → 说明直连与代理覆盖都没问题
+- **凭据是好的，别再怀疑它**：
+  ```bash
+  printf 'protocol=https\nhost=gitee.com\n\n' | git -c http.proxy= -c https.proxy= credential fill
+  ```
+  能返回 `username=` + `password=`（GCM 正常）→ "GCM 取不到凭据"是**错误结论**。
+- ★ **看不到报错 ≠ 没有报错**：**PowerShell 管道会吞掉 git 的 stderr**
+  （`2>&1 | Out-String`、`*> file` 本次都捞不到）。
+  诊断请用 **Bash 文件重定向**（`git ... > out.txt 2> err.txt`）或 `Start-Process -RedirectStandardError`。
+- ✅ **2026-09-23 结案**：那条"未定论"的 push 失败，**根因就是死代理**（`127.0.0.1:7890` 连不通，
+  git 拿不到远端 → 退化到要用户名 → `terminal prompts disabled`）。
+  删掉代理后**同一环境裸推成功**，K-039 的"GCM 取不到凭据"是**错误的中间结论**（被 `credential fill` 证伪过一次，现在再证伪第二次）。
+  **排查顺序记住：先看有没有代理，再查凭据。**
 
 ## K-013 · `grep -r` + 通配符会静默返回空
 

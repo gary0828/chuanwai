@@ -60,6 +60,28 @@ inclusion: always
 
 - **任何功能开发，第一步先加载项目级 skill `feature-dev-flow`**（内含流程门禁与开发阶段）。
 - 该 skill 违反过：直接动手写代码、跳过需求澄清。
+- ★ 实测：`Skill` 工具**加载不到**它（不在会话启动的静态清单一里）→ 直接 **Read**
+  `C:\Users\rui08\Desktop\教学管理系统\.workbuddy\skills\feature-dev-flow\SKILL.md`，效果一样。
+
+## ★★ 会话开局硬门禁（K-039 · 2026-09-23 当天第二次踩）
+
+> `memory/INDEX.md` 要求「每会话开局**必读 4 份** + 按改动跑 `route.mjs`」。
+> **这不是建议，是动手前的门禁** —— 跳过它**同一天已两次**付出真实代价：
+
+| 次 | 时间 | 代价 |
+|---|---|---|
+| 1 | 2026-09-23 11:25 | 自检发现「会话开头没先读记忆，也没先加载 `feature-dev-flow`」 |
+| 2 | 2026-09-23 21:xx | **推送失败排查时没读 `git-local.md`（K-024 里就写着死代理与绕法）** → 从零试了 8 轮，还给出**错误结论**（断言"GCM 取不到凭据"，随后被 `git credential fill` 证伪），最后**由用户提醒"你查一下记忆"才发现** |
+
+**照做清单**（不可只读 CURSOR 就动手）：
+
+1. 必读 4 份：`CURSOR.md` · `knowledge/process.md` · `knowledge/git-local.md` · `knowledge/preferences.md`
+2. 再跑：`node memory/route.mjs --changed`
+3. 功能开发另加：先读 `.workbuddy/skills/feature-dev-flow/SKILL.md`
+
+★ **触发点判据：「我正准备动手 / 排查」。**
+特别是**排查类**任务最危险 —— 人本能地直接开试，而**记忆里往往已经写着答案**（本次就是）。
+**先花 1 分钟读，再动手。**
 
 ## 记忆系统自身（K-030 · 用户 2026-09-23 拍板）
 
