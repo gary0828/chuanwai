@@ -70,6 +70,39 @@ fileMatchPattern:
   ```
   根治办法：项目放纯 ASCII 路径。
 
+## K-043 · 生产库升级：先构建后切换 + 先查 `git remote`（2026-09-24 写手册时固化）
+
+> 给「老师正在用」的服务器升级时，这两条能把风险压到最低。完整照抄步骤见
+> `docs/06-部署/服务器升级-小白操作手册.md`。
+
+### ① 低停机：拆成两步，别让构建时间算进停机窗口
+
+- ❌ 原写法 `docker compose up -d --build --force-recreate`：**构建 3–8 分钟全在服务不可用状态**
+- ✅ 正确：
+  ```bash
+  docker compose build                              # 旧容器照常服务，用户完全无感
+  docker compose up -d --no-build --force-recreate  # 停机仅 10–30 秒
+  ```
+- 原理：镜像建好前旧容器一直在跑；`--force-recreate` 才真正换容器（K-040，缺了它不换）。
+
+### ② ★ `git pull` 前必看 `git remote -v`
+
+- 项目**只推 gitee**（K-027），**github 那份是几个月前的旧代码**。
+- 服务器若 `origin` = github → `git pull` **会成功但拉到旧版**，表现为"升级完成"而版本没变，**极难察觉**。
+- 处置：
+  ```bash
+  git remote -v
+  git pull https://gitee.com/gary0828/chuanwai.git main
+  git remote set-url origin https://gitee.com/gary0828/chuanwai.git   # 顺手改回来
+  ```
+- 升级后**必须核对** `git log --oneline -1` 是否等于预期 commit，别只看命令没报错。
+
+### ③ 回滚优先级（给非工程师时尤其重要）
+
+1. **PVE 虚拟机快照回滚** —— 一键、连数据一起回，最可靠
+2. 命令行：`stop` → `restore-db.sh` 还原数据 → `git checkout` 退回旧代码 → 重建
+   ⚠️ **迁移单向**：只回程序或只回数据**都会起不来**，两个必须一起回
+
 ## 验收
 
 ```bash
