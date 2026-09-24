@@ -32,7 +32,10 @@
 
 ## ⚠ 本机硬红线（详见 `knowledge/git-local.md`）
 - **禁用 `git rm`**（K-028，会清空整个目录）→ `git update-index --force-remove` + `os.remove`
-- **推送**：直接 `git push gitee main` 即可（死代理已删，K-024 已根治）。**只有真挂住/报 `terminal prompts disabled` 时**才用 K-039 的内联 helper 兜底
+- **推送**：直接 `git push gitee main` 即可（git 配置里的死代理已删，K-024 已根治）。
+  **只有真挂住/报 `terminal prompts disabled` 时**才用 K-039 的内联 helper 兜底
+- ⚠ **代理还有第二层**：会话会注入环境变量 `http(s)_proxy=127.0.0.1:14381`（活的，非持久化）。
+  若某天报 `Failed to connect … over proxy`，用 `env -u http_proxy -u https_proxy … git …` 自救（**K-042**）
 - 中文目录 → `docker compose --build` 必失败，走两步法 + **`up -d --force-recreate --no-build`**
   （★ 少了 `--force-recreate` 容器不会重建，会继续跑旧镜像 —— **K-040**）
 - 跑脚本 / 构建的环境事实 **K-035**；清点方法 **K-037**；模板插值坑 **K-038**

@@ -109,6 +109,26 @@ timeout 180 git -c http.proxy= -c https.proxy= \
 - 推**公开**仓库前必扫敏感数据：`.env`、`*.db`（学员数据）、`evidence/`（截图）。
 - 只推 **gitee**，不推 GitHub（用户 2026-09-23 拍板）。
 
+### K-042 · 删完 git 配置代理后，**环境变量里还有一层**（2026-09-23 复查发现）
+
+> 删掉 `http/https.proxy` 后仍**不能算彻底** —— 还有第二个来源：**环境变量**。
+
+- 实测本机（Agent 会话内）**注入了 4 个**环境变量代理：
+  `http_proxy` / `https_proxy` / `HTTP_PROXY` / `HTTPS_PROXY` = `http://127.0.0.1:14381`。
+- **它是活的**（`netstat` 有 `LISTENING`），且**不在任何 shell 启动文件**
+  （`~/.bashrc` `.bash_profile` `.profile` `.zshrc` `/etc/profile` **全查过，无**）→ 属**会话注入**，不是持久化配置。
+- ★ **结论：直连本身是通的。** 决定性取证：
+  ```bash
+  env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy \
+    git ls-remote gitee main      # exit=0 → 无代理也能连 gitee
+  ```
+- **真出问题时怎么查**（优先级从高到低）：
+  1. `git config --global --get-regexp proxy`（**已确认清空**）
+  2. `env | grep -i -E "^(http|https|all)_proxy"` ← **这一层还在，别漏**
+  3. 用 `env -u …` 排除后再试，就能分清是"代理死了"还是"网不通"
+- ⚠️ 若某天这 4 个变量还在、但 `14381` 那个监听没了 → 症状会和 K-024 一模一样
+  （`Failed to connect … over proxy`）。**到时用 `env -u` 那一行即可自救。**
+
 ### K-024 补充 · 2026-09-23 晚推送失败的正确排查姿势（**省时间的，先看这里**）
 
 > ⚠️ 本次**没先读本文件**，从零试了 8 轮并给出错误结论 → 立此四条。
