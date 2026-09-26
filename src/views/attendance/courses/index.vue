@@ -117,7 +117,10 @@ onMounted(loadData);
 
 <template>
   <div class="app-page">
-    <AppPageHeader title="课程管理" description="课程与课时单价维护" />
+    <AppPageHeader
+      title="课程管理"
+      description="课程与课时单价维护；「默认授课教师」仅作展示，实际任课见「排课与课表 → 任课关系」"
+    />
     <el-card shadow="never">
       <!-- 搜索 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">
@@ -142,7 +145,7 @@ onMounted(loadData);
         <el-table-column type="index" label="#" width="60" align="center" />
         <el-table-column prop="code" label="课程代码" min-width="120" />
         <el-table-column prop="name" label="课程名称" min-width="160" />
-        <el-table-column prop="teacher" label="授课教师" min-width="120" />
+        <el-table-column prop="teacher" label="默认授课教师" min-width="130" />
         <el-table-column prop="created_at" label="创建时间" min-width="170" />
         <el-table-column
           v-if="isAdmin"
@@ -179,15 +182,21 @@ onMounted(loadData);
 
     <!-- 新增/编辑弹窗 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="480px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="112px">
         <el-form-item label="课程代码" prop="code">
           <el-input v-model="form.code" placeholder="如：SE101" />
         </el-form-item>
         <el-form-item label="课程名称" prop="name">
           <el-input v-model="form.name" placeholder="请输入课程名称" />
         </el-form-item>
-        <el-form-item label="授课教师" prop="teacher">
-          <el-input v-model="form.teacher" placeholder="请输入授课教师" />
+        <el-form-item label="默认授课教师" prop="teacher">
+          <el-input v-model="form.teacher" placeholder="仅作展示，如：张老师" />
+        </el-form-item>
+        <el-form-item label=" ">
+          <span class="text-xs text-gray-500 leading-5">
+            此栏仅用于课程列表展示，不影响排课与权限。实际「谁教哪个班」请在
+            「排课与课表 → 任课关系」里设置。
+          </span>
         </el-form-item>
       </el-form>
       <template #footer>

@@ -103,6 +103,49 @@ fileMatchPattern:
 2. 命令行：`stop` → `restore-db.sh` 还原数据 → `git checkout` 退回旧代码 → 重建
    ⚠️ **迁移单向**：只回程序或只回数据**都会起不来**，两个必须一起回
 
+## ★ K-047 · 验证脚本会**自污染**，最终把自己搞崩（K-041 的升级版，2026-09-26）
+
+> K-041 讲的是"断言的**前置条件会过期**"。**更狠的一种**：脚本**自己改掉了它依赖的前置条件**，
+> 且**没有清理机制** → 跑若干次后必然崩。**"跑越多越红"就是它的指纹。**
+
+**真实事故**（`server/scripts/verify-sessions.mjs`）：
+
+| 症状 | 根因 |
+|---|---|
+| 第 5 次跑时 `C6` 之后**直接 TypeError 崩溃**（`freeSlot[0]` on null），**后半个脚本一条都没跑** | 挪课测试**硬编码 4 个候选时段**（11-30/12-01/12-02/12-03 第 8 节），而它**每跑一次就占用一个** → 跑满 4 次候选耗尽。实测这 4 条课次 `origin='挪课'`，创建于 09-23、09-24（正是历次运行时间） |
+| `C7 挪课成功` 假红：报"该课次已挪课不可重复挪课"，但 `C8` 又显示 `status=待上课` | `target = futureSessions[0]` 可能选到历次测试留下的"脏"课次（`related_session_id` 非空、状态却被恢复成待上课）→ 服务端**正确地**拒绝，红得没有意义 |
+
+**处置（三条，可复用）**：
+
+1. **硬编码候选 → 动态搜索**（本次改为"未来 60 天逐日找空闲时段"）
+2. **取目标时排除"脏"数据**（如 `related_session_id == null` 才算干净），**别用「取第一个」**
+3. **找不到就 `sk()` 如实跳过**，**绝不让脚本崩** —— 崩溃会让**后面的断言全部没跑**，
+   比多一条红灯危险得多（容易被误判成"整个功能坏了"）
+
+**判断口诀**：某脚本跑多次越来越红？先查它**有没有改数据**、**改完有没有清理**。
+
+## ★ K-046 · 数据库备份**只有一种安全实现**：`VACUUM INTO`（2026-09-26 统一）
+
+> 项目里备份有**两条入口**（都保留，用途不同），但**技术实现必须一致**。
+
+| 入口 | 面向谁 | 产物 |
+|---|---|---|
+| 应用内「系统管理 → 数据备份」 | 校区管理员，**零依赖、可自助恢复** | `server/data/backups/backup-*.db` |
+| `server/scripts/backup-db.sh` | 运维，停机外的灾难恢复通道 | `server/data/attendance-*.db` |
+
+- ★ **两条都必须用 `VACUUM INTO`**，**不要**用 `wal_checkpoint` + `copyFileSync`：
+  后者会漏掉 `-wal` 里未落页的数据，**拷出来可能是损坏库**（`backup-db.sh` 的注释早就写明这点，
+  但应用内那套曾长期用 copy —— 2026-09-26 已统一）。
+- 实现：`server/src/utils/backup.js` 的 `createBackup()`（`db.exec("VACUUM INTO '...'")`），
+  与运维脚本同一原理；顺带去掉了原来的 `wal_checkpoint(TRUNCATE)`（`VACUUM INTO` 本身读一致视图）。
+- 加固点：目标同名文件先清理；失败时**清掉半成品**（否则半成品会被 `listBackups` 当成可用备份，恢复它＝恢复损坏库）。
+- **验证备份真的可用**（别只看文件存在）：
+  ```bash
+  node -e "const{DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('server/data/backups/backup-xxx.db');
+  console.log(d.prepare('PRAGMA integrity_check').get(), d.prepare('PRAGMA foreign_key_check').all().length)"
+  ```
+  期望：`integrity_check = ok`、外键违规数 0、学员数/考勤数与主库一致。
+
 ## 验收
 
 ```bash

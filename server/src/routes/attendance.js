@@ -11,6 +11,7 @@ const {
   teacherClassPredicate
 } = require("../utils/scope");
 const { getDeductStatuses } = require("../utils/attendance-rules");
+const { attendanceRate } = require("../utils/attendance-rate");
 const { parseDate } = require("../utils/validate");
 
 const router = express.Router();
@@ -493,8 +494,7 @@ router.get("/statistics", auth, (req, res) => {
       early_count: Number(item.early_count || 0),
       absent_count: absent,
       leave_count: Number(item.leave_count || 0),
-      attendance_rate:
-        total > 0 ? Number((((total - absent) / total) * 100).toFixed(1)) : 0
+      attendance_rate: attendanceRate(total, absent)
     };
   });
 
@@ -574,8 +574,7 @@ router.get("/statistics/trend", auth, (req, res) => {
       early_count: Number(r.early_count || 0),
       absent_count: absent,
       leave_count: Number(r.leave_count || 0),
-      attendance_rate:
-        total > 0 ? Number((((total - absent) / total) * 100).toFixed(1)) : 0
+      attendance_rate: attendanceRate(total, absent)
     };
   });
 
@@ -654,18 +653,14 @@ router.get("/statistics/monthly", auth, (req, res) => {
     c.month_data[r.month] = {
       total,
       absent,
-      attendance_rate:
-        total > 0 ? Number((((total - absent) / total) * 100).toFixed(1)) : 0
+      attendance_rate: attendanceRate(total, absent)
     };
     c.total += total;
     c.absent += absent;
   }
   const rowList = [...byClass.values()].map(c => ({
     ...c,
-    attendance_rate:
-      c.total > 0
-        ? Number((((c.total - c.absent) / c.total) * 100).toFixed(1))
-        : 0
+    attendance_rate: attendanceRate(c.total, c.absent)
   }));
 
   const sTotal = Number(summary.total || 0);
@@ -678,10 +673,7 @@ router.get("/statistics/monthly", auth, (req, res) => {
       summary: {
         total: sTotal,
         absent: sAbsent,
-        attendance_rate:
-          sTotal > 0
-            ? Number((((sTotal - sAbsent) / sTotal) * 100).toFixed(1))
-            : 0
+        attendance_rate: attendanceRate(sTotal, sAbsent)
       }
     }
   });
@@ -729,7 +721,7 @@ router.get("/warnings", auth, (req, res) => {
     .map(r => {
       const total = Number(r.total || 0);
       const absent = Number(r.absent_count || 0);
-      const rateVal = Number((((total - absent) / total) * 100).toFixed(1));
+      const rateVal = attendanceRate(total, absent);
       return {
         ...r,
         total,

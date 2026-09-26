@@ -9,6 +9,7 @@
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
+const { attendanceRate, absentRate } = require("../utils/attendance-rate");
 
 const router = express.Router();
 
@@ -35,14 +36,15 @@ function parsePeriod(query) {
 const METRIC_DEFINITIONS = {
   attendance_rate: {
     name: "出勤率",
-    formula: "实到人数 / 应到人数",
-    note: "实到 = 状态为 正常/迟到/早退；请假不计入分母",
+    formula: "(应到总数 − 缺勤) / 应到总数",
+    note: "★ 2026-09-26 口径统一：请假计入分母且不计为缺勤（请假不拉低出勤率）。此前本端点用「实到 /(总数−请假)」，与统计报表数字对不上，已废除。实现见 utils/attendance-rate.js",
     source_table: "attendances",
     unit: "百分比"
   },
   absent_rate: {
     name: "缺勤率",
-    formula: "缺勤人数 / 应到人数",
+    formula: "缺勤 / 应到总数",
+    note: "与出勤率同分母，故 出勤率 + 缺勤率 = 100%；请假率是与之重叠的独立维度，不可再与两者相加",
     source_table: "attendances",
     unit: "百分比"
   },
@@ -227,7 +229,9 @@ router.get("/overview", (req, res) => {
   const attTotal = Number(att.total || 0);
   const attPresent = Number(att.present || 0);
   const attAbsent = Number(att.absent || 0);
-  const attDenom = attTotal - Number(att.leave_cnt || 0); // 请假不计入应到分母
+  // ★ 口径统一（2026-09-26）：出勤率/缺勤率一律用「应到总数」作分母（请假计入），
+  //   与 attendance.js / reports.js 完全一致。此前这里剔除了请假 → 同一指标跨页面数字对不上。
+  //   attPresent 仅作为明细字段返回，不再参与比率计算。
 
   // 财务（受 period 过滤）
   const payWhere = [];
@@ -306,8 +310,8 @@ router.get("/overview", (req, res) => {
     attendance_present: attPresent,
     attendance_absent: attAbsent,
     attendance_leave: Number(att.leave_cnt || 0),
-    attendance_rate: pct(attPresent, attDenom),
-    absent_rate: pct(attAbsent, attDenom),
+    attendance_rate: attendanceRate(attTotal, attAbsent),
+    absent_rate: absentRate(attTotal, attAbsent),
     revenue_income: Number(income.toFixed(2)),
     revenue_refunded: Number(refunded.toFixed(2)),
     revenue_total: Number((income - refunded).toFixed(2)),

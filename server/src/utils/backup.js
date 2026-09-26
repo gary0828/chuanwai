@@ -19,21 +19,41 @@ function safeName(filename) {
   return typeof filename === "string" && /^backup-\d{8}-\d{6}\.db$/.test(filename);
 }
 
-/** 执行一次备份：WAL checkpoint 后复制主库文件，返回备份信息 */
+/** 执行一次备份：用 VACUUM INTO 生成一致性快照，返回备份信息
+ *
+ * ★ 2026-09-26 改造（统一安全实现）：
+ *   原实现 = `wal_checkpoint(TRUNCATE)` + `fs.copyFileSync`。
+ *   而本项目的运维脚本 backup-db.sh 一直用 `VACUUM INTO`，其注释明确指出
+ *   「直接 copy 会漏掉 -wal 里未落的页，拷出来的副本可能是损坏的」——
+ *   即应用内这套正是被批评的做法。两套机制写同一件事却用不同技术，属口径分叉。
+ *   现统一为 `VACUUM INTO`：单读事务内生成自包含快照，不停机、不受并发写入影响。
+ *   （顺带去掉了 wal_checkpoint(TRUNCATE) —— VACUUM INTO 本身读一致视图，无需先清 WAL。）
+ */
 function createBackup() {
   ensureDir();
-  // 强制 WAL checkpoint，确保数据全部落盘到主文件
-  try {
-    db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
-  } catch (e) {
-    // checkpoint 失败不阻断备份（WAL 内容仍可被下次打开时回放）
-    console.warn("[backup] wal_checkpoint warn:", e.message);
-  }
   const now = new Date();
   const pad = n => String(n).padStart(2, "0");
   const name = `backup-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.db`;
   const target = path.join(BACKUP_DIR, name);
-  fs.copyFileSync(DB_PATH, target);
+
+  // VACUUM INTO 要求目标文件不存在；同一秒内重复调用时先清掉同名残片
+  if (fs.existsSync(target)) fs.unlinkSync(target);
+
+  try {
+    // 路径内的单引号需转义，避免 SQL 拼接异常
+    db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+  } catch (e) {
+    // 失败时清掉可能产生的半成品，避免被 listBackups 当成可用备份（恢复它等于恢复损坏库）
+    if (fs.existsSync(target)) {
+      try {
+        fs.unlinkSync(target);
+      } catch {
+        /* 清理失败不掩盖原始错误 */
+      }
+    }
+    throw e;
+  }
+
   const stat = fs.statSync(target);
 
   // 清理超出保留份数的旧备份（按文件名倒序，保留最新的 KEEP_COUNT 份）

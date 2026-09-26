@@ -40,7 +40,7 @@ tags:
   - name: SiteInfo
     description: 站点信息（机构名称 / Logo / 页脚）与图片上传
   - name: Sessions
-    description: 课次实例（周课表 / 生成 / 停课调课代课 / 回填报告，v21）
+    description: 课次实例（周课表 / 生成 / 停课挪课代课 / 回填报告，v21）
   - name: TeachingAssignments
     description: 任课关系（班级 × 课程 × 教师 × 学期，v21）
   - name: PeriodTimes
@@ -269,6 +269,12 @@ paths:
     get:
       tags: [Auth]
       summary: 动态菜单路由（按角色下发，前端自动过滤无权限菜单）
+      description: |
+        返回 `ROUTES[role]`：`admin` 九组 / `teacher` 六组（各自另含「待办」独立项）。
+        2026-09-26 菜单重构：课表类独立为「排课与课表」、「数据管理」拆为「学员管理」+ 排课配置、
+        「报班管理」并入「招生与报名」、「员工账号」移入「系统管理」、
+        「教学结果/家校管理/财务管理」分别改名为「教学成果/家校沟通/财务」。
+        **所有子项 path 未改动**（路由地址不变）。teacher 不下发财务、招生与报名、系统管理。
       responses:
         "200": { description: 成功 }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -1770,7 +1776,7 @@ paths:
         - { in: query, name: term_id, schema: { type: integer } }
         - { in: query, name: class_id, schema: { type: integer } }
         - { in: query, name: teacher_id, schema: { type: integer } }
-        - { in: query, name: status, schema: { type: string, enum: [待上课, 已上课, 已停课, 已调课, 已取消] } }
+        - { in: query, name: status, schema: { type: string, enum: [待上课, 已上课, 已停课, 已挪课, 已取消] } }
         - { in: query, name: date_start, schema: { type: string } }
         - { in: query, name: date_end, schema: { type: string } }
         - { in: query, name: page, schema: { type: integer, default: 1 } }
@@ -2013,7 +2019,7 @@ paths:
   /api/sessions/{id}/reschedule:
     post:
       tags: [Sessions]
-      summary: 调课（仅待上课；新建课次 + 双向关联，仅 admin，Q4）
+      summary: 挪课（仅待上课；新建课次 + 双向关联，仅 admin，Q4）
       security: [{bearerAuth: []}]
       parameters:
         - { in: path, name: id, required: true, schema: { type: integer } }
@@ -2619,8 +2625,8 @@ components:
         period: { type: integer, minimum: 1, maximum: 8 }
         start_time: { type: string, description: 生成时快照 }
         end_time: { type: string, description: 生成时快照 }
-        status: { type: string, enum: [待上课, 已上课, 已停课, 已调课, 已取消] }
-        origin: { type: string, enum: [模板生成, 调课, 补课, 手工] }
+        status: { type: string, enum: [待上课, 已上课, 已停课, 已挪课, 已取消] }
+        origin: { type: string, enum: [模板生成, 挪课, 补课, 手工] }
         related_session_id: { type: integer, nullable: true }
         related_date: { type: string, nullable: true }
         topic: { type: string }

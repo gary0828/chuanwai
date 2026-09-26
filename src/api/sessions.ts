@@ -55,7 +55,7 @@ export const restoreSession = (id: number) => {
   return http.request("put", `/api/sessions/${id}/restore`);
 };
 
-/** 调课（仅「待上课」；新建新课次 + 双向关联）→ { new_session_id } */
+/** 挪课（仅「待上课」；新建新课次 + 双向关联）→ { new_session_id } */
 export const rescheduleSession = (id: number, data: object) => {
   return http.request("post", `/api/sessions/${id}/reschedule`, { data });
 };

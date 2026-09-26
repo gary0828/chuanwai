@@ -44,6 +44,30 @@ fileMatchPattern: ["src/**", "ai-workbench/**", ".env.*", "vite.config.ts", "bui
   ② `getHistoryMode` 加默认参数 `"hash"` + 非法值兜底。
   ★ 教训：**构建期 env 是代码的一部分，不是密钥**，必须入库。
 
+## ★ K-048 · 菜单是**后端下发**的：pure-admin 的两个必须知道的行为（2026-09-26）
+
+> 侧边栏 = `GET /api/auth/async-routes` 返回的 `ROUTES[role]`，前端 `utils.ts` 的
+> `addAsyncRoutes` → `formatFlatteningRoutes` → `handleWholeMenus` 渲染。
+> 改菜单去改后端（`backend-data.md` K-044），**不要在前端加菜单**。
+
+**① 只有 1 个子项的分组会被"提升"成一级项**（框架行为，不是 bug）
+
+- 例：`家校沟通` 只含「通知记录」→ UI 上**不显示分组**，直接是顶层「通知记录」。
+  （本次实施时据此误判过一次"菜单项丢了"）
+- → 写 UI 断言时**别断言"分组以分组形态出现"**；要么断言子项文本可见，要么给该分组 ≥2 个子项。
+
+**② 写 Playwright 脚本读侧边栏：用 `.el-menu` 的 `children`，别用 `.el-menu > li`**
+
+```js
+// ✅ 可靠
+const lis = [...document.querySelector('.el-menu').children];
+// ❌ 实测漏项：多层 .el-menu 嵌套下 `.el-menu > li` 匹配不完整
+```
+（同一份页面，`.el-menu > li` 只拿到 7 个分组、`children` 拿到全部 10 个一级项 —— 差异实为选择器问题，排查花了一轮）
+
+**③ 「默认授课教师」是展示字段**：`courses.teacher` 仅作课程列表展示，
+**实际任课 / 老师能看到哪个班**以「任课关系」（`teaching_assignments`）为准（前端已在页面写明）。
+
 ## 诊断口诀
 
 - **`/` 返回 200 但页面空白** = 静态资源（JS/CSS）404，**不是**后端问题 → 单独验入口 JS 的 URL

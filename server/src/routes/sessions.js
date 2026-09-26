@@ -1,4 +1,4 @@
-// 课次路由：列表 / 周视图 / 详情 / 预览 / 生成 / 回填 / 报告 / 停课 / 恢复 / 调课 / 代课 / 手工新增
+// 课次路由：列表 / 周视图 / 详情 / 预览 / 生成 / 回填 / 报告 / 停课 / 恢复 / 挪课 / 代课 / 手工新增
 //
 // 权限（对齐设计 §3.2）：
 //   GET  /sessions、/sessions/week、/sessions/:id  → auth（scope；:id 含该课次代课人）
@@ -17,8 +17,8 @@ const engine = require("../utils/session-engine");
 
 const router = express.Router();
 
-const STATUSES = ["待上课", "已上课", "已停课", "已调课", "已取消"];
-const ORIGINS = ["模板生成", "调课", "补课", "手工"];
+const STATUSES = ["待上课", "已上课", "已停课", "已挪课", "已取消"];
+const ORIGINS = ["模板生成", "挪课", "补课", "手工"];
 const DOW_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
 /** 解析 statuses 查询参数（可为逗号分隔字符串或数组），仅保留合法状态 */
@@ -292,7 +292,7 @@ router.post("/", auth, requireRole("admin"), (req, res) => {
   }
   const dateRes = parseDate(session_date, { field: "上课日期" });
   if (!dateRes.ok) return res.status(400).json({ success: false, message: dateRes.message });
-  if (!ORIGINS.includes(origin) || origin === "模板生成" || origin === "调课") {
+  if (!ORIGINS.includes(origin) || origin === "模板生成" || origin === "挪课") {
     return res.status(400).json({ success: false, message: "来源仅支持「手工」或「补课」" });
   }
   if (!db.prepare("SELECT 1 FROM classes WHERE id = ?").get(classId)) {
@@ -384,7 +384,7 @@ router.get("/:id", auth, (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// 停课 / 恢复 / 调课 / 代课（admin）
+// 停课 / 恢复 / 挪课 / 代课（admin）
 // ─────────────────────────────────────────────────────────────
 router.put("/:id/stop", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
@@ -418,19 +418,19 @@ router.post("/:id/reschedule", auth, requireRole("admin"), (req, res) => {
   const session = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(id);
   if (!session) return res.status(404).json({ success: false, message: "课次不存在" });
   if (session.status !== "待上课") {
-    return res.status(400).json({ success: false, message: "仅「待上课」的课次可调课（Q4）" });
+    return res.status(400).json({ success: false, message: "仅「待上课」的课次可挪课（Q4）" });
   }
   if (session.related_session_id != null) {
-    return res.status(400).json({ success: false, message: "该课次已调课，不可重复调课" });
+    return res.status(400).json({ success: false, message: "该课次已挪课，不可重复挪课" });
   }
   const per = Number(period);
   if (!Number.isInteger(per) || per < engine.PERIOD_MIN || per > engine.PERIOD_MAX) {
     return res.status(400).json({ success: false, message: `节次范围 ${engine.PERIOD_MIN}-${engine.PERIOD_MAX}` });
   }
-  const dateRes = parseDate(session_date, { field: "调课日期" });
+  const dateRes = parseDate(session_date, { field: "挪课日期" });
   if (!dateRes.ok) return res.status(400).json({ success: false, message: dateRes.message });
   if (dateRes.value === session.session_date && per === Number(session.period)) {
-    return res.status(400).json({ success: false, message: "目标时段与原时段相同，无需调课" });
+    return res.status(400).json({ success: false, message: "目标时段与原时段相同，无需挪课" });
   }
   const pt = engine.getPeriodTimeMap().get(per);
   const today = engine.todayStr();
@@ -444,7 +444,7 @@ router.post("/:id/reschedule", auth, requireRole("admin"), (req, res) => {
         `INSERT INTO class_sessions
            (term_id, schedule_id, class_id, course_id, teacher_id, substitute_teacher_id, room_id,
             session_date, period, start_time, end_time, status, origin, related_session_id, topic)
-         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, '调课', NULL, ?)`
+         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, '挪课', NULL, ?)`
       )
       .run(
         session.term_id,
@@ -462,7 +462,7 @@ router.post("/:id/reschedule", auth, requireRole("admin"), (req, res) => {
       );
     const newId = info.lastInsertRowid;
     db.prepare(
-      "UPDATE class_sessions SET status = '已调课', related_session_id = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+      "UPDATE class_sessions SET status = '已挪课', related_session_id = ?, updated_at = datetime('now','localtime') WHERE id = ?"
     ).run(newId, id);
     db.prepare(
       "UPDATE class_sessions SET related_session_id = ?, updated_at = datetime('now','localtime') WHERE id = ?"

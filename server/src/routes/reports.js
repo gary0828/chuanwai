@@ -5,6 +5,7 @@ const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { canManageStudent } = require("../utils/scope");
+const { attendanceRate } = require("../utils/attendance-rate");
 const { calcGrade } = require("../utils/grade");
 
 const router = express.Router();
@@ -44,7 +45,7 @@ router.get("/students/:id", auth, requireRole("admin", "teacher"), (req, res) =>
     early: Number(att.early || 0),
     absent,
     leave: Number(att.leave || 0),
-    attendance_rate: total > 0 ? Number(((total - absent) / total * 100).toFixed(1)) : 0
+    attendance_rate: attendanceRate(total, absent)
   };
 
   // 成绩：按课程取最近一次（exam_date 最大的一条）

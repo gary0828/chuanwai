@@ -218,14 +218,14 @@ export const getAttendanceWarnings = (params?: object) => {
   return http.request("get", "/api/attendance/warnings", { params });
 };
 
-/** ---------- 课程表 ---------- */
+/** ---------- 排课模板 ---------- */
 
 /** 课表查询（class_id / day_of_week 过滤 + 分页） */
 export const getScheduleList = (params?: object) => {
   return http.request("get", "/api/schedules", { params });
 };
 
-/** 课表全量（课程表页渲染） */
+/** 课表全量（排课模板页渲染） */
 export const getAllSchedules = () => {
   return http.request("get", "/api/schedules/all");
 };

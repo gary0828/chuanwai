@@ -55,7 +55,7 @@ function tagType(status: string): string {
     待上课: "info",
     已上课: "success",
     已停课: "danger",
-    已调课: "warning",
+    已挪课: "warning",
     已取消: "info"
   };
   return map[status] || "info";
@@ -65,7 +65,7 @@ function tagType(status: string): string {
 function cardClass(s: any, conflict: boolean): string {
   if (conflict) return "sc--conflict";
   if (s.status === "已停课") return "sc--stopped";
-  if (s.status === "已调课") return "sc--rescheduled";
+  if (s.status === "已挪课") return "sc--rescheduled";
   if (s.status === "已上课") return "sc--done";
   return "sc--upcoming";
 }
@@ -145,7 +145,7 @@ function mmdd(date: string): string {
               {{ s.status }}
             </el-tag>
           </div>
-          <div v-if="s.status === '已调课' && s.related_date" class="sc__badge">
+          <div v-if="s.status === '已挪课' && s.related_date" class="sc__badge">
             → {{ mmdd(s.related_date) }}
           </div>
         </div>
@@ -361,7 +361,7 @@ function mmdd(date: string): string {
   }
 }
 
-/* 已调课：虚线边框 + warning 左边框 */
+/* 已挪课：虚线边框 + warning 左边框 */
 .sc--rescheduled {
   background: var(--surface-card);
   border-style: dashed;

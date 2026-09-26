@@ -12,6 +12,7 @@ const express = require("express");
 const db = require("../db");
 const { auth } = require("../middleware/auth");
 const { classScopeClause, canManageClass } = require("../utils/scope");
+const { attendanceRate } = require("../utils/attendance-rate");
 
 const router = express.Router();
 
@@ -200,7 +201,8 @@ router.get("/classes/:id/overview", auth, (req, res) => {
         early: Number(att?.early || 0),
         absent,
         leave: Number(att?.leave || 0),
-        rate: total > 0 ? Math.round(((total - absent) / total) * 1000) / 10 : null
+        // total=0 时返回 null（工作台据此显示"暂无数据"），故保留外层判空
+        rate: total > 0 ? attendanceRate(total, absent) : null
       },
       exams,
       hours: {

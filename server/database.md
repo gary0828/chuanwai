@@ -806,16 +806,16 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 | session_date | TEXT | NOT NULL | 具体日期 `YYYY-MM-DD` |
 | period | INTEGER | NOT NULL, CHECK 1–8 | 节次 |
 | start_time / end_time | TEXT | NOT NULL, DEFAULT '' | **生成时快照**（取自 period_times） |
-| status | TEXT | NOT NULL, DEFAULT '待上课', CHECK IN ('待上课','已上课','已停课','已调课','已取消') | 状态 |
-| origin | TEXT | NOT NULL, DEFAULT '模板生成', CHECK IN ('模板生成','调课','补课','手工') | 来源 |
-| related_session_id | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL | 调课**双向关联**（原↔新，成对且不成环） |
+| status | TEXT | NOT NULL, DEFAULT '待上课', CHECK IN ('待上课','已上课','已停课','已挪课','已取消') | 状态 |
+| origin | TEXT | NOT NULL, DEFAULT '模板生成', CHECK IN ('模板生成','挪课','补课','手工') | 来源 |
+| related_session_id | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL | 挪课**双向关联**（原↔新，成对且不成环） |
 | topic | TEXT | NOT NULL, DEFAULT '' | 教学主题（**仅留位**，不做录入界面） |
 | created_at / updated_at | TEXT | NOT NULL, DEFAULT | 时间戳 |
 
 约束：`UNIQUE (class_id, session_date, period)`
 索引：`idx_cs_date`、`idx_cs_class_date`、`idx_cs_teacher_date`、`idx_cs_sub_teacher`、`idx_cs_term`
 
-> **课次状态机**：`待上课 → 已上课`（到期/点名）｜`→ 已停课`（停课，可恢复）｜`→ 已调课`（调课，仅待上课可调）｜`→ 已取消`。生成时按日期定初始状态：`session_date < 今天` → 已上课；否则 → 待上课。
+> **课次状态机**：`待上课 → 已上课`（到期/点名）｜`→ 已停课`（停课，可恢复）｜`→ 已挪课`（挪课，仅待上课可挪）｜`→ 已取消`。生成时按日期定初始状态：`session_date < 今天` → 已上课；否则 → 待上课。
 
 ### session_migration_report（历史回填报告）
 
@@ -851,7 +851,7 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 | `GET /api/sessions/migration-report` | admin | 回填报告（列表 + summary：已匹配/未匹配/失败率） |
 | `POST /api/sessions/migration-report/:id/todo` | admin | 未匹配项一键转待办（Q6） |
 | `PUT /api/sessions/:id/stop` · `/:id/restore` | admin | 停课 / 恢复（Q9：停课阻止点名） |
-| `POST /api/sessions/:id/reschedule` | admin | 调课（Q4：仅待上课；新建 + 双向关联） |
+| `POST /api/sessions/:id/reschedule` | admin | 挪课（Q4：仅待上课；新建 + 双向关联） |
 | `POST /api/sessions/:id/substitute` | admin | 代课（原教师保留，另记代课人） |
 | `POST /api/sessions` | admin | 手工加课 / 补课（`origin = 手工/补课`） |
 | `GET/POST/PUT/DELETE /api/teaching-assignments` | GET auth（scope）/ 其余 admin | 任课关系 CRUD |

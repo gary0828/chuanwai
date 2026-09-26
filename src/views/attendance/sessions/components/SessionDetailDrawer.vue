@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// 课次详情抽屉 · 既有流程的聚合视图（点名 / 课评 / 课消 / 调课记录）
+// 课次详情抽屉 · 既有流程的聚合视图（点名 / 课评 / 课消 / 挪课记录）
 //
 // ★ 采集铁律：不新开"去填课次"入口 —— 点名 / 课评自动带出当前课次（session_id）。
-// ★ 停课 / 调课 / 代课走 ElMessageBox 二次确认；仅「待上课」可调课（Q4）。
+// ★ 停课 / 挪课 / 代课走 ElMessageBox 二次确认；仅「待上课」可挪课（Q4）。
 // ★ 全部接口走 @/api/sessions 与 @/api/attendance；本组件内不出现 axios / $route / localStorage。
 import { ref, computed, watch } from "vue";
 import dayjs from "dayjs";
@@ -35,7 +35,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:modelValue", v: boolean): void;
-  /** 课次被变更（停课/恢复/调课/代课/点名）→ 父级刷新周历 */
+  /** 课次被变更（停课/恢复/挪课/代课/点名）→ 父级刷新周历 */
   (e: "changed"): void;
 }>();
 
@@ -65,7 +65,7 @@ function statusTagType(status: string): string {
     待上课: "info",
     已上课: "success",
     已停课: "danger",
-    已调课: "warning",
+    已挪课: "warning",
     已取消: "info"
   };
   return map[status] || "info";
@@ -205,7 +205,7 @@ function doRestore() {
     .catch(() => {});
 }
 
-/** ---------- 调课 ---------- */
+/** ---------- 挪课 ---------- */
 const rescheduleVisible = ref(false);
 const rescheduleForm = ref({ session_date: "", period: 1 });
 
@@ -224,11 +224,11 @@ async function submitReschedule() {
   }
   try {
     await ElMessageBox.confirm(
-      `将把本节调到 ${rescheduleForm.value.session_date} 第 ${rescheduleForm.value.period} 节，原课次标记为「已调课」并双向关联。`,
-      "调课确认",
+      `将把本节调到 ${rescheduleForm.value.session_date} 第 ${rescheduleForm.value.period} 节，原课次标记为「已挪课」并双向关联。`,
+      "挪课确认",
       {
         type: "warning",
-        confirmButtonText: "确定调课",
+        confirmButtonText: "确定挪课",
         cancelButtonText: "取消"
       }
     );
@@ -240,7 +240,7 @@ async function submitReschedule() {
     period: rescheduleForm.value.period
   });
   if (res.success) {
-    ElMessage.success("调课成功");
+    ElMessage.success("挪课成功");
     rescheduleVisible.value = false;
     load();
     emit("changed");
@@ -484,8 +484,8 @@ async function submitSubstitute() {
             />
           </el-tab-pane>
 
-          <!-- 调课记录 -->
-          <el-tab-pane label="调课记录" name="related">
+          <!-- 挪课记录 -->
+          <el-tab-pane label="挪课记录" name="related">
             <template v-if="related">
               <el-alert
                 type="info"
@@ -504,8 +504,8 @@ async function submitSubstitute() {
             </template>
             <AppEmpty
               v-else
-              title="本节无调课记录"
-              description="仅「待上课」的课次可发起调课"
+              title="本节无挪课记录"
+              description="仅「待上课」的课次可发起挪课"
             />
           </el-tab-pane>
         </el-tabs>
@@ -529,7 +529,7 @@ async function submitSubstitute() {
           plain
           @click="openReschedule"
         >
-          调课
+          挪课
         </el-button>
         <el-button
           v-if="session.status === '待上课' || session.status === '已上课'"
@@ -549,10 +549,10 @@ async function submitSubstitute() {
       </div>
     </template>
 
-    <!-- 调课子弹窗 -->
+    <!-- 挪课子弹窗 -->
     <el-dialog
       v-model="rescheduleVisible"
-      title="调课"
+      title="挪课"
       width="400px"
       append-to-body
     >

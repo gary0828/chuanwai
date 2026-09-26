@@ -1,4 +1,4 @@
-// 课程表管理 CRUD + 查询
+// 排课模板管理 CRUD + 查询
 // 数据权限：教师仅能管理/查看自己绑定（classes.head_teacher_id）班级的课表；管理员不限
 const express = require("express");
 const db = require("../db");
@@ -92,7 +92,7 @@ router.post("/check-conflict", auth, (req, res) => {
     return res.status(400).json({ success: false, message: "班级、星期、节次为必填项" });
   }
   if (!canManageClass(req, class_id)) {
-    return res.status(403).json({ success: false, message: "无权管理该班级课程表" });
+    return res.status(403).json({ success: false, message: "无权管理该班级排课模板" });
   }
   res.json({ success: true, data: checkConflicts(db, { class_id, course_id, day_of_week, period, exclude_id }) });
 });
@@ -134,7 +134,7 @@ router.get("/", auth, (req, res) => {
   res.json({ success: true, data: { list, total } });
 });
 
-/** 课表全量（供课程表页一次性渲染；教师仅本班） */
+/** 课表全量（供排课模板页一次性渲染；教师仅本班） */
 router.get("/all", auth, (req, res) => {
   const scope = classScopeClause(req);
   const list = db
@@ -163,7 +163,7 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
     return res.status(400).json({ success: false, message: "星期范围 1-7，节次范围 1-8" });
   }
   if (!canManageClass(req, class_id)) {
-    return res.status(403).json({ success: false, message: "无权为该校班级设置课程表" });
+    return res.status(403).json({ success: false, message: "无权为该校班级设置排课模板" });
   }
   // 冲突检测：同班同时段拒绝（含不同课程）；同教师跨班同时段警告不阻断
   const conflicts = checkConflicts(db, { class_id, course_id, day_of_week, period });
@@ -194,7 +194,7 @@ router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
     return res.status(400).json({ success: false, message: "班级、课程、星期、节次为必填项" });
   }
   if (!canManageClass(req, class_id)) {
-    return res.status(403).json({ success: false, message: "无权管理该班级课程表" });
+    return res.status(403).json({ success: false, message: "无权管理该班级排课模板" });
   }
   // 冲突检测：同班同时段拒绝（排除自身条目）；同教师跨班同时段警告不阻断
   const conflicts = checkConflicts(db, { class_id, course_id, day_of_week, period, exclude_id: id });
@@ -229,7 +229,7 @@ router.delete("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
     return res.status(404).json({ success: false, message: "课表条目不存在" });
   }
   if (!canManageClass(req, row.class_id)) {
-    return res.status(403).json({ success: false, message: "无权管理该班级课程表" });
+    return res.status(403).json({ success: false, message: "无权管理该班级排课模板" });
   }
   const adjCount = db
     .prepare("SELECT COUNT(*) AS c FROM schedule_adjustments WHERE schedule_id = ? AND status = '通过'")

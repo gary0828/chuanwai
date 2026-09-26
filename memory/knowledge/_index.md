@@ -7,9 +7,9 @@
 
 | 主题文件 | 覆盖 | 条目 id | 触发（fileMatch） |
 |---|---|---|---|
-| `memory/knowledge/deploy.md` | 部署形态 / 端口 18080 / 数据保命 / 构建与脚本坑 / **容器未重建陷阱** / QA 断言前置过期 | K-008 K-022 K-026 K-029 K-040 K-041 | `docker-compose*.yml` · `deploy/**` · `Dockerfile*` · `server/scripts/*` · `.env*` |
-| `memory/knowledge/frontend.md` | 两端差异 / 构建期 env / 样式坑 / 白屏排查口诀 / 登出语义 | K-002 K-003 K-025 K-036 | `src/**` · `ai-workbench/**` · `.env.*` · `vite.config.ts` |
-| `memory/knowledge/backend-data.md` | node:sqlite / WAL / 迁移与评审 / 数据资产化 / AI 架构 / 上传与自助端点 | K-005 K-006 K-015 K-017 K-033 K-034 | `server/**` · `docs/04-API/**` |
+| `memory/knowledge/deploy.md` | 部署形态 / 端口 18080 / 数据保命 / 构建与脚本坑 / **容器未重建陷阱** / QA 断言前置过期 / **备份只有 VACUUM INTO** / **脚本自污染** | K-008 K-022 K-026 K-029 K-040 K-041 **K-046 K-047** | `docker-compose*.yml` · `deploy/**` · `Dockerfile*` · `server/scripts/*` · `.env*` |
+| `memory/knowledge/frontend.md` | 两端差异 / 构建期 env / 样式坑 / 白屏排查口诀 / 登出语义 / **菜单渲染行为** | K-002 K-003 K-025 K-036 **K-048** | `src/**` · `ai-workbench/**` · `.env.*` · `vite.config.ts` |
+| `memory/knowledge/backend-data.md` | node:sqlite / WAL / 迁移与评审 / 数据资产化 / AI 架构 / 上传与自助端点 / 枚举值改名 / **菜单双套结构** / **出勤率唯一口径** | K-005 K-006 K-015 K-017 K-033 K-034 K-043 **K-044 K-045** | `server/**` · `docs/04-API/**` |
 | `memory/knowledge/process.md` | 测试与验证 / 记忆原则与边界 / 结构护栏 / 跑脚本的环境事实 / 内容清点方法 / 模板插值坑 | K-011 K-030 K-031 K-035 K-037 K-038 | **always** |
 | `memory/knowledge/git-local.md` | 本机 git 红线（`git rm` / index.lock / ~~死代理~~**已删** / 推送凭据兜底） | K-013 K-024 K-028 K-039 K-042 | **always** |
 | `memory/knowledge/preferences.md` | 用户偏好与拍板（门禁 / 版本策略 / 推进顺序 / 产品定案） | K-016 K-018 K-019 K-020 K-021 K-027 K-032 | **always** |

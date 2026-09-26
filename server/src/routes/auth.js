@@ -26,14 +26,10 @@ const ROUTES = {
       meta: { title: "待办", icon: "ep:list", rank: 0 }
     },
     {
-      path: "/user",
-      component: "attendance/users/index",
-      name: "UserManage",
-      meta: { title: "员工账号", icon: "ep:user", rank: 1, roles: ["admin"] }
-    },
-    {
+      // 考勤管理：老师每天要用的录入与查询
+      // （课表 / 排课类已独立成组，见下方「排课与课表」—— 2026-09-26 菜单重构）
       path: "/attendance",
-      meta: { title: "考勤管理", icon: "ep:data-line", rank: 2 },
+      meta: { title: "考勤管理", icon: "ep:data-line", rank: 1 },
       children: [
         {
           path: "/attendance/checkin",
@@ -58,7 +54,15 @@ const ROUTES = {
           component: "attendance/statistics/index",
           name: "Statistics",
           meta: { title: "统计报表" }
-        },
+        }
+      ]
+    },
+    {
+      // 排课与课表：原散落在「考勤管理」与「数据管理」两处的排课类配置，2026-09-26 归拢到一处
+      // ★ 所有子项 path 一律保持原值 —— 路由地址不变，老师收藏的页面不会失效
+      path: "/schedule",
+      meta: { title: "排课与课表", icon: "ep:calendar", rank: 2 },
+      children: [
         {
           path: "/attendance/sessions",
           component: "attendance/sessions/index",
@@ -66,40 +70,60 @@ const ROUTES = {
           meta: { title: "周课表" }
         },
         {
-          path: "/attendance/sessions/migration-report",
-          component: "attendance/sessions/migration-report",
-          name: "SessionMigrationReport",
-          meta: { title: "回填报告", roles: ["admin"] }
+          path: "/data/schedules",
+          component: "attendance/schedules/index",
+          name: "Schedules",
+          meta: { title: "排课模板" }
         },
         {
-          path: "/attendance/teaching-assignments",
-          component: "attendance/teaching-assignments/index",
-          name: "TeachingAssignments",
-          meta: { title: "任课关系", roles: ["admin"] }
+          path: "/data/adjustments",
+          component: "attendance/adjustments/index",
+          name: "Adjustments",
+          meta: { title: "调课审批", roles: ["admin"] }
+        },
+        {
+          path: "/data/makeups",
+          component: "attendance/makeups/index",
+          name: "Makeups",
+          meta: { title: "补课管理" }
         },
         {
           path: "/attendance/period-times",
           component: "attendance/period-times/index",
           name: "PeriodTimes",
           meta: { title: "节次时间", roles: ["admin"] }
+        },
+        {
+          path: "/attendance/teaching-assignments",
+          component: "attendance/teaching-assignments/index",
+          name: "TeachingAssignments",
+          meta: { title: "任课关系", roles: ["admin"] }
         }
       ]
     },
     {
-      path: "/recruit",
-      meta: { title: "招生管理", icon: "ep:aim", rank: 3 },
+      // 招生与报名：线索转化后紧接着就是报班，是同一条业务链的前后两步，2026-09-26 合并为一组
+      // （原先「报班管理」挂在财务管理下，老师找不到）
+      path: "/enroll",
+      meta: { title: "招生与报名", icon: "ep:aim", rank: 5 },
       children: [
         {
           path: "/recruit/leads",
           component: "recruit/leads/index",
           name: "RecruitLeads",
           meta: { title: "线索管理" }
+        },
+        {
+          path: "/finance/orders",
+          component: "finance/orders/index",
+          name: "FinanceOrders",
+          meta: { title: "报班管理" }
         }
       ]
     },
     {
       path: "/family",
-      meta: { title: "家校管理", icon: "ep:connection", rank: 4 },
+      meta: { title: "家校沟通", icon: "ep:connection", rank: 7 },
       children: [
         {
           path: "/family/notifications",
@@ -111,7 +135,7 @@ const ROUTES = {
     },
     {
       path: "/teaching",
-      meta: { title: "教学结果", icon: "ep:notebook", rank: 5 },
+      meta: { title: "教学成果", icon: "ep:notebook", rank: 4 },
       children: [
         {
           path: "/teaching/exams",
@@ -135,14 +159,8 @@ const ROUTES = {
     },
     {
       path: "/finance",
-      meta: { title: "财务管理", icon: "ep:wallet", rank: 6 },
+      meta: { title: "财务", icon: "ep:wallet", rank: 6 },
       children: [
-        {
-          path: "/finance/orders",
-          component: "finance/orders/index",
-          name: "FinanceOrders",
-          meta: { title: "报班管理" }
-        },
         {
           path: "/finance/payments",
           component: "finance/payments/index",
@@ -176,20 +194,22 @@ const ROUTES = {
       ]
     },
     {
-      path: "/data",
-      meta: { title: "数据管理", icon: "ep:files", rank: 7 },
+      // 学员管理：由原「数据管理」（什么都往里装的筐）拆解而来 —— 只保留基础档案
+      // 排课类（排课模板 / 调课审批 / 补课管理）已移到「排课与课表」
+      path: "/student",
+      meta: { title: "学员管理", icon: "ep:school", rank: 3 },
       children: [
-        {
-          path: "/data/classes",
-          component: "attendance/classes/index",
-          name: "Classes",
-          meta: { title: "班级管理" }
-        },
         {
           path: "/data/students",
           component: "attendance/students/index",
           name: "Students",
           meta: { title: "学生管理" }
+        },
+        {
+          path: "/data/classes",
+          component: "attendance/classes/index",
+          name: "Classes",
+          meta: { title: "班级管理" }
         },
         {
           path: "/data/courses",
@@ -198,40 +218,24 @@ const ROUTES = {
           meta: { title: "课程管理", roles: ["admin"] }
         },
         {
-          path: "/data/schedules",
-          component: "attendance/schedules/index",
-          name: "Schedules",
-          meta: { title: "课程表" }
-        },
-        {
           path: "/data/terms",
           component: "attendance/terms/index",
           name: "Terms",
           meta: { title: "学期管理", roles: ["admin"] }
-        },
-        {
-          path: "/data/adjustments",
-          component: "attendance/adjustments/index",
-          name: "Adjustments",
-          meta: { title: "调课审批", roles: ["admin"] }
-        },
-        {
-          path: "/data/makeups",
-          component: "attendance/makeups/index",
-          name: "Makeups",
-          meta: { title: "补课管理" }
         }
       ]
     },
     {
       path: "/system",
-      meta: {
-        title: "系统管理",
-        icon: "ep:setting",
-        rank: 8,
-        roles: ["admin"]
-      },
+      meta: { title: "系统管理", icon: "ep:setting", rank: 8, roles: ["admin"] },
       children: [
+        {
+          // 员工账号：与其它管理类工具同属「系统管理」，2026-09-26 由顶层独立项移入
+          path: "/user",
+          component: "attendance/users/index",
+          name: "UserManage",
+          meta: { title: "员工账号" }
+        },
         {
           path: "/system/settings",
           component: "system/settings/index",
@@ -255,6 +259,13 @@ const ROUTES = {
           component: "system/audit-logs/index",
           name: "SysAuditLogs",
           meta: { title: "审计日志" }
+        },
+        {
+          // 回填报告：课次迁移的一次性运维工具，与其它 admin-only 工具同组
+          path: "/attendance/sessions/migration-report",
+          component: "attendance/sessions/migration-report",
+          name: "SessionMigrationReport",
+          meta: { title: "回填报告" }
         }
       ]
     }
@@ -268,8 +279,9 @@ const ROUTES = {
       meta: { title: "待办", icon: "ep:list", rank: 0 }
     },
     {
+      // 考勤管理：老师每天要用的录入与查询（课表类已独立成组）
       path: "/attendance",
-      meta: { title: "考勤管理", icon: "ep:data-line", rank: 2 },
+      meta: { title: "考勤管理", icon: "ep:data-line", rank: 1 },
       children: [
         {
           path: "/attendance/checkin",
@@ -294,18 +306,38 @@ const ROUTES = {
           component: "attendance/statistics/index",
           name: "Statistics",
           meta: { title: "统计报表" }
-        },
+        }
+      ]
+    },
+    {
+      // 排课与课表（教师视角）：只保留老师用得上的三项
+      // （调课审批 / 节次时间 / 任课关系是 admin-only，不进教师菜单）
+      path: "/schedule",
+      meta: { title: "排课与课表", icon: "ep:calendar", rank: 2 },
+      children: [
         {
           path: "/attendance/sessions",
           component: "attendance/sessions/index",
           name: "Sessions",
           meta: { title: "周课表" }
+        },
+        {
+          path: "/data/schedules",
+          component: "attendance/schedules/index",
+          name: "Schedules",
+          meta: { title: "排课模板" }
+        },
+        {
+          path: "/data/makeups",
+          component: "attendance/makeups/index",
+          name: "Makeups",
+          meta: { title: "补课管理" }
         }
       ]
     },
     {
       path: "/family",
-      meta: { title: "家校管理", icon: "ep:connection", rank: 4 },
+      meta: { title: "家校沟通", icon: "ep:connection", rank: 5 },
       children: [
         {
           path: "/family/notifications",
@@ -317,7 +349,7 @@ const ROUTES = {
     },
     {
       path: "/teaching",
-      meta: { title: "教学结果", icon: "ep:notebook", rank: 5 },
+      meta: { title: "教学成果", icon: "ep:notebook", rank: 4 },
       children: [
         {
           path: "/teaching/exams",
@@ -340,15 +372,10 @@ const ROUTES = {
       ]
     },
     {
-      path: "/data",
-      meta: { title: "数据管理", icon: "ep:files", rank: 7 },
+      // 学员管理：原「数据管理」拆解而来（排课类已移到「排课与课表」）
+      path: "/student",
+      meta: { title: "学员管理", icon: "ep:school", rank: 3 },
       children: [
-        {
-          path: "/data/classes",
-          component: "attendance/classes/index",
-          name: "Classes",
-          meta: { title: "班级管理" }
-        },
         {
           path: "/data/students",
           component: "attendance/students/index",
@@ -356,16 +383,10 @@ const ROUTES = {
           meta: { title: "学生管理" }
         },
         {
-          path: "/data/schedules",
-          component: "attendance/schedules/index",
-          name: "Schedules",
-          meta: { title: "课程表" }
-        },
-        {
-          path: "/data/makeups",
-          component: "attendance/makeups/index",
-          name: "Makeups",
-          meta: { title: "补课管理" }
+          path: "/data/classes",
+          component: "attendance/classes/index",
+          name: "Classes",
+          meta: { title: "班级管理" }
         }
       ]
     }

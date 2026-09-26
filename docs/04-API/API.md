@@ -97,7 +97,14 @@ updated: 2026-09-23
 实现位置：`server/src/utils/scope.js`（`classScopeClause` / `canManageClass` / `canManageStudent` / `studentScopeWhere` / `isHeadTeacherOf` / `canAccessSession`）。
 
 > **教师权限边界（2026-09-12 收紧，2026-09-23 扩任课关系）**：教师仅保留授课相关权限（课程安排、课表查询、学员名单、出勤记录、教学资料、成绩管理）。
-> 四层同时生效：① 菜单——`/api/auth/async-routes` 不再向 teacher 下发财务管理与招生管理目录（v21 后 teacher 侧边栏仅新增「周课表」）；② 接口——`/api/finance/**` 与 `/api/leads/**` 全部 `requireRole("admin")`，teacher 调用一律 403；③ 字段——`/api/reports/students/:id` 对 teacher 剔除订单摘要的 `amount`/`paid`，`/timeline` 剔除缴费/退费事件；④ 导出——`/api/analytics/**` 本就仅 admin，学员导出不包含费用字段。
+> 四层同时生效：
+> ① **菜单**——`/api/auth/async-routes` 按角色下发**两套独立菜单**（`ROUTES[role]`）：
+>    - `teacher` 六组：待办 / 考勤管理 / 排课与课表 / 学员管理 / 教学成果 / 家校沟通
+>    - `admin` 九组：待办 / 考勤管理 / 排课与课表 / 学员管理 / 教学成果 / 招生与报名 / 财务 / 家校沟通 / 系统管理
+>    → **不下发**即为不可见：teacher 看不到财务管理、招生与报名、系统管理（含员工账号）；
+>    ★ 2026-09-26 菜单重构：课表类从「考勤管理」独立为「排课与课表」、「数据管理」拆为「学员管理」+ 排课配置、
+>      「报班管理」并入「招生与报名」、「员工账号」移入「系统管理」；**所有子项 path 未改动**（路由地址不变）；
+> ② **接口**——`/api/finance/**` 与 `/api/leads/**` 全部 `requireRole("admin")`，teacher 调用一律 403；③ 字段——`/api/reports/students/:id` 对 teacher 剔除订单摘要的 `amount`/`paid`，`/timeline` 剔除缴费/退费事件；④ 导出——`/api/analytics/**` 本就仅 admin，学员导出不包含费用字段。
 > **v21 班级档案加固**：`PUT /api/classes/:id` 与 `DELETE /api/classes/:id` 对**非班主任**的任课教师**不可用**（403）——任课教师对班级档案只读（`isHeadTeacherOf`）。
 
 ### 1.6 分页约定
@@ -299,7 +306,7 @@ updated: 2026-09-23
 | 课次 | POST | `/api/sessions/migration-report/:id/todo` | admin | 未匹配项一键转待办（指派 admin）→ `{todo_id}` |
 | 课次 | PUT | `/api/sessions/:id/stop` | admin | 停课（`待上课`→`已停课`） |
 | 课次 | PUT | `/api/sessions/:id/restore` | admin | 恢复（`已停课`→`待上课`） |
-| 课次 | POST | `/api/sessions/:id/reschedule` | admin | 调课（仅 `待上课`；新建新课次 + 双向关联）→ `{new_session_id}` |
+| 课次 | POST | `/api/sessions/:id/reschedule` | admin | 挪课（仅 `待上课`；新建新课次 + 双向关联）→ `{new_session_id}` |
 | 课次 | POST | `/api/sessions/:id/substitute` | admin | 代课（原 `teacher_id` 不变，另写 `substitute_teacher_id`） |
 | 课次 | POST | `/api/sessions` | admin | 手工新增课次（加课/补课，`origin=手工\|补课`） |
 | 任课关系 | GET | `/api/teaching-assignments` | 登录（scope：教师仅本班） | 任课关系列表（`class_id/teacher_id/term_id` 筛选分页） |
@@ -555,8 +562,8 @@ updated: 2026-09-23
   "metric_definitions": {
     "attendance_rate": {
       "name": "出勤率",
-      "formula": "实到人数 / 应到人数",
-      "note": "实到 = 状态为 正常/迟到/早退；请假不计入分母",
+      "formula": "(应到总数 − 缺勤) / 应到总数",
+      "note": "请假计入分母且不计为缺勤（请假不拉低出勤率）；2026-09-26 起与统计报表同口径",
       "source_table": "attendances",
       "unit": "百分比"
     }
@@ -593,8 +600,8 @@ updated: 2026-09-23
 | `attendance_present` | 次 | 实到（正常/迟到/早退） |
 | `attendance_absent` | 次 | 缺勤 |
 | `attendance_leave` | 次 | 请假 |
-| `attendance_rate` | % | 出勤率 = 实到 / (总数 − 请假) |
-| `absent_rate` | % | 缺勤率 |
+| `attendance_rate` | % | 出勤率 = `(总数 − 缺勤) / 总数`。★ **请假计入分母、且不计为缺勤**（即请假不拉低出勤率）——2026-09-26 起与统计报表口径**完全统一**（此前本端点曾用 `实到 /(总数−请假)`，同一指标两处数字对不上）。口径实现见 `server/src/utils/attendance-rate.js` |
+| `absent_rate` | % | 缺勤率 = `缺勤 / 总数`（与出勤率**同分母**，故 `attendance_rate + absent_rate = 100%`）。⚠️ 请假率是与之**重叠**的独立维度，不可与出勤率简单相加 |
 | `revenue_income` | 元 | 实收合计 |
 | `revenue_refunded` | 元 | 已通过退费合计 |
 | `revenue_total` | 元 | 实收 − 退费 |
@@ -1160,7 +1167,7 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 ### 9.1 响应与常量
 
 - 响应沿用 `{ success, data?, message? }`。
-- 课次状态：`待上课 / 已上课 / 已停课 / 已调课 / 已取消`；来源：`模板生成 / 调课 / 补课 / 手工`。
+- 课次状态：`待上课 / 已上课 / 已停课 / 已挪课 / 已取消`；来源：`模板生成 / 挪课 / 补课 / 手工`。
 - 节次固定 **1–8**（Q3）；周基准 `week_start` 为**周一**；日期 `YYYY-MM-DD`，时间 `HH:mm`。
 
 ### 9.2 生成（预览 → 确认 + 回填，均 admin）
@@ -1175,13 +1182,13 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 - **节次时间快照**：`start_time/end_time` 生成时取自 `period_times` 写入课次；**日后改 `period_times` 不回写已有课次**，新生成的才带新时间。
 - **回填口径**：对 `attendances` / `hour_consumptions` / `class_evaluations` 中 `session_id IS NULL` 的行按 `(班级+课程+日期)` 反查课次；恰好 1 条→回填；0 条→报告「当天无对应课次」；>1 条→报告「同日同课程多个课次，无法唯一确定」；课程为空→报告「课程为空」。`session_migration_report` 以 `UNIQUE(source_table, source_id)` 保证幂等。
 
-### 9.3 变更（停课 / 恢复 / 调课 / 代课，均 admin）
+### 9.3 变更（停课 / 恢复 / 挪课 / 代课，均 admin）
 
 | 方法 | 路径 | 语义 |
 | --- | --- | --- |
 | PUT | `/api/sessions/:id/stop` | `待上课`→`已停课`（仅待上课可停，否则 400） |
 | PUT | `/api/sessions/:id/restore` | `已停课`→`待上课`（仅已停课可恢复，Q9） |
-| POST | `/api/sessions/:id/reschedule` | **仅 `待上课` 可调课**（Q4）；事务内新建课次（`origin=调课`）+ 原课次标 `已调课`，`related_session_id` **双向关联**；已调课不可再调；返回 `{new_session_id}` |
+| POST | `/api/sessions/:id/reschedule` | **仅 `待上课` 可挪课**（Q4）；事务内新建课次（`origin=挪课`）+ 原课次标 `已挪课`，`related_session_id` **双向关联**；已挪课不可再挪；返回 `{new_session_id}` |
 | POST | `/api/sessions/:id/substitute` | 写 `substitute_teacher_id`；**原 `teacher_id` 保持不变**；返回 `null` |
 | POST | `/api/sessions` | 手工新增（`origin=手工\|补课`，`schedule_id` 可空）；同 `(class_id,session_date,period)` 重复被拒（唯一约束） |
 

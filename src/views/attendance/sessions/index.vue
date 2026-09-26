@@ -25,7 +25,7 @@ const isTeacher = roles.includes("teacher");
 const isAdmin = roles.includes("admin");
 const nickname = useUserStoreHook().nickname;
 
-const STATUS_OPTIONS = ["待上课", "已上课", "已停课", "已调课", "已取消"];
+const STATUS_OPTIONS = ["待上课", "已上课", "已停课", "已挪课", "已取消"];
 
 const view = ref<"class" | "teacher">(isTeacher ? "teacher" : "class");
 const classId = ref<number | null>(null);

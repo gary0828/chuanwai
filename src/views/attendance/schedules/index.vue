@@ -37,7 +37,7 @@ const scheduleMap = computed(() => {
 });
 
 const dialogVisible = ref(false);
-const dialogTitle = ref("新增课表");
+const dialogTitle = ref("新增排课");
 const formRef = ref();
 const form = reactive({
   id: null as number | null,
@@ -77,7 +77,7 @@ function cellData(day: number, period: number) {
 }
 
 function openAdd(day: number, period: number) {
-  dialogTitle.value = "新增课表";
+  dialogTitle.value = "新增排课";
   Object.assign(form, {
     id: null,
     class_id: classId.value,
@@ -89,7 +89,7 @@ function openAdd(day: number, period: number) {
 }
 
 function openEdit(row: any) {
-  dialogTitle.value = "编辑课表";
+  dialogTitle.value = "编辑排课";
   Object.assign(form, {
     id: row.id,
     class_id: row.class_id,
@@ -238,7 +238,10 @@ onMounted(() => {
 
 <template>
   <div class="app-page">
-    <AppPageHeader title="课程表" description="按班级与星期编排上课时段" />
+    <AppPageHeader
+      title="排课模板"
+      description="每周固定的上课安排（模板）——改这里，以后每周都跟着变；只想改某一天的一节课，去「考勤管理 → 周课表」"
+    />
     <el-card shadow="never">
       <!-- 筛选 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">
@@ -267,7 +270,7 @@ onMounted(() => {
       </div>
 
       <div v-if="!classId" class="py-16 text-center text-gray-400">
-        请先选择班级查看课程表
+        请先选择班级查看排课模板
       </div>
       <el-table v-else v-loading="loading" :data="periods" border stripe>
         <el-table-column label="节次" width="90" align="center">
