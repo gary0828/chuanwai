@@ -146,6 +146,37 @@ fileMatchPattern:
   ```
   期望：`integrity_check = ok`、外键违规数 0、学员数/考勤数与主库一致。
 
+## ★★ K-053 · 本机（Docker Desktop for Windows）的两条数据红线（2026-09-26 实测踩过）
+
+> 这两条都**只影响本机**；生产（Linux 服务器）不受影响。但本机踩一次代价很大（我踩出过数据库损坏）。
+
+### ① 宿主机进程**读不到**容器写入的数据（bind mount 一致性）
+
+- 现象：API（容器内）看到 31 名学员，宿主机 `node` 直连 `server/data/attendance.db` 只看到 29 名。
+- 后果：任何"从宿主机直接读/写库"的脚本都会**静默失效**（删不到、查不到最新数据）——
+  包括 e2e 里的 SQL 兜底清理。
+- **判据**：两边 size/md5 可能相同，但内容视图不同 —— 别用"文件大小一致"来判断同步。
+
+### ② 不要在容器运行时用宿主机进程**写**数据库 → 会损坏
+
+- 我曾在后端运行期间用宿主机 `node` 直接 `DELETE` 数据，
+  随后服务端报 **`database disk image is malformed`**（数据库损坏），只能从备份恢复。
+- 与 K-026「不要裸拷 attendance.db」是同一类：SQLite 在 WAL 模式下**不接受两个不同视图的写者**。
+- **想操作库，就在容器内做**：
+  ```bash
+  cat script.js | docker exec -i attendance-server node -        # CJS 走 stdin（可用）
+  # 注意：ESM（--input-type=module）走 stdin 在本机有异常；容器内绝对路径也可能因
+  #       Git Bash 路径转换被改坏 → 用 sh -c '...' 或 stdin 方式，别用 docker exec node -e "/app/..."
+  ```
+
+### ③ `backup-db.sh` 在本机的失效与恢复
+
+- `backup-db.sh` 用 `docker exec` 起**新进程**读库。后端运行一段时间后，新进程会
+  报 `unable to open database file`（WAL 读视图建立不了）。
+- **恢复办法：`docker restart attendance-server`**（重启后 WAL 落盘，新进程即可读；实测重启后备份成功）。
+- **本机备份优先用应用内备份**：「系统管理 → 数据备份」按钮（走后端**同进程**，不受影响）。
+  生产 Linux 不受此限制，运维脚本照常用。
+
 ## 验收
 
 ```bash

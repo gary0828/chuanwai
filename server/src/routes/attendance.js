@@ -381,6 +381,7 @@ router.get("/records", auth, (req, res) => {
   const list = db
     .prepare(
       `SELECT a.id, a.date, a.status, a.remark, a.updated_at,
+              a.session_id,
               s.id AS student_id, s.student_no, s.name AS student_name,
               c.name AS class_name, co.name AS course_name, co.id AS course_id
        FROM attendances a

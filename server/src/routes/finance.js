@@ -10,6 +10,9 @@ const { auth, requireRole } = require("../middleware/auth");
 const { canManageStudent } = require("../utils/scope");
 const { audit } = require("../utils/audit");
 const { parseDate, parseDateTime } = require("../utils/validate");
+const { scanReferences, describeImpacts } = require("../utils/delete-guard");
+
+const { paidNetSql, REFUND_TIME_SQL } = require("../utils/money");
 
 const router = express.Router();
 
@@ -86,7 +89,7 @@ router.get("/orders", auth, requireRole("admin"), (req, res) => {
            o.enroll_date, o.amount, o.total_hours, o.remain_hours,
            o.status, o.remark, o.created_at,
            u.name AS enroll_user_name,
-           COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.order_id = o.id), 0) AS paid
+           ${paidNetSql("o.id")} AS paid
     FROM orders o
     JOIN students s ON s.id = o.student_id
     LEFT JOIN classes c ON c.id = o.class_id
@@ -136,6 +139,16 @@ router.get("/orders/:id", auth, requireRole("admin"), (req, res) => {
 router.post("/orders", auth, requireRole("admin"), (req, res) => {
   const { student_id, class_id, course_id, enroll_date, amount, total_hours, remark } = req.body;
   if (!student_id) return res.status(400).json({ success: false, message: "请选择学员" });
+  // ★ 2026-09-26 课程改为必填：考勤自动扣课时依赖订单的 course_id 精确匹配
+  //   （见 attendance.js 的 findDeductOrder：student_id + course_id + status='在读'）。
+  //   此前 course_id 可空 → 不选课程建出的订单**永远不会扣课时**，
+  //   而界面没有任何提示 → 用户以为在扣、实际课时只增不减。
+  if (!course_id) {
+    return res.status(400).json({
+      success: false,
+      message: "请选择课程（考勤按「学员 + 课程」匹配订单来扣课时，不选课程将无法自动扣课时）"
+    });
+  }
   if (!canManageStudent(req, student_id)) {
     return res.status(403).json({ success: false, message: "无权为该学员报班" });
   }
@@ -279,17 +292,43 @@ router.put("/orders/:id", auth, requireRole("admin"), (req, res) => {
 /** 删除订单（v13：存在缴费/退费记录时禁止删除，保护资金历史；仅有课时流水允许级联清理，供测试/清理场景） */
 router.delete("/orders/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  const cnt = db.prepare(`
-    SELECT
-      (SELECT COUNT(*) FROM payments WHERE order_id = ?) +
-      (SELECT COUNT(*) FROM refunds WHERE order_id = ?) AS c
-  `).get(id, id);
-  if (cnt.c > 0) {
-    return res.status(400).json({ success: false, message: "该订单已有缴费/退费记录，禁止删除" });
+  const cur = db.prepare("SELECT id, status FROM orders WHERE id = ?").get(id);
+  if (!cur) {
+    return res.status(404).json({ success: false, message: "订单不存在" });
   }
-  const info = db.prepare("DELETE FROM orders WHERE id = ?").run(id);
-  if (info.changes === 0) return res.status(404).json({ success: false, message: "订单不存在" });
-  audit(req.user, "删除报班订单", `订单#${id}`);
+
+  // ★ 2026-09-26 补删除守卫（K-052），并做**分级**处理：
+  //
+  //   原实现只拦 payments / refunds，**漏了 hour_consumptions（CASCADE）** ——
+  //   删掉一张已上过课的订单，它的课消流水会被静默清空，课消收入凭空减少且不可追溯。
+  //
+  //   但一刀切拒绝会造成死结：**学员上过课 → 订单永远删不掉 → 学员档案也永远删不掉**
+  //   （students 的删除保护要求无订单）。所以按订单状态分级：
+  //     · **在读**：有课消流水就拒绝 —— 学员还在读，课时账必须完整可追溯；
+  //     · **非在读（结业/退班）**：允许删除连同课消流水 —— 学员已离校，
+  //       档案需要能被清理（清理动作由 audit 留痕，可追溯"谁在何时删了什么"）。
+  const impacts = scanReferences("orders", id);
+  if (impacts.length > 0) {
+    const hasConsumption = impacts.some(i => i.table === "hour_consumptions");
+    if (cur.status === "在读" && hasConsumption) {
+      return res.status(400).json({
+        success: false,
+        message:
+          `该订单仍在读且有课时消耗，禁止删除：${describeImpacts(impacts)}。` +
+          `如需清理档案，请先把订单置为「结业」或「退班」后再删除。`
+      });
+    }
+    if (!hasConsumption) {
+      return res.status(400).json({
+        success: false,
+        message: `该订单已被以下数据引用，禁止删除：${describeImpacts(impacts)}`
+      });
+    }
+    // 非在读 + 有课消流水 → 允许（连带清理），下面照常删除
+  }
+
+  db.prepare("DELETE FROM orders WHERE id = ?").run(id);
+  audit(req.user, "删除报班订单", `订单#${id} 状态=${cur.status}`);
   res.json({ success: true, data: null });
 });
 
@@ -544,21 +583,54 @@ router.get("/stats/revenue", auth, requireRole("admin"), (req, res) => {
     WHERE ${where}
     GROUP BY period ORDER BY period
   `).all(unit, ...params);
-  const grand = rows.reduce((sum, r) => sum + r.total, 0);
-  res.json({ success: true, data: { list: rows, totalRevenue: grand } });
+
+  // ★ 2026-09-26 净额口径（对齐 ADR-003）：减去同期「已审批通过」的退费。
+  //   此前只算缴费 → 报表里的"实收"是毛额，**退出去的钱在任何报表里都看不见**。
+  //   仍同时返回 gross（缴费毛额）与 refunded（同期退费），便于向业务解释差额。
+  const rConds = [];
+  const rParams = [];
+  if (start) { rConds.push(`date(${REFUND_TIME_SQL}) >= date(?)`); rParams.push(start); }
+  if (end) { rConds.push(`date(${REFUND_TIME_SQL}) <= date(?)`); rParams.push(end); }
+  const rWhere = rConds.length ? rConds.join(" AND ") : "1=1";
+  const refRows = db.prepare(`
+    SELECT substr(${REFUND_TIME_SQL}, 1, ?) AS period, SUM(r.amount) AS total
+    FROM refunds r
+    WHERE r.status = '通过' AND ${rWhere}
+    GROUP BY period
+  `).all(unit, ...rParams);
+
+  const payMap = Object.fromEntries(
+    rows.map(r => [r.period, { total: Number(r.total) || 0, cnt: Number(r.cnt) || 0 }])
+  );
+  const refMap = Object.fromEntries(refRows.map(r => [r.period, Number(r.total) || 0]));
+  const periods = [...new Set([...Object.keys(payMap), ...Object.keys(refMap)])].sort();
+  const list = periods.map(p => {
+    const pay = payMap[p] || { total: 0, cnt: 0 };
+    const refunded = refMap[p] || 0;
+    return {
+      period: p,
+      cnt: pay.cnt,
+      gross: pay.total, // 缴费毛额（保留，便于解释差额）
+      refunded, // 同期已通过退费
+      total: Number((pay.total - refunded).toFixed(2)) // 净额（前端沿用 total，无需改动）
+    };
+  });
+  const grand = Number(list.reduce((sum, r) => sum + r.total, 0).toFixed(2));
+  res.json({ success: true, data: { list, totalRevenue: grand } });
 });
 
-/** 欠费统计：订单金额 > 已缴合计 的在读/结业订单 */
+/** 欠费统计：订单金额 > 实缴净额 的在读/结业订单 */
 router.get("/stats/arrears", auth, requireRole("admin"), (req, res) => {
+  // ★ 2026-09-26 「已缴」改为净额（减退费）：退款之后欠费应当回升，
+  //   此前用缴费毛额 → 退过费的订单欠费被系统性低估。
   const rows = db.prepare(`
     SELECT o.id, o.student_id, s.student_no, s.name AS student_name,
            c.name AS class_name, o.enroll_date, o.amount,
-           COALESCE(SUM(p.amount), 0) AS paid,
-           o.amount - COALESCE(SUM(p.amount), 0) AS arrears
+           ${paidNetSql("o.id")} AS paid,
+           o.amount - (${paidNetSql("o.id")}) AS arrears
     FROM orders o
     JOIN students s ON s.id = o.student_id
     LEFT JOIN classes c ON c.id = o.class_id
-    LEFT JOIN payments p ON p.order_id = o.id
     WHERE o.status != '退班' AND o.amount > 0
     GROUP BY o.id
     HAVING arrears > 0
@@ -600,8 +672,22 @@ router.get("/stats/business", auth, requireRole("admin"), (req, res) => {
   const totalStudents = db.prepare("SELECT COUNT(*) AS c FROM students").get().c;
   const activeStudents = db.prepare("SELECT COUNT(*) AS c FROM students WHERE status = '在读'").get().c;
   const activeOrders = db.prepare("SELECT COUNT(*) AS c FROM orders WHERE status = '在读'").get().c;
-  const monthRevenue = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE pay_time >= ?").get(monthStart).s;
-  const totalRevenue = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments").get().s;
+  // ★ 2026-09-26 净额口径（对齐 ADR-003）：实收 = 缴费 − 已审批通过的退费。
+  //   此前是缴费毛额 —— 校长在这一页看到的是"收了多少"，而不是"实际留下多少"。
+  const monthPay = Number(
+    db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE pay_time >= ?").get(monthStart).s || 0
+  );
+  const monthRefund = Number(
+    db
+      .prepare(`SELECT COALESCE(SUM(r.amount),0) AS s FROM refunds r WHERE r.status = '通过' AND ${REFUND_TIME_SQL} >= ?`)
+      .get(monthStart).s || 0
+  );
+  const monthRevenue = Number((monthPay - monthRefund).toFixed(2));
+  const totalPay = Number(db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments").get().s || 0);
+  const totalRefund = Number(
+    db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM refunds WHERE status = '通过'").get().s || 0
+  );
+  const totalRevenue = Number((totalPay - totalRefund).toFixed(2));
   const totalLeads = db.prepare("SELECT COUNT(*) AS c FROM leads").get().c;
   const convertedLeads = db.prepare("SELECT COUNT(*) AS c FROM leads WHERE status = '已转化'").get().c;
 
@@ -619,23 +705,66 @@ router.get("/stats/business", auth, requireRole("admin"), (req, res) => {
       )
   `).get(sixMonthsAgo).c;
 
-  // 近 12 个月月度营收
-  const revenueByMonth = db.prepare(`
+  // 近 12 个月月度营收（★ 2026-09-26 改为净额：按月减去同期已通过退费，退款不再从报表里消失）
+  const payByMonth = db.prepare(`
     SELECT substr(p.pay_time, 1, 7) AS period, SUM(p.amount) AS total, COUNT(*) AS cnt
     FROM payments p
     WHERE p.pay_time >= ?
     GROUP BY period ORDER BY period
-  `).all(twelveMonthsAgo).map(r => ({ period: r.period, total: Number(r.total), cnt: Number(r.cnt) }));
+  `).all(twelveMonthsAgo);
+  const refByMonth = db.prepare(`
+    SELECT substr(${REFUND_TIME_SQL}, 1, 7) AS period, SUM(r.amount) AS total
+    FROM refunds r
+    WHERE r.status = '通过' AND ${REFUND_TIME_SQL} >= ?
+    GROUP BY period ORDER BY period
+  `).all(twelveMonthsAgo);
+  const payMonthMap = Object.fromEntries(payByMonth.map(r => [r.period, r]));
+  const refMonthMap = Object.fromEntries(refByMonth.map(r => [r.period, Number(r.total) || 0]));
+  const monthPeriods = [...new Set([...Object.keys(payMonthMap), ...Object.keys(refMonthMap)])].sort();
+  const revenueByMonth = monthPeriods.map(p => {
+    const pay = payMonthMap[p];
+    const gross = pay ? Number(pay.total) : 0;
+    const refunded = refMonthMap[p] || 0;
+    return {
+      period: p,
+      gross,
+      refunded,
+      cnt: pay ? Number(pay.cnt) : 0,
+      total: Number((gross - refunded).toFixed(2))
+    };
+  });
 
-  // 按课程营收（近 12 个月）
-  const revenueByCourse = db.prepare(`
+  // 按课程营收（近 12 个月）★ 2026-09-26 改为净额：按课程减去同期退费（退费经订单关联到课程）
+  const payByCourse = db.prepare(`
     SELECT COALESCE(cu.name, '未选课程') AS course_name, SUM(p.amount) AS total, COUNT(*) AS cnt
     FROM payments p
     JOIN orders o ON o.id = p.order_id
     LEFT JOIN courses cu ON cu.id = o.course_id
     WHERE p.pay_time >= ?
     GROUP BY cu.id ORDER BY total DESC
-  `).all(twelveMonthsAgo).map(r => ({ course_name: r.course_name, total: Number(r.total), cnt: Number(r.cnt) }));
+  `).all(twelveMonthsAgo);
+  const refByCourse = db.prepare(`
+    SELECT COALESCE(cu.name, '未选课程') AS course_name, SUM(r.amount) AS total
+    FROM refunds r
+    JOIN orders o ON o.id = r.order_id
+    LEFT JOIN courses cu ON cu.id = o.course_id
+    WHERE r.status = '通过' AND ${REFUND_TIME_SQL} >= ?
+    GROUP BY cu.id
+  `).all(twelveMonthsAgo);
+  const refCourseMap = Object.fromEntries(refByCourse.map(r => [r.course_name, Number(r.total) || 0]));
+  const revenueByCourse = payByCourse
+    .map(r => {
+      const gross = Number(r.total);
+      const refunded = refCourseMap[r.course_name] || 0;
+      return {
+        course_name: r.course_name,
+        gross,
+        refunded,
+        cnt: Number(r.cnt),
+        total: Number((gross - refunded).toFixed(2))
+      };
+    })
+    .sort((a, b) => b.total - a.total);
 
   // 招生渠道统计（线索数 / 转化数 / 转化率）
   const channelStats = db.prepare(`

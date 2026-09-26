@@ -9,7 +9,8 @@ import {
   importStudents,
   createStudent,
   updateStudent,
-  deleteStudent
+  deleteStudent,
+  getStudentDeleteImpact
 } from "@/api/attendance";
 import { AppPageHeader } from "@/components/AppPageHeader";
 
@@ -325,21 +326,49 @@ function handleSubmit() {
   });
 }
 
+/**
+ * 删除学员
+ * ★ 2026-09-26 改造：先调「删除影响预览」，把**具体会连带清理多少条**摆进确认框。
+ *   原先确认框是一句写死的文案，用户只能盲确认；而后端其实早就算好了条数，
+ *   只是放在了 DELETE 的响应里（删完才返回）—— 属于「代价不可见」。
+ */
 function handleDelete(row: any) {
-  ElMessageBox.confirm(
-    `确定删除学生「${row.name}（${row.student_no}）」吗？其考勤/请假/通知等历史记录将一并清理。`,
-    "删除确认",
-    { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" }
-  )
-    .then(() => {
-      deleteStudent(row.id).then((res: any) => {
-        if (res.success) {
-          ElMessage.success("删除成功");
-          loadData();
-        }
-      });
-    })
-    .catch(() => {});
+  getStudentDeleteImpact(row.id).then((res: any) => {
+    if (!res.success) return;
+    const { cascade = {}, orderCount = 0, blocked } = res.data || {};
+
+    // 有报班/缴费记录时后端会拒绝 —— 直接给出可执行的出路，不让用户白点一次
+    if (blocked) {
+      ElMessageBox.alert(
+        `「${row.name}」有 ${orderCount} 条报班/缴费记录，不能直接删除。\n` +
+          `如需下线，请改为把学籍状态设为「退学」（档案保留，不再计入在读）。`,
+        "无法删除",
+        { type: "warning", confirmButtonText: "知道了" }
+      ).catch(() => {});
+      return;
+    }
+
+    const items = Object.entries(cascade as Record<string, number>).map(
+      ([label, count]) => `${label} ${count} 条`
+    );
+    const detail = items.length
+      ? `（将同时清理：${items.join("、")}）`
+      : "（无关联历史记录）";
+    ElMessageBox.confirm(
+      `确定删除学生「${row.name}（${row.student_no}）」吗？${detail}此操作不可撤销。`,
+      "删除确认",
+      { type: "warning", confirmButtonText: "确认删除", cancelButtonText: "取消" }
+    )
+      .then(() => {
+        deleteStudent(row.id).then((res: any) => {
+          if (res.success) {
+            ElMessage.success("删除成功");
+            loadData();
+          }
+        });
+      })
+      .catch(() => {});
+  });
 }
 
 onMounted(() => {

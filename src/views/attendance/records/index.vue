@@ -42,6 +42,10 @@ const editForm = reactive({
   student_id: null as number | null,
   date: "",
   course_id: null as number | null,
+  // ★ 2026-09-26 新增：记录归属的课次。带上它，后端才会走「按课次更新」分支；
+  //   不带的话会走 legacy 分支**新插入一行**，导致同一节课同一学生出现两条考勤
+  //   （统计双计 + 课时按另一分区状态多扣/多回补）。
+  session_id: null as number | null,
   status: "正常",
   remark: "",
   student_name: "",
@@ -96,6 +100,7 @@ function openEdit(row: any) {
     student_id: row.student_id,
     date: row.date,
     course_id: row.course_id,
+    session_id: row.session_id ?? null, // ★ 关键：带上课次归属（见 editForm 注释）
     status: row.status,
     remark: row.remark,
     student_name: row.student_name,
@@ -108,6 +113,8 @@ function handleSave() {
   saveAttendanceBatch({
     date: editForm.date,
     course_id: editForm.course_id,
+    // ★ 带上 session_id：有课次的记录走「按课次更新」，不会新增重复行
+    ...(editForm.session_id ? { session_id: editForm.session_id } : {}),
     records: [
       {
         student_id: editForm.student_id,

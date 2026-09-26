@@ -6,6 +6,7 @@ const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { canManageStudent } = require("../utils/scope");
 const { attendanceRate } = require("../utils/attendance-rate");
+const { paidNetSql } = require("../utils/money");
 const { calcGrade } = require("../utils/grade");
 
 const router = express.Router();
@@ -97,10 +98,11 @@ router.get("/students/:id", auth, requireRole("admin", "teacher"), (req, res) =>
   // 权限（2026-09-12 权限收紧）：teacher 不返回 amount / paid（费用对教师不可见，
   // 保留课程、班级、状态、报名日期等教学信息）
   const isTeacher = req.user.role === "teacher";
+  // ★ 2026-09-26 「已缴」改为净额（减退费），与订单页/财务统计口径一致（对齐 ADR-003）
   const orders = db.prepare(`
     SELECT COALESCE(cu.name, '未指定课程') AS course_name, c.name AS class_name,
            o.amount, o.status, o.enroll_date,
-           COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.order_id = o.id), 0) AS paid
+           ${paidNetSql("o.id")} AS paid
     FROM orders o
     LEFT JOIN courses cu ON cu.id = o.course_id
     LEFT JOIN classes c ON c.id = o.class_id

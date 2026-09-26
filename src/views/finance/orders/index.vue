@@ -154,6 +154,12 @@ function handleCreate() {
     ElMessage.warning("请选择学员");
     return;
   }
+  // ★ 2026-09-26：课程必填 —— 扣课时按「学员 + 课程」匹配订单，
+  //   不选课程建出的订单永远不扣课时（后端同样已强制校验）
+  if (!createForm.course_id) {
+    ElMessage.warning("请选择课程（不选课程将无法自动扣课时）");
+    return;
+  }
   submitting.value = true;
   createFinanceOrder({
     ...createForm,
@@ -523,10 +529,10 @@ onMounted(() => {
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="课程">
+        <el-form-item label="课程" required>
           <el-select
             v-model="createForm.course_id"
-            placeholder="选择课程"
+            placeholder="选择课程（扣课时依赖此项）"
             clearable
             filterable
             class="w-full"

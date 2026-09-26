@@ -3,6 +3,7 @@ const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { parseText } = require("../utils/validate");
+const { scanReferences, describeImpacts } = require("../utils/delete-guard");
 
 const router = express.Router();
 
@@ -84,28 +85,24 @@ router.put("/:id", auth, requireRole("admin"), (req, res) => {
  *  v13：扩展删除保护——考勤/课表/考试/课时流水任一存在则禁止删除（防止级联清空历史） */
 router.delete("/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  const attendanceCount = db
-    .prepare("SELECT COUNT(*) AS c FROM attendances WHERE course_id = ?")
-    .get(id).c;
-  if (attendanceCount > 0) {
-    return res.status(400).json({ success: false, message: "该课程已有考勤记录，无法删除" });
-  }
-  const schedCount = db.prepare("SELECT COUNT(*) AS c FROM schedules WHERE course_id = ?").get(id).c;
-  if (schedCount > 0) {
-    return res.status(400).json({ success: false, message: "该课程已排入课表，无法删除" });
-  }
-  const examCount = db.prepare("SELECT COUNT(*) AS c FROM exams WHERE course_id = ?").get(id).c;
-  if (examCount > 0) {
-    return res.status(400).json({ success: false, message: "该课程存在考试记录，无法删除" });
-  }
-  const consCount = db.prepare("SELECT COUNT(*) AS c FROM hour_consumptions WHERE course_id = ?").get(id).c;
-  if (consCount > 0) {
-    return res.status(400).json({ success: false, message: "该课程存在课时消耗流水，无法删除" });
-  }
-  const result = db.prepare("DELETE FROM courses WHERE id = ?").run(id);
-  if (result.changes === 0) {
+  if (!db.prepare("SELECT id FROM courses WHERE id = ?").get(id)) {
     return res.status(404).json({ success: false, message: "课程不存在" });
   }
+
+  // ★ 2026-09-26 改为「通用删除守卫」（K-052）：
+  //   原实现手工列举了 4 张表（考勤/排课/考试/课消），而数据库里**实际有 14 张表**引用 courses，
+  //   漏检的包括 orders.course_id（ON DELETE SET NULL → 订单课程被静默置空，
+  //   该订单学员以后点名**永不扣课时**）、teaching_assignments / class_sessions（CASCADE → 被连带删除）。
+  //   现由 PRAGMA foreign_key_list 自动发现全部引用，杜绝"随迁移新增表而漏检"。
+  const impacts = scanReferences("courses", id);
+  if (impacts.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: `该课程已被以下数据引用，无法删除：${describeImpacts(impacts)}`
+    });
+  }
+
+  db.prepare("DELETE FROM courses WHERE id = ?").run(id);
   res.json({ success: true, data: null });
 });
 

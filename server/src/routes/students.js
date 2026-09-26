@@ -375,6 +375,58 @@ router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
 /** 删除学生（admin / teacher，仅可删本班学生；级联删除历史业务记录）
  *  删除策略：有订单（财务记录）→ 400 保护；其他业务记录（考勤/请假/通知/成绩等）允许级联清理，
  *  响应中返回将级联删除的数量统计供前端二次确认（问题 7 修复） */
+/** 统计删除某学员将连带清理的历史数据（删除前预览 与 删除后回执 共用） */
+function buildDeleteImpact(id) {
+  const tables = [
+    ["考勤记录", "attendances"],
+    ["请假记录", "leaves"],
+    ["补课记录", "makeup_classes"],
+    ["课时消耗流水", "hour_consumptions"],
+    ["通知记录", "notifications"],
+    ["考试成绩", "exam_scores"]
+  ];
+  const cascade = {};
+  for (const [label, table] of tables) {
+    const c = db
+      .prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE student_id = ?`)
+      .get(id).c;
+    if (c > 0) cascade[label] = c;
+  }
+  return cascade;
+}
+
+/**
+ * ★ 2026-09-26 新增：删除前预览影响
+ * 背景：原先"将级联删除多少历史数据"只在 **DELETE 的响应里**返回 —— 也就是用户
+ * 删完才知道删了什么，确认框只有一句写死的文案（见 students/index.vue 的旧实现）。
+ * 现在前端先调本端点，把具体条数摆进确认框，让用户看清代价再决定。
+ */
+router.get("/:id/delete-impact", auth, requireRole("admin", "teacher"), (req, res) => {
+  const id = Number(req.params.id);
+  if (!canManageStudent(req, id)) {
+    return res.status(403).json({ success: false, message: "无权管理该学生" });
+  }
+  const student = db
+    .prepare("SELECT id, name, student_no FROM students WHERE id = ?")
+    .get(id);
+  if (!student) {
+    return res.status(404).json({ success: false, message: "学生不存在" });
+  }
+  const orderCount = db
+    .prepare("SELECT COUNT(*) AS c FROM orders WHERE student_id = ?")
+    .get(id).c;
+  res.json({
+    success: true,
+    data: {
+      student,
+      cascade: buildDeleteImpact(id),
+      orderCount,
+      // 有订单时后端会拒绝删除，前端据此直接给出"改学籍状态"的指引，而不是让用户白点一次
+      blocked: orderCount > 0
+    }
+  });
+});
+
 router.delete("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   const id = Number(req.params.id);
   if (!canManageStudent(req, id)) {
@@ -393,22 +445,8 @@ router.delete("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
       message: "该学员存在报班/缴费/退费记录，请先处理相关订单"
     });
   }
-  // 统计将级联删除的历史数据（供前端提示）
-  const tables = [
-    ["考勤记录", "attendances"],
-    ["请假记录", "leaves"],
-    ["补课记录", "makeup_classes"],
-    ["课时消耗流水", "hour_consumptions"],
-    ["通知记录", "notifications"],
-    ["考试成绩", "exam_scores"]
-  ];
-  const cascade = {};
-  for (const [label, table] of tables) {
-    const c = db
-      .prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE student_id = ?`)
-      .get(id).c;
-    if (c > 0) cascade[label] = c;
-  }
+  // 统计将级联删除的历史数据（复用公共实现，保证与「删除前预览」口径一致）
+  const cascade = buildDeleteImpact(id);
   try {
     db.exec("BEGIN");
     try {

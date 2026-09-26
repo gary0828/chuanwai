@@ -2,6 +2,7 @@
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
+const { scanReferences, describeImpacts } = require("../utils/delete-guard");
 
 const router = express.Router();
 
@@ -117,6 +118,19 @@ router.delete("/:id", auth, requireRole("admin"), (req, res) => {
   if (row.is_current === 1) {
     return res.status(400).json({ success: false, message: "当前学期不可删除，请先切换当前学期" });
   }
+
+  // ★ 2026-09-26 补删除守卫（K-052）：
+  //   此前只拦「当前学期」，而 teaching_assignments.term_id 是 ON DELETE CASCADE、
+  //   class_sessions.term_id 是 SET NULL —— 删一个历史学期会**静默删掉该学期全部任课关系**，
+  //   并让课次失去学期归属，事后无从追溯。
+  const impacts = scanReferences("terms", id);
+  if (impacts.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: `该学期已被以下数据引用，无法删除：${describeImpacts(impacts)}`
+    });
+  }
+
   db.prepare("DELETE FROM terms WHERE id = ?").run(id);
   res.json({ success: true, data: null });
 });

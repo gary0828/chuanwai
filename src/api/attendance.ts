@@ -50,6 +50,11 @@ export const deleteStudent = (id: number) => {
   return http.request("delete", `/api/students/${id}`);
 };
 
+/** ★ 2026-09-26 新增：删除前预览影响（将连带清理多少考勤/通知/成绩等），供确认框展示代价 */
+export const getStudentDeleteImpact = (id: number) => {
+  return http.request("get", `/api/students/${id}/delete-impact`);
+};
+
 /** ---------- 课程 ---------- */
 
 /** 课程列表（分页 + 关键字搜索） */
