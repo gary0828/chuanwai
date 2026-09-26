@@ -59,9 +59,30 @@ const sourceOptions = ["转介绍", "线上", "地推", "广告", "其他"];
 // 导入结果
 const importDialogVisible = ref(false);
 const importResult = ref<any>(null);
+// ★ 2026-09-26 新增：导入处理中状态（此前无任何 loading，大文件时用户会以为「没反应」）
+const importing = ref(false);
+
+/** Excel 日期单元格兼容：可能是 Date、数字序列号，或文本 */
+function toDateStr(v: any): string {
+  if (v === undefined || v === null || v === "") return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (v instanceof Date) {
+    return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+  }
+  if (typeof v === "number") {
+    // Excel 1900 日期系统序列号 → 公历日期
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    if (Number.isNaN(d.getTime())) return "";
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  }
+  return String(v).trim();
+}
 
 /** 下载导入模板 */
 function downloadTemplate() {
+  // ★ 示例班级用系统里真实存在的班级名 —— 此前写死「软件工程一班」，用户照抄必然报「班级无法匹配」
+  const sampleClass =
+    classOptions.value[0]?.name || "请填写系统中已存在的班级名称";
   const ws = XLSX.utils.json_to_sheet(
     [
       {
@@ -70,7 +91,7 @@ function downloadTemplate() {
         性别: "男",
         手机号: "13800000000",
         邮箱: "zhangsan@example.com",
-        班级: "软件工程一班",
+        班级: sampleClass,
         状态: "在读",
         家长姓名: "李四",
         家长电话: "13900000000",
@@ -99,16 +120,36 @@ function downloadTemplate() {
   XLSX.writeFile(wb, "学生导入模板.xlsx");
 }
 
-/** 解析并导入 Excel */
+/** 解析并导入 Excel
+ *
+ * ★ 2026-09-26 修复（用户反馈「批量上传学生没有任何反应」）：
+ *   el-upload 的 `before-upload` 传入的是 **UploadRawFile**（= 原生 File + uid），
+ *   它**没有 `raw` 字段** —— `raw` 只存在于 change 事件的 UploadFile 上。
+ *   原代码写 `reader.readAsArrayBuffer(file.raw)`，实参是 undefined → FileReader 抛 TypeError；
+ *   而 try/catch 只包住 `reader.onload` 的**内部**，这个抛错无人接管
+ *   → 无请求、无消息、无弹窗，用户看到的正是「点了没反应」。
+ *   现改为直接读 `file`，并补齐 loading / 业务失败 / 读取异常 三条反馈路径。
+ */
 function handleImport(file: any) {
+  if (importing.value) return false; // 防重复提交
+  importing.value = true;
+  const done = () => {
+    importing.value = false;
+  };
+
   const reader = new FileReader();
+  reader.onerror = () => {
+    done();
+    ElMessage.error("文件读取失败，请重新选择文件后再试");
+  };
   reader.onload = (e: any) => {
     try {
       const wb = XLSX.read(e.target.result, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows: any[] = XLSX.utils.sheet_to_json(sheet);
       if (rows.length === 0) {
-        ElMessage.warning("文件中没有数据");
+        done();
+        ElMessage.warning("文件中没有数据，请确认第一张工作表里有数据行");
         return;
       }
       const classMap: Record<string, number> = {};
@@ -125,28 +166,46 @@ function handleImport(file: any) {
           status: String(r["状态"] || "在读").trim() || "在读",
           parent_name: String(r["家长姓名"] || "").trim(),
           parent_phone: String(r["家长电话"] || "").trim(),
+          // ★ 2026-09-26 补：模板里本就有这两列，此前未映射 → 用户填了会静默丢失
+          source_channel: String(r["来源渠道"] || "").trim(),
+          enroll_date: toDateStr(r["报名日期"]),
           __line: i + 2
         };
       });
       const missingClass = records
         .filter(r => !r.class_id)
-        .map(r => `第${r.__line}行（${r.student_no || r.name}）`);
+        .map(r => `第${r.__line}行（${r.student_no || r.name || "无学号"}）`);
       if (missingClass.length > 0) {
-        ElMessage.warning(`以下行班级名称无法匹配：${missingClass.join("、")}`);
+        done();
+        ElMessage.warning(
+          `以下行的班级名称在系统中不存在，已取消导入：${missingClass.join("、")}。请先到「班级管理」核对班级名称`
+        );
         return;
       }
-      importStudents({ records }).then((res: any) => {
-        if (res.success) {
-          importResult.value = res.data;
-          importDialogVisible.value = true;
-          loadData();
-        }
-      });
+      importStudents({ records })
+        .then((res: any) => {
+          if (res.success) {
+            importResult.value = res.data;
+            importDialogVisible.value = true;
+            loadData();
+          } else {
+            // 业务失败（HTTP 200 但 success=false）此前完全静默
+            ElMessage.error(res.message || "导入失败，请稍后重试");
+          }
+        })
+        .catch(() => {
+          // HTTP 层失败已由全局响应拦截器弹提示，这里只需保证按钮状态恢复
+        })
+        .finally(done);
     } catch (err) {
-      ElMessage.error("文件解析失败，请上传 .xlsx 或 .csv 文件");
+      done();
+      ElMessage.error(
+        "文件解析失败，请上传 .xlsx / .xls / .csv 文件，并确认表头与「模板」一致"
+      );
     }
   };
-  reader.readAsArrayBuffer(file.raw);
+  // ★ 这里必须传 file 本身（UploadRawFile），不是 file.raw
+  reader.readAsArrayBuffer(file);
   return false;
 }
 
@@ -333,9 +392,12 @@ onMounted(() => {
         <el-upload
           :show-file-list="false"
           :before-upload="handleImport"
+          :disabled="importing"
           accept=".xlsx,.xls,.csv"
         >
-          <el-button>导入</el-button>
+          <el-button :loading="importing">{{
+            importing ? "导入中…" : "导入"
+          }}</el-button>
         </el-upload>
         <el-button @click="handleExport">导出</el-button>
       </div>

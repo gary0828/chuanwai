@@ -68,6 +68,30 @@ const lis = [...document.querySelector('.el-menu').children];
 **③ 「默认授课教师」是展示字段**：`courses.teacher` 仅作课程列表展示，
 **实际任课 / 老师能看到哪个班**以「任课关系」（`teaching_assignments`）为准（前端已在页面写明）。
 
+## ★ K-049 · `el-upload` 的 `before-upload` 参数是 **UploadRawFile（没有 `raw`）**（2026-09-26 真实 P0 事故）
+
+**症状**：用户点「导入」选完文件后**完全没有反应** —— 无请求、无消息、无弹窗。
+
+**根因**（Element Plus 类型定义是铁证）：
+```ts
+export interface UploadRawFile extends File { uid: number }   // ← 没有 raw 字段
+beforeUpload: (rawFile: UploadRawFile) => ...
+```
+`raw` **只存在于 change 事件的 `UploadFile`**（`UploadFile.raw?: UploadRawFile`）。
+代码写 `reader.readAsArrayBuffer(file.raw)` → 实参是 `undefined` → **FileReader 同步抛 TypeError**；
+而 `try/catch` 只包住了 `reader.onload` 回调的**内部**，这个同步抛错**无人接管** → 彻底静默。
+
+**为什么编译期没拦住**：函数参数被标成 `file: any`，**类型检查被绕过**。
+
+**正确写法**（本项目 `profile/index.vue`、`settings/index.vue` 的 `beforeUpload(file: UploadRawFile)`
+就是正确参考实现）：
+- 参数标 `UploadRawFile`（**别用 `any`**），函数体直接用 `file` 本身 / `file.type` / `file.size`
+- 需要真上传时，`UploadRequestOptions.file` 才是 `UploadRawFile`
+- ★ **`try/catch` 必须能覆盖"同步抛出"的那一段** —— 把 try 只写在异步回调里，等于没包
+
+**同类检查点**：全项目 3 处 `before-upload`（`students` / `profile` / `settings`），
+改前只有 `students` 用错，另两处正确。新增上传功能时**照抄 profile/settings**。
+
 ## 诊断口诀
 
 - **`/` 返回 200 但页面空白** = 静态资源（JS/CSS）404，**不是**后端问题 → 单独验入口 JS 的 URL
