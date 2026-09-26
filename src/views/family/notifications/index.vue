@@ -135,44 +135,70 @@ onMounted(loadData);
         >
       </div>
 
+      <!-- ★ 2026-09-26 修复「列宽溢出导致固定列遮挡」：
+           原 11 列合计 1410px（容器仅约 1090px）→ 右侧「状态」「生成时间」被裁切，
+           「操作」固定列悬浮其上叠加成乱码。
+           现压缩到约 1085px，并给所有长文本列加 show-overflow-tooltip（超出显省略号 + 悬停看全文），
+           即使窄屏溢出也不会出现"半截字"。 -->
       <el-table v-loading="loading" :data="dataList" border stripe>
-        <el-table-column type="index" label="#" width="60" align="center" />
-        <el-table-column label="学员" min-width="150">
+        <el-table-column type="index" label="#" width="50" align="center" />
+        <el-table-column label="学员" min-width="120" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="font-medium">{{ row.student_name }}</span>
             <span class="text-gray-400 ml-1">{{ row.student_no }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="class_name" label="班级" min-width="120">
+        <el-table-column
+          prop="class_name"
+          label="班级"
+          min-width="100"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">{{ row.class_name || "—" }}</template>
         </el-table-column>
-        <el-table-column label="类型" width="100" align="center">
+        <el-table-column label="类型" width="85" align="center">
           <template #default="{ row }">
             <el-tag :type="TYPE_TAG[row.type] || 'primary'" size="small">{{
               row.type
             }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="title" label="标题" min-width="130" />
+        <el-table-column
+          prop="title"
+          label="标题"
+          min-width="92"
+          show-overflow-tooltip
+        />
         <el-table-column
           prop="content"
           label="内容"
-          min-width="260"
+          min-width="140"
           show-overflow-tooltip
         />
-        <el-table-column prop="date" label="关联日期" width="110" />
-        <el-table-column label="通知家长" min-width="110">
+        <!-- ★ 宽度 108：日期 "2026-09-22" 加单元格内边距刚好放得下；
+             100 会导致折行（"2026-09-" / "22"，实测踩过） -->
+        <el-table-column prop="date" label="关联日期" width="108" />
+        <el-table-column
+          label="通知家长"
+          min-width="95"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">{{ row.parent_name || "—" }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90" align="center">
+        <el-table-column label="状态" width="75" align="center">
           <template #default="{ row }">
             <el-tag :type="row.is_read === 1 ? 'info' : 'danger'" size="small">
               {{ row.is_read === 1 ? "已读" : "未读" }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="生成时间" width="170" />
-        <el-table-column label="操作" width="110" align="center" fixed="right">
+        <el-table-column
+          prop="created_at"
+          label="生成时间"
+          width="135"
+          show-overflow-tooltip
+        />
+        <el-table-column label="操作" width="85" align="center" fixed="right">
           <template #default="{ row }">
             <el-button
               type="primary"

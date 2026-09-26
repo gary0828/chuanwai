@@ -311,6 +311,40 @@ html:root {
   box-shadow: none;
 }
 
+/* ★ 固定列必须有不透明背景（2026-09-26 修复「叠字」，用户反馈「前面的内容无法覆盖」）
+ *
+ * 根因：本项目为追求"玻璃质感"把表格底色设成了透明
+ *   `--el-table-bg-color: transparent` / `--el-table-tr-bg-color: transparent`，
+ *   而 fixed 列是一层**悬浮贴纸**（position: sticky），它靠自身背景遮住滚过的单元格。
+ *   底色透明 → 遮不住 → 被压住的列文字透出来，与固定列的文字叠在一起，
+ *   表现为「已读 已2026-0…」这类乱码般的重叠（通知记录页 11 列时最明显）。
+ *
+ * 修复：显式给固定列不透明底色，并跟随 hover / 斑马纹状态（否则会出现"一行两种底色"的割裂）。
+ * ⚠️ 必须用 `!important`：Element Plus 的 `.el-table__body tr>td.el-table__cell`
+ *    （斑马纹时更是 4 个类选择器）会设 `background-color: var(--el-table-tr-bg-color)`，
+ *    而本项目该变量= transparent —— 不加 !important 会被它压回去（实测踩过）。
+ */
+.el-table .el-table__body-wrapper td.el-table-fixed-column--right,
+.el-table .el-table__body-wrapper td.el-table-fixed-column--left {
+  background-color: var(--surface-card) !important;
+}
+
+.el-table .el-table__body-wrapper tr:hover > td.el-table-fixed-column--right,
+.el-table .el-table__body-wrapper tr:hover > td.el-table-fixed-column--left {
+  background-color: var(--el-table-row-hover-bg-color) !important;
+}
+
+.el-table.el-table--striped
+  .el-table__body-wrapper
+  tr.el-table__row--striped
+  > td.el-table-fixed-column--right,
+.el-table.el-table--striped
+  .el-table__body-wrapper
+  tr.el-table__row--striped
+  > td.el-table-fixed-column--left {
+  background-color: var(--ink-50) !important;
+}
+
 /* 空数据：表格空状态与 el-empty 收敛到同一套排版语言。
    Element 自带的灰阶插画是最强的"模板感"来源之一 —— 直接隐藏，只保留文案。
    新页面请使用 AppEmpty（图标 + 标题 + 说明 + 可选操作）。 */

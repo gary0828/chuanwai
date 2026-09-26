@@ -92,6 +92,41 @@ beforeUpload: (rawFile: UploadRawFile) => ...
 **同类检查点**：全项目 3 处 `before-upload`（`students` / `profile` / `settings`），
 改前只有 `students` 用错，另两处正确。新增上传功能时**照抄 profile/settings**。
 
+## ★ K-051 · `el-table` 固定列（fixed）**必须有不透明背景**（2026-09-26 真实事故）
+
+**症状**：表格右侧「固定列」与它下方的普通列**文字叠在一起**（用户原话：「**前面的内容无法覆盖**，所以导致混乱」）。
+
+**根因（两条全局样式叠加，都在 `element-plus-override.scss`）**：
+
+1. 为"玻璃质感"把表格底色设成透明 → `--el-table-bg-color: transparent` / `--el-table-tr-bg-color: transparent`
+2. `fixed` 列是一层 **position: sticky 的悬浮贴纸**，靠**自身背景**遮住从它下面滚过的单元格
+   → 底色透明就**盖不住** → 下面的文字透出来与固定列叠字
+
+**为什么「通知记录」最先暴露**：该页 11 列合计 **1410px**，容器仅 **1090px**（1440 视口）→ 溢出 320px，
+固定列必然压在相邻列上。**列越多的页面越严重**（报班管理 14 列、溢出 310px）。
+
+**修复**（一处改全局，12 个表格页同时受益）：
+
+```scss
+.el-table .el-table__body-wrapper td.el-table-fixed-column--right,
+.el-table .el-table__body-wrapper td.el-table-fixed-column--left {
+  background-color: var(--surface-card) !important;   /* ★ 必须 !important */
+}
+/* hover / striped 也要跟随，否则出现"一行两种底色"的割裂 */
+```
+
+★ **必须 `!important`**：Element Plus 的 `.el-table__body tr>td.el-table__cell`（斑马纹时是 4 个类选择器）
+会设 `background-color: var(--el-table-tr-bg-color)`，**特异性更高** → 不加会被压回去（实测踩过：
+改完仍是 `rgba(0,0,0,0)`）。
+
+**配套的列宽经验**（`通知记录` 11 列 1410 → 1090，0 溢出）：
+
+`#50 / 学员120 / 班级100 / 类型85 / 标题92 / 内容140 / 关联日期108 / 通知家长95 / 状态75 / 生成时间135 / 操作85`
+
+- ★ **日期列给 108**：`2026-09-22` 在 100px 下会**折成两行**（实测），108 才放得下
+- 长文本列一律加 `show-overflow-tooltip`（超出显省略号 + 悬停看全文），避免"半截字"
+- 排查手段：`_verify_test/scan-table-layout.py`（量「容器宽 vs 列宽合计 vs 固定列重叠 vs 背景是否透明」）
+
 ## 诊断口诀
 
 - **`/` 返回 200 但页面空白** = 静态资源（JS/CSS）404，**不是**后端问题 → 单独验入口 JS 的 URL
