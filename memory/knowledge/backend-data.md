@@ -126,6 +126,33 @@ SELECT COUNT(*) FROM class_sessions WHERE status = '已调课';  -- 必须为 0
 - ★ **口径字典也要同步**：`analytics.js` 的 `METRIC_DEFINITIONS` 与 `docs/04-API/API.md` 都描述了公式。
   字典与实现不一致时，**AI 会按错误口径解释数据**（比数字算错更隐蔽）。
 
+## ★ K-052 · 删除保护必须覆盖**所有**外键引用：`CASCADE`/`SET NULL` 会**静默**破坏数据（2026-09-26 审计发现）
+
+**问题模式**：写 `DELETE` 端点时只校验了"显眼"的关联，漏掉一两张表，
+而这些表的外键是 `ON DELETE SET NULL` / `ON DELETE CASCADE` →
+**删除成功、无任何提示**，但关联数据被改/被删，用户在几天后才发现数字不对。
+
+**本项目实测三处**（详见 `docs/08-参考/功能做精审计-2026-09-26.md`）：
+
+| 删除 | 漏检的表 | 外键行为 | 真实后果 |
+|---|---|---|---|
+| **课程** | `orders` / `teaching_assignments` | SET NULL / CASCADE | 订单 `course_id` 被置空 → **该订单的学员以后点名永不扣课时** |
+| **学期** | `teaching_assignments` / `class_sessions` | CASCADE / SET NULL | 任课关系被级联删除、课次失去学期归属 |
+| **订单** | `hour_consumptions` | CASCADE | 课消流水消失 → 课消收入凭空减少且不可追溯 |
+
+**范本**：`server/src/routes/classes.js:164-182` —— 删班前把
+学生 / 课表 / 考试 / 调课 / 补课 / 课消 **全查一遍**，命中即拒绝并说明原因。
+**新写任何删除端点，照抄这个模式。**
+
+**顺带**：后端已经算好的级联数量要**显示在前端确认框里**
+（`students.js:396-417` 返回 `cascade`，但 `students/index.vue:330` 用的是写死文案 → 用户盲确认）。
+
+**检查口诀**：写 `DELETE` 前先列出"谁指向我"——
+```bash
+grep -n "REFERENCES <表名>" server/src/migrations/*.js   # 或查 server/database.md
+```
+逐个看 `ON DELETE` 后面的行为：**CASCADE = 会删你数据；SET NULL = 会改你数据**，两者都必须拦或提示。
+
 ## 改持久化的自检
 
 - [ ] 是否需要新迁移（版本连续、配套 model-review 文档）
