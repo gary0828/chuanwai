@@ -19,10 +19,18 @@ const props = defineProps<{
   cells: Record<string, any[]>;
   /** 加载中 */
   loading?: boolean;
+  /** 全校视角：卡片上加一行班级名，便于区分同格的多个班级 */
+  showClass?: boolean;
+  /** 是否标注冲突。全校视角下同格多课是常态 → 父级传 false 关闭（默认开启） */
+  conflictMark?: boolean;
+  /** 是否允许在格子上「＋」新增课次（仅 admin，由父级控制） */
+  canAdd?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "open", session: any): void;
+  /** 在指定日期 + 节次新增课次（调休后补课等场景） */
+  (e: "add", date: string, period: number): void;
 }>();
 
 /** 某格内的课次列表（空数组表示无课） */
@@ -31,8 +39,12 @@ function cellSessions(date: string, period: number): any[] {
   return props.cells[key] || [];
 }
 
-/** 同格 ≥2 张卡 = 冲突（前端计算） */
+/**
+ * 同格 ≥2 张卡 = 冲突（前端计算）
+ * ★ 2026-09-30：「全校视角」下同格有多个班的课是**正常现象**，父级传 conflictMark=false 关闭标注。
+ */
 function isConflict(date: string, period: number): boolean {
+  if (props.conflictMark === false) return false;
   return cellSessions(date, period).length > 1;
 }
 
@@ -44,9 +56,9 @@ function teacherText(s: any): string {
     : base;
 }
 
-/** 教室（room_id 为空回落「未指定教室」） */
+/** 教室（★ v23：教室字典上线后显示**教室名**；此前误显示 room_id 数字） */
 function roomText(s: any): string {
-  return s.room_id ? `教室 ${s.room_id}` : "未指定教室";
+  return s.room_name || "未指定教室";
 }
 
 /** 状态 → el-tag 类型（§8：info/success/danger·灰/warning/info） */
@@ -108,8 +120,23 @@ function mmdd(date: string): string {
         v-for="day in days"
         :key="`${day.date}|${p.period}`"
         class="wg-cell"
-        :class="{ 'wg-cell--today': day.is_today }"
+        :class="{ 'wg-cell--today': day.is_today, 'wg-cell--addable': canAdd }"
       >
+        <!-- ★ 2026-09-30 校区反馈②：格子上「＋」新增课次（日期 + 节次自动带入），
+             用于「调休后补课加到某一天」；空格显示居中大按钮、有课显示右上角小按钮 -->
+        <button
+          v-if="canAdd"
+          type="button"
+          class="wg-cell__add"
+          :class="
+            cellSessions(day.date, p.period).length ? 'is-filled' : 'is-empty'
+          "
+          :title="`在 ${day.label} ${mmdd(day.date)} ${p.label} 添加课次`"
+          @click.stop="emit('add', day.date, p.period)"
+        >
+          ＋
+        </button>
+
         <div
           v-for="s in cellSessions(day.date, p.period)"
           :key="s.id"
@@ -126,6 +153,10 @@ function mmdd(date: string): string {
             >
               <EpWarning />
             </el-icon>
+          </div>
+          <!-- ★ 全校视角：显示班级名（同一格里有多个班时用于区分） -->
+          <div v-if="showClass" class="sc__meta sc__class">
+            {{ s.class_name || "未知班级" }}
           </div>
           <div class="sc__meta">{{ teacherText(s) }}</div>
           <div class="sc__meta">{{ roomText(s) }}</div>
@@ -239,6 +270,7 @@ function mmdd(date: string): string {
 
 /* ── 网格单元格 ───────────────────────────────────────── */
 .wg-cell {
+  position: relative; /* 「＋」新增课次按钮的定位基准 */
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -251,6 +283,55 @@ function mmdd(date: string): string {
 
 .wg-cell--today {
   background: var(--brand-50);
+}
+
+/* ── 「＋」新增课次（★ 2026-09-30 校区反馈②） ─────────────
+   空格 → 居中大按钮（「调休后补课加到某天」的主要入口，一眼可见）
+   有课 → 右上角小按钮（不遮挡卡片信息）
+   仅格子 hover 时出现，避免满屏按钮干扰阅读 */
+.wg-cell__add {
+  position: absolute;
+  z-index: 2;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--brand-600);
+  cursor: pointer;
+  background: var(--surface-card);
+  border: 1px dashed var(--brand-400);
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+
+  &:hover {
+    background: var(--brand-50);
+    border-color: var(--brand-600);
+    border-style: solid;
+  }
+
+  &.is-empty {
+    inset: 0;
+    margin: auto;
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+  }
+
+  &.is-filled {
+    top: var(--space-1);
+    right: var(--space-1);
+    width: 18px;
+    height: 18px;
+    opacity: 0.75;
+  }
+}
+
+.wg-cell--addable:hover .wg-cell__add {
+  display: flex;
 }
 
 /* ── 课次卡片 ─────────────────────────────────────────── */
@@ -298,8 +379,15 @@ function mmdd(date: string): string {
   color: var(--ink-500);
 }
 
+/* ★ 全校视角：卡片上的班级名 —— 同一格里有多个班时用于区分 */
+.sc__class {
+  font-weight: var(--weight-medium);
+  color: var(--brand-700);
+}
+
 .sc__foot {
   display: flex;
+  flex-wrap: wrap; /* ★ 格子偏窄时允许换行，不硬挤 */
   gap: var(--space-1);
   align-items: center;
   justify-content: space-between;
@@ -310,6 +398,9 @@ function mmdd(date: string): string {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--ink-400);
+  /* ★ 2026-09-30：「08:00-08:45」不允许折成两行 ——
+     全校视角给卡片加了一行班级名后格子更挤，实测出现过时间被拆行 */
+  white-space: nowrap;
 }
 
 .sc__badge {

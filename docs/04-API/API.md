@@ -1222,6 +1222,39 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 
 ---
 
+### 9.7 教室与全校视角（v23 新增，2026-09-30）
+
+> 背景：校区反馈「课表要能标明上哪个教室」+「要看全校区一屏课表」。
+> 教室用**字典表**（用户拍板），排课模板 / 加课弹窗 / 课次详情**三处都能设**。
+
+| 端点 | 权限 | 说明 |
+| ---- | ---- | ---- |
+| `GET /api/rooms` | auth | 教室列表（`keyword` 搜名称/备注；教室数量少，**不分页**） |
+| `POST /api/rooms` | admin | 新增（`name` 唯一；`capacity` 可空，**给了必须是 ≥0 整数**） |
+| `PUT /api/rooms/:id` | admin | 修改 |
+| `DELETE /api/rooms/:id` | admin | 删除；**被排课模板或课次引用时 400**，提示里给出引用条数 |
+| `PUT /api/sessions/:id/room` | admin / teacher | 改**本节**教室（`room_id = null` 清空）；teacher 限本人可访问课次（含代课） |
+
+**周视图新增全校视角**：`GET /api/sessions/week?view=all`
+
+- **仅 admin**（teacher 调用返回 **403**）；`view` 取值由 `class` / `teacher` 扩展为 `class` / `teacher` / `all`
+- `all` 不按班级或教师过滤，一次返回**全校区本周**课次 —— 用于周课表的「全校视角」
+- ★ 该视角下**同一格出现多个班的课是正常现象**，前端据此**关闭冲突标注**（`WeekGrid` 的 `conflictMark=false`）
+
+**响应字段新增 `room_name`**：课次列表 / 详情 / 周视图统一 LEFT JOIN rooms 带出；
+前端不再显示 `教室 3` 这类数字 id（此前是既有缺陷，已修）。
+
+**生成继承**：`utils/session-engine.js` 展开排课模板时带出 `schedules.room_id`，生成的课次自动带上教室。
+
+### 9.8 学生删除影响预览（2026-09-30 新增）
+
+| 端点 | 权限 | 说明 |
+| ---- | ---- | ---- |
+| `GET /api/students/:id/delete-impact` | auth | 删除**前**返回将连带清理 / 被阻断的数据（如「将连带清理：考勤记录 1 条」）；有订单时标记为**阻断**并提示「改为退学」 |
+
+> 定位：删除保护（K-052）会拒绝删除，但用户需要**提前知道代价**而不是点完才发现。
+> 该端点只读、不产生副作用。
+
 ## 10. 新增 / 修改 API 的流程（必须遵守）
 
 1. 在 `server/src/routes/<module>.js` 中实现，复用 `auth` / `requireRole` / `utils/scope.js`。

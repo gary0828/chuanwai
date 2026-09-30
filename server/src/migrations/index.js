@@ -26,7 +26,8 @@ const migrations = [
   require("./019-todos"),
   require("./020-user-avatar"),
   require("./021-sessions-assignments"),
-  require("./022-session-reschedule-rename")
+  require("./022-session-reschedule-rename"),
+  require("./023-rooms")
 ];
 
 function migrate(db) {

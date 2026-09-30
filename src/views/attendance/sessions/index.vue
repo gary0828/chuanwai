@@ -15,6 +15,7 @@ import { AppEmpty } from "@/components/AppEmpty";
 import WeekGrid from "./components/WeekGrid.vue";
 import SessionDetailDrawer from "./components/SessionDetailDrawer.vue";
 import GenerateSessionsDialog from "./components/GenerateSessionsDialog.vue";
+import AddSessionDialog from "./components/AddSessionDialog.vue";
 
 defineOptions({
   name: "Sessions"
@@ -27,7 +28,8 @@ const nickname = useUserStoreHook().nickname;
 
 const STATUS_OPTIONS = ["待上课", "已上课", "已停课", "已挪课", "已取消"];
 
-const view = ref<"class" | "teacher">(isTeacher ? "teacher" : "class");
+// ★ 2026-09-30 校区反馈③：新增第三个视角「全校」（all）—— 一屏看全校区本周课程，仅 admin。
+const view = ref<"class" | "teacher" | "all">(isTeacher ? "teacher" : "class");
 const classId = ref<number | null>(null);
 const teacherId = ref<number | null>(null);
 const statuses = ref<string[]>([]);
@@ -44,6 +46,17 @@ const sessions = ref<any[]>([]);
 const generateVisible = ref(false);
 const drawerVisible = ref(false);
 const activeSessionId = ref<number | null>(null);
+
+// ★ 2026-09-30 校区反馈②：「＋」新增课次（格子点开，日期/节次自动带入）
+const addVisible = ref(false);
+const addPresetDate = ref("");
+const addPresetPeriod = ref<number | null>(null);
+
+function openAdd(date: string, period: number) {
+  addPresetDate.value = date;
+  addPresetPeriod.value = period;
+  addVisible.value = true;
+}
 
 /** 给定日期（或今天）所在周的周一（YYYY-MM-DD） */
 function mondayOf(dateStr: string): string {
@@ -170,7 +183,7 @@ onMounted(async () => {
   <div class="app-page">
     <AppPageHeader
       title="课次课表"
-      description="按周查看每个班级 / 教师的真实课次（含起止时间与状态）"
+      description="按周查看班级 / 教师 / 全校的真实课次；格子上点「＋」可临时加课（调休补课等）"
     >
       <el-button v-if="isAdmin" type="primary" @click="generateVisible = true">
         生成本学期课次
@@ -183,6 +196,8 @@ onMounted(async () => {
         <el-radio-group v-model="view" @change="onViewChange">
           <el-radio-button value="class">班级视角</el-radio-button>
           <el-radio-button value="teacher">教师视角</el-radio-button>
+          <!-- ★ 2026-09-30 校区反馈③：全校视角（仅 admin；后端同样校验，前端只是不显示入口） -->
+          <el-radio-button v-if="isAdmin" value="all">全校视角</el-radio-button>
         </el-radio-group>
 
         <el-select
@@ -201,13 +216,13 @@ onMounted(async () => {
         </el-select>
 
         <el-input
-          v-else-if="isTeacher"
+          v-else-if="view === 'teacher' && isTeacher"
           :model-value="`${nickname}（本人）`"
           disabled
           class="!w-44"
         />
         <el-select
-          v-else
+          v-else-if="view === 'teacher'"
           v-model="teacherId"
           placeholder="请选择教师"
           class="!w-44"
@@ -220,6 +235,7 @@ onMounted(async () => {
             :value="t.id"
           />
         </el-select>
+        <span v-else class="page-hint">全校区所有班级的本周课程</span>
 
         <div class="page-toolbar__spacer" />
 
@@ -249,7 +265,14 @@ onMounted(async () => {
             :value="s"
           />
         </el-select>
-        <span class="page-hint"> 同格出现多节课次时以红色边框标注为冲突 </span>
+        <!-- ★ 全校视角下同格多个班同时上课是正常现象，故不标注冲突（与 WeekGrid 的 conflictMark 对应） -->
+        <span class="page-hint">
+          {{
+            view === "all"
+              ? "全校视角：同一格内多个班同时上课属正常，不标注冲突"
+              : "同格出现多节课次时以红色边框标注为冲突"
+          }}
+        </span>
       </div>
 
       <!-- 周历网格 -->
@@ -259,12 +282,16 @@ onMounted(async () => {
         :periods="periods"
         :cells="cells"
         :loading="loading"
+        :show-class="view === 'all'"
+        :conflict-mark="view !== 'all'"
+        :can-add="isAdmin"
         @open="openDetail"
+        @add="openAdd"
       />
       <AppEmpty
         v-else-if="!loading"
         title="当前条件下暂无课次"
-        description="可切换班级 / 教师或周区间；若整学期尚未生成，请在右上角「生成本学期课次」"
+        description="可切换班级 / 教师 / 全校或周区间；若整学期尚未生成，请在右上角「生成本学期课次」"
       />
 
       <el-alert
@@ -287,6 +314,15 @@ onMounted(async () => {
     <GenerateSessionsDialog
       v-model="generateVisible"
       @generated="onGenerated"
+    />
+
+    <!-- 新增课次弹窗（★ 2026-09-30 校区反馈②：格子点「＋」打开，日期/节次自动带入） -->
+    <AddSessionDialog
+      v-model="addVisible"
+      :preset-date="addPresetDate"
+      :preset-period="addPresetPeriod"
+      :period-options="periods"
+      @created="loadWeek"
     />
 
     <!-- 课次详情抽屉 -->

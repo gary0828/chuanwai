@@ -186,6 +186,7 @@ app.use("/api/attendance", require("./routes/attendance"));
 app.use("/api/leaves", require("./routes/leaves"));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/schedules", require("./routes/schedules"));
+app.use("/api/rooms", require("./routes/rooms"));
 app.use("/api/terms", require("./routes/terms"));
 app.use("/api/settings", require("./routes/settings"));
 app.use("/api/site-info", require("./routes/site-info"));

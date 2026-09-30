@@ -21,6 +21,8 @@ servers:
 tags:
   - name: Auth
     description: 认证与 Token
+  - name: Rooms
+    description: 教室字典（v23；排课模板与课次选择教室，仅 admin 维护）
   - name: Students
     description: 学生管理（P0）
   - name: Attendance
@@ -1823,7 +1825,7 @@ paths:
   /api/sessions/week:
     get:
       tags: [Sessions]
-      summary: 周课表（一次取全 days / periods / sessions）
+      summary: 周课表（一次取全 days / periods / sessions）（view=class/teacher/all；all 仅 admin，全校视角）
       description: |
         班级视角需 `class_id`（教师须为本班）；教师视角 teacher 角色默认锁定本人（Q8）。
         前端据此建 `map[date|period]`，同格 ≥2 张即冲突（前端计算）。
@@ -1992,6 +1994,24 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { description: 课次不存在, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
 
+  /api/sessions/{id}/room:
+    put:
+      tags: [Sessions]
+      summary: 修改本节教室（admin/teacher；room_id 传 null 表示清空）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { room_id: { type: integer, nullable: true } } }
+      responses:
+        "200": { description: 成功 }
+        "400": { description: 教室不存在 / 参数不合法 }
+        "403": { description: 无权修改该课次 }
+        "404": { description: 课次不存在 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /api/sessions/{id}/stop:
     put:
       tags: [Sessions]
@@ -2149,6 +2169,90 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { description: 任课关系不存在, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
 
+  /api/rooms:
+    get:
+      tags: [Rooms]
+      summary: 教室列表（登录可读；keyword 搜名称/备注；教室少不分页）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { name: keyword, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Rooms]
+      summary: 新增教室（仅 admin；名称唯一，容量可空且须 ≥0 整数）
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: 302教室 }
+                capacity: { type: integer, nullable: true, example: 40 }
+                remark: { type: string }
+      responses:
+        "200": { description: 成功 }
+        "400": { description: 名称重复 / 容量非法 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: 非 admin }
+  /api/rooms/{id}:
+    put:
+      tags: [Rooms]
+      summary: 修改教室（仅 admin）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { name: { type: string }, capacity: { type: integer, nullable: true }, remark: { type: string } } }
+      responses:
+        "200": { description: 成功 }
+        "404": { description: 教室不存在 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Rooms]
+      summary: 删除教室（仅 admin；被排课模板或课次引用时 400 并列出条数）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功 }
+        "400": { description: 仍被排课/课次引用 }
+        "404": { description: 教室不存在 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/students/{id}/delete-impact:
+    get:
+      tags: [Students]
+      summary: 学生删除影响预览（删除前可见连带清理/阻断项；只读）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { type: object }
+        "404": { description: 学员不存在 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /api/period-times:
     get:
       tags: [PeriodTimes]

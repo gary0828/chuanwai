@@ -22,6 +22,7 @@ import {
 } from "@/api/sessions";
 import { useUserStoreHook } from "@/store/modules/user";
 import { AppEmpty } from "@/components/AppEmpty";
+import { getRoomList, updateSessionRoom } from "@/api/rooms";
 
 defineOptions({
   name: "SessionDetailDrawer"
@@ -72,6 +73,40 @@ function statusTagType(status: string): string {
 }
 
 /** 加载课次详情（含名单/课评/课消/关联） */
+// ★ 2026-09-30 v23：修改课次的教室（教室字典上线后，临时换教室不必改排课模板）
+const roomDialogVisible = ref(false);
+const roomOptions = ref<any[]>([]);
+const roomSaving = ref(false);
+const selectedRoomId = ref<number | null>(null);
+
+async function openRoomDialog() {
+  selectedRoomId.value = session.value?.room_id ?? null;
+  roomDialogVisible.value = true;
+  if (!roomOptions.value.length) {
+    const res: any = await getRoomList();
+    if (res.success) roomOptions.value = res.data || [];
+  }
+}
+
+async function submitRoom() {
+  if (!session.value) return;
+  roomSaving.value = true;
+  try {
+    const res: any = await updateSessionRoom(
+      session.value.id,
+      selectedRoomId.value
+    );
+    if (res.success) {
+      ElMessage.success("教室已更新");
+      roomDialogVisible.value = false;
+      load();
+      emit("changed");
+    }
+  } finally {
+    roomSaving.value = false;
+  }
+}
+
 function load() {
   if (!props.sessionId) return;
   loading.value = true;
@@ -327,7 +362,15 @@ async function submitSubstitute() {
               {{ session.substitute_teacher_name || "—" }}
             </el-descriptions-item>
             <el-descriptions-item label="教室">
-              {{ session.room_id ? `教室 ${session.room_id}` : "未指定" }}
+              <span>{{ session.room_name || "未指定" }}</span>
+              <el-button
+                link
+                type="primary"
+                class="ml-2"
+                @click="openRoomDialog"
+              >
+                修改
+              </el-button>
             </el-descriptions-item>
             <el-descriptions-item label="来源">
               {{ session.origin }}
@@ -613,6 +656,36 @@ async function submitSubstitute() {
       </template>
     </el-dialog>
   </el-drawer>
+
+  <!-- ★ 2026-09-30 v23：修改上课教室（只影响本节，不改排课模板） -->
+  <el-dialog
+    v-model="roomDialogVisible"
+    title="修改上课教室"
+    width="420px"
+    append-to-body
+  >
+    <el-select
+      v-model="selectedRoomId"
+      placeholder="不指定教室"
+      clearable
+      filterable
+      class="!w-full"
+    >
+      <el-option
+        v-for="r in roomOptions"
+        :key="r.id"
+        :label="r.capacity ? `${r.name}（${r.capacity}人）` : r.name"
+        :value="r.id"
+      />
+    </el-select>
+    <p class="page-hint mt-2">留空表示不指定教室；只影响本节，不改排课模板。</p>
+    <template #footer>
+      <el-button @click="roomDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="roomSaving" @click="submitRoom">
+        保存
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style lang="scss" scoped>

@@ -859,3 +859,45 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 > **权限**：课次 / 任课 / 节次时间的写端点均 **admin**；teacher 仅只读其「班主任或任课」范围。`finance` / `leads` 路由仍全程 `requireRole("admin")`，扩 `scope.js` 不外溢。
 > **历史数据**：迁移**只加列不落课次**，历史行 `session_id` 为空；回填后匹配不上的显式进报告（不静默置空）。
+
+---
+
+## 教室字典（v23 新增，2026-09-30）
+
+> 背景：校区反馈「课表要能标明上哪个教室」。用**字典表**而非自由文本（用户拍板）——
+> 避免「302」「302教室」「三零二」三种写法并存，后续可自然扩展「同教室同时段冲突检测」。
+
+### rooms（教室）
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `id` | INTEGER PK | 自增主键 |
+| `name` | TEXT NOT NULL **UNIQUE** | 教室名称（唯一，防重复录入） |
+| `capacity` | INTEGER | 容量（人），可空 |
+| `remark` | TEXT NOT NULL DEFAULT '' | 备注 |
+| `created_at` / `updated_at` | TEXT NOT NULL | 本地时间；`updated_at` 由 UPDATE 语句维护 |
+
+### schedules.room_id（排课模板的教室，v23 加列）
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `room_id` | INTEGER **REFERENCES rooms(id) ON DELETE SET NULL** | 排课模板上绑定的教室；生成的课次继承它 |
+
+> ★ **为什么带外键**：删除教室时 `utils/delete-guard.js` 能**自动发现**「被哪些排课模板引用」，无需手工列举。
+> ★ **为什么 `class_sessions.room_id` 不加外键**：它是 v21/v22 **重建 class_sessions 时定的型**，
+> 给已有表补外键必须重建表、代价大；且该列此前从未使用（全库 0 条有值）。
+> 因此删除教室时由 `routes/rooms.js` **手工查**课次引用并拒绝，避免留下「指向不存在教室的课次」。
+
+### 教室 API（v23 新增）
+
+| 端点 | 权限 | 说明 |
+| ---- | ---- | ---- |
+| `GET /api/rooms` | auth | 教室列表（`keyword` 搜名称/备注；教室数量少，**不分页**） |
+| `POST /api/rooms` | admin | 新增（名称唯一；容量可空，给了必须是 ≥0 整数） |
+| `PUT /api/rooms/:id` | admin | 修改 |
+| `DELETE /api/rooms/:id` | admin | 删除；**被排课模板或课次引用时 400**，提示里给出引用条数 |
+| `PUT /api/sessions/:id/room` | admin / teacher | 改**本节**教室（`room_id = null` 表示清空）；teacher 限本人可访问课次（含代课） |
+| `GET /api/sessions/week?view=all` | **admin** | 全校视角：不按班级/教师过滤，一次返回全校区本周课次（teacher 调用 403） |
+
+> **生成继承**：`utils/session-engine.js` 展开排课模板时带出 `schedules.room_id` → 生成的课次自动带上教室。
+> **响应字段**：课次列表 / 详情 / 周视图统一新增 `room_name`（LEFT JOIN rooms），前端不再显示数字 id。

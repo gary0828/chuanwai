@@ -12,6 +12,7 @@ import {
   createAdjustment
 } from "@/api/attendance";
 import { AppPageHeader } from "@/components/AppPageHeader";
+import { getRoomList } from "@/api/rooms";
 
 defineOptions({
   name: "Schedules"
@@ -44,12 +45,20 @@ const form = reactive({
   class_id: null as number | null,
   course_id: null as number | null,
   day_of_week: 1 as number,
-  period: 1 as number
+  period: 1 as number,
+  room_id: null as number | null
 });
+const roomOptions = ref<any[]>([]);
 const rules = {
   class_id: [{ required: true, message: "请选择班级", trigger: "change" }],
   course_id: [{ required: true, message: "请选择课程", trigger: "change" }]
 };
+
+function loadRooms() {
+  getRoomList().then((res: any) => {
+    if (res.success) roomOptions.value = res.data || [];
+  });
+}
 
 function loadClasses() {
   getAllClasses().then((res: any) => {
@@ -83,7 +92,8 @@ function openAdd(day: number, period: number) {
     class_id: classId.value,
     course_id: null,
     day_of_week: day,
-    period
+    period,
+    room_id: null
   });
   dialogVisible.value = true;
 }
@@ -95,7 +105,8 @@ function openEdit(row: any) {
     class_id: row.class_id,
     course_id: row.course_id,
     day_of_week: row.day_of_week,
-    period: row.period
+    period: row.period,
+    room_id: row.room_id ?? null
   });
   dialogVisible.value = true;
 }
@@ -107,7 +118,8 @@ function handleSubmit() {
       class_id: form.class_id,
       course_id: form.course_id,
       day_of_week: form.day_of_week,
-      period: form.period
+      period: form.period,
+      room_id: form.room_id
     };
     const api = form.id
       ? updateSchedule(form.id, payload)
@@ -232,6 +244,7 @@ function handleDelete(row: any) {
 onMounted(() => {
   loadClasses();
   loadCourses();
+  loadRooms();
   loadData();
 });
 </script>
@@ -367,6 +380,22 @@ onMounted(() => {
               :key="p"
               :label="`第 ${p} 节`"
               :value="p"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="上课教室">
+          <el-select
+            v-model="form.room_id"
+            placeholder="可不填"
+            clearable
+            filterable
+            class="!w-full"
+          >
+            <el-option
+              v-for="r in roomOptions"
+              :key="r.id"
+              :label="r.capacity ? `${r.name}（${r.capacity}人）` : r.name"
+              :value="r.id"
             />
           </el-select>
         </el-form-item>

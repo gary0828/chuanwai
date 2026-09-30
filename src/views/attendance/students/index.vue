@@ -10,7 +10,9 @@ import {
   createStudent,
   updateStudent,
   deleteStudent,
-  getStudentDeleteImpact
+  getStudentDeleteImpact,
+  createClass,
+  getUserList
 } from "@/api/attendance";
 import { AppPageHeader } from "@/components/AppPageHeader";
 
@@ -21,6 +23,7 @@ defineOptions({
 const loading = ref(false);
 const dataList = ref<any[]>([]);
 const classOptions = ref<any[]>([]);
+const teacherOptions = ref<any[]>([]);
 const searchForm = reactive({ class_id: "", name: "", student_no: "" });
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 });
 
@@ -93,6 +96,8 @@ function downloadTemplate() {
         手机号: "13800000000",
         邮箱: "zhangsan@example.com",
         班级: sampleClass,
+        班主任: "",
+        年级: "",
         状态: "在读",
         家长姓名: "李四",
         家长电话: "13900000000",
@@ -108,6 +113,8 @@ function downloadTemplate() {
         "手机号",
         "邮箱",
         "班级",
+        "班主任",
+        "年级",
         "状态",
         "家长姓名",
         "家长电话",
@@ -131,6 +138,72 @@ function downloadTemplate() {
  *   → 无请求、无消息、无弹窗，用户看到的正是「点了没反应」。
  *   现改为直接读 `file`，并补齐 loading / 业务失败 / 读取异常 三条反馈路径。
  */
+/**
+ * ★ 2026-09-30 校区反馈④：导入时自动建班
+ *
+ * 此前行为：班级名在系统里不存在 → **整批取消**并提示「请先到班级管理核对」。
+ * 校区实际场景是拿一张名单直接导入，故改为：缺失的班级**自动创建**，并把学员分进去。
+ *
+ * 规则（用户 2026-09-30 拍板）：
+ *  - 同名班级只建一次（classMap 就地补全，后续行直接命中）
+ *  - 模板「班主任」列按**姓名匹配教师账号** → 设为班主任；匹配不到 → 建无班主任的班并提示
+ *  - 模板「年级」列写入班级 grade
+ *  - 教师列表按需拉取（首次调用时）
+ */
+async function autoCreateMissingClasses(
+  rows: any[],
+  classMap: Record<string, number>
+) {
+  const created: string[] = [];
+  const missed: string[] = [];
+  const pending = rows
+    .map(r => String(r["班级"] || "").trim())
+    .filter(name => name && !classMap[name]);
+  const names = [...new Set(pending)];
+  if (names.length === 0) return { ok: true, created, missed };
+
+  if (!teacherOptions.value.length) {
+    const tRes: any = await getUserList({ role: "teacher", pageSize: 200 });
+    if (tRes.success) teacherOptions.value = tRes.data.list || [];
+  }
+  const teacherByName = new Map<string, number>();
+  teacherOptions.value.forEach((t: any) =>
+    teacherByName.set(String(t.name || "").trim(), t.id)
+  );
+
+  for (const name of names) {
+    const row = rows.find(r => String(r["班级"] || "").trim() === name) || {};
+    const grade = String(row["年级"] || "").trim();
+    const headName = String(row["班主任"] || "").trim();
+    let headId: number | null = null;
+    if (headName) {
+      headId = teacherByName.get(headName) ?? null;
+      if (!headId) missed.push(headName);
+    }
+    const res: any = await createClass({
+      name,
+      grade,
+      head_teacher: headName,
+      head_teacher_id: headId
+    });
+    if (res.success) {
+      classMap[name] = res.data.id;
+      created.push(name);
+    } else {
+      ElMessage.error(
+        `班级「${name}」自动创建失败：${res.message || "未知原因"}`
+      );
+      return { ok: false, created, missed };
+    }
+  }
+  if (created.length > 0) {
+    ElMessage.success(
+      `已自动创建 ${created.length} 个班级：${created.join("、")}`
+    );
+  }
+  return { ok: true, created, missed };
+}
+
 function handleImport(file: any) {
   if (importing.value) return false; // 防重复提交
   importing.value = true;
@@ -143,7 +216,7 @@ function handleImport(file: any) {
     done();
     ElMessage.error("文件读取失败，请重新选择文件后再试");
   };
-  reader.onload = (e: any) => {
+  reader.onload = async (e: any) => {
     try {
       const wb = XLSX.read(e.target.result, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
@@ -155,6 +228,14 @@ function handleImport(file: any) {
       }
       const classMap: Record<string, number> = {};
       classOptions.value.forEach((c: any) => (classMap[c.name] = c.id));
+
+      // ★ 2026-09-30 校区反馈④：缺失班级自动创建后再导入
+      const autoRes = await autoCreateMissingClasses(rows, classMap);
+      if (!autoRes.ok) {
+        done();
+        return;
+      }
+
       const records = rows.map((r, i) => {
         const className = String(r["班级"] || "").trim();
         return {
@@ -179,14 +260,18 @@ function handleImport(file: any) {
       if (missingClass.length > 0) {
         done();
         ElMessage.warning(
-          `以下行的班级名称在系统中不存在，已取消导入：${missingClass.join("、")}。请先到「班级管理」核对班级名称`
+          `以下行没有填写班级（或班级创建失败），已取消导入：${missingClass.join("、")}`
         );
         return;
       }
       importStudents({ records })
         .then((res: any) => {
           if (res.success) {
-            importResult.value = res.data;
+            importResult.value = {
+              ...res.data,
+              __createdClasses: autoRes.created,
+              __teacherMissed: autoRes.missed
+            };
             importDialogVisible.value = true;
             loadData();
           } else {
@@ -606,6 +691,23 @@ onMounted(() => {
             >
           </template>
         </el-result>
+
+        <!-- ★ 2026-09-30 校区反馈④：导入时自动建班的明细（此前班级不存在会整批取消） -->
+        <el-alert
+          v-if="importResult.__createdClasses?.length"
+          type="success"
+          :closable="false"
+          class="mt-2"
+          :title="`已自动创建 ${importResult.__createdClasses.length} 个班级`"
+          :description="importResult.__createdClasses.join('、')"
+        />
+        <el-alert
+          v-if="importResult.__teacherMissed?.length"
+          type="warning"
+          :closable="false"
+          class="mt-2"
+          :title="`班主任未匹配到教师账号：${[...new Set(importResult.__teacherMissed)].join('、')}（这些班级暂未设班主任，可到班级管理补）`"
+        />
         <el-table
           v-if="importResult.failCount > 0"
           :data="importResult.fails"

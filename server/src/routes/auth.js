@@ -88,10 +88,25 @@ const ROUTES = {
           meta: { title: "补课管理" }
         },
         {
+          // ★ 2026-09-30 校区反馈①：学期是「排课的配置」而非学员档案 → 从「学员管理」搬到「排课与课表」，
+          //   位置放在「节次时间」前（学期 / 节次时间 / 任课关系 属同类配置）。权限保持 admin。
+          path: "/data/terms",
+          component: "attendance/terms/index",
+          name: "Terms",
+          meta: { title: "学期管理", roles: ["admin"] }
+        },
+        {
           path: "/attendance/period-times",
           component: "attendance/period-times/index",
           name: "PeriodTimes",
           meta: { title: "节次时间", roles: ["admin"] }
+        },
+        {
+          // ★ 2026-09-30 校区反馈⑤：教室字典（排课资源，与节次时间同属配置类）
+          path: "/attendance/rooms",
+          component: "attendance/rooms/index",
+          name: "Rooms",
+          meta: { title: "教室管理", roles: ["admin"] }
         },
         {
           path: "/attendance/teaching-assignments",
@@ -216,12 +231,6 @@ const ROUTES = {
           component: "attendance/courses/index",
           name: "Courses",
           meta: { title: "课程管理", roles: ["admin"] }
-        },
-        {
-          path: "/data/terms",
-          component: "attendance/terms/index",
-          name: "Terms",
-          meta: { title: "学期管理", roles: ["admin"] }
         }
       ]
     },

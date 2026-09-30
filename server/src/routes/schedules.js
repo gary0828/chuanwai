@@ -4,6 +4,7 @@ const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { classScopeClause, canManageClass } = require("../utils/scope");
+const { parseRoomId } = require("../utils/room");
 
 const router = express.Router();
 
@@ -122,10 +123,12 @@ router.get("/", auth, (req, res) => {
   const list = db
     .prepare(
       `SELECT sc.id, sc.class_id, c.name AS class_name, sc.course_id, co.name AS course_name,
-              co.teacher, sc.day_of_week, sc.period
+              co.teacher, sc.day_of_week, sc.period,
+              sc.room_id, r.name AS room_name
        FROM schedules sc
        JOIN classes c ON sc.class_id = c.id
        JOIN courses co ON sc.course_id = co.id
+       LEFT JOIN rooms r ON r.id = sc.room_id
        ${where}${scope.clause}
        ORDER BY sc.day_of_week, sc.period LIMIT ? OFFSET ?`
     )
@@ -153,7 +156,11 @@ router.get("/all", auth, (req, res) => {
 
 /** 新增课表条目 */
 router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
-  const { class_id, course_id, day_of_week, period } = req.body || {};
+  const { class_id, course_id, day_of_week, period, room_id } = req.body || {};
+  const roomRes = parseRoomId(room_id);
+  if (!roomRes.ok) {
+    return res.status(400).json({ success: false, message: roomRes.message });
+  }
   if (!class_id || !course_id || !day_of_week || !period) {
     return res.status(400).json({ success: false, message: "班级、课程、星期、节次为必填项" });
   }
@@ -174,9 +181,9 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
   try {
     const result = db
       .prepare(
-        "INSERT INTO schedules (class_id, course_id, day_of_week, period) VALUES (?, ?, ?, ?)"
+        "INSERT INTO schedules (class_id, course_id, day_of_week, period, room_id) VALUES (?, ?, ?, ?, ?)"
       )
-      .run(Number(class_id), Number(course_id), d, per);
+      .run(Number(class_id), Number(course_id), d, per, roomRes.value);
     res.json({ success: true, data: { id: result.lastInsertRowid, warnings: conflicts.teacher_warnings } });
   } catch (err) {
     if (String(err.message).includes("UNIQUE")) {
@@ -189,7 +196,11 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
 /** 修改课表条目 */
 router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   const id = Number(req.params.id);
-  const { class_id, course_id, day_of_week, period } = req.body || {};
+  const { class_id, course_id, day_of_week, period, room_id } = req.body || {};
+  const roomRes = parseRoomId(room_id);
+  if (!roomRes.ok) {
+    return res.status(400).json({ success: false, message: roomRes.message });
+  }
   if (!class_id || !course_id || !day_of_week || !period) {
     return res.status(400).json({ success: false, message: "班级、课程、星期、节次为必填项" });
   }
@@ -205,9 +216,9 @@ router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   try {
     const result = db
       .prepare(
-        "UPDATE schedules SET class_id = ?, course_id = ?, day_of_week = ?, period = ? WHERE id = ?"
+        "UPDATE schedules SET class_id = ?, course_id = ?, day_of_week = ?, period = ?, room_id = ? WHERE id = ?"
       )
-      .run(Number(class_id), Number(course_id), Number(day_of_week), Number(period), id);
+      .run(Number(class_id), Number(course_id), Number(day_of_week), Number(period), roomRes.value, id);
     if (result.changes === 0) {
       return res.status(404).json({ success: false, message: "课表条目不存在" });
     }

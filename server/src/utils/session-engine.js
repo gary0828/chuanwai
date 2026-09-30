@@ -97,7 +97,7 @@ function expandTemplates(termId) {
 
   const templates = db
     .prepare(
-      `SELECT id, class_id, course_id, day_of_week, period
+      `SELECT id, class_id, course_id, day_of_week, period, room_id
        FROM schedules ORDER BY class_id, day_of_week, period`
     )
     .all();
@@ -126,6 +126,7 @@ function expandTemplates(termId) {
         class_id: Number(t.class_id),
         course_id: Number(t.course_id),
         teacher_id: teacherId,
+        room_id: t.room_id ?? null, // ★ v23：生成课次时继承排课模板上的教室
         session_date: dateStr,
         period,
         start_time,
@@ -325,7 +326,7 @@ function generateSessions(termId, _userId) {
     `INSERT INTO class_sessions
        (term_id, schedule_id, class_id, course_id, teacher_id, substitute_teacher_id, room_id,
         session_date, period, start_time, end_time, status, origin, related_session_id, topic)
-     VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL, '')
+     VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, '')
      ON CONFLICT(class_id, session_date, period) DO NOTHING`
   );
 
@@ -340,6 +341,7 @@ function generateSessions(termId, _userId) {
         c.class_id,
         c.course_id,
         c.teacher_id,
+        c.room_id ?? null,
         c.session_date,
         c.period,
         c.start_time,

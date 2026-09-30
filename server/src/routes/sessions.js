@@ -12,6 +12,7 @@ const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { canManageClass, canAccessSession, teacherClassPredicate } = require("../utils/scope");
+const { parseRoomId } = require("../utils/room");
 const { parseDate } = require("../utils/validate");
 const engine = require("../utils/session-engine");
 
@@ -43,13 +44,14 @@ function mondayOf(dateStr) {
   return engine.fmtYmd(new Date(dt.getTime() - (dow - 1) * 24 * 60 * 60 * 1000));
 }
 
-/** 组装课次行（含班级/课程/教师/代课人/关联课次日期）的公共 SELECT 片段 */
+/** 组装课次行（含班级/课程/教师/代课人/教室/关联课次日期）的公共 SELECT 片段 */
 const SESSION_SELECT = `
   cs.id, cs.term_id, cs.schedule_id, cs.class_id, c.name AS class_name,
   cs.course_id, co.name AS course_name,
   cs.teacher_id, t.name AS teacher_name,
   cs.substitute_teacher_id, st.name AS substitute_teacher_name,
-  cs.room_id, cs.session_date, cs.period, cs.start_time, cs.end_time,
+  cs.room_id, r.name AS room_name,
+  cs.session_date, cs.period, cs.start_time, cs.end_time,
   cs.status, cs.origin, cs.related_session_id,
   (SELECT rs.session_date FROM class_sessions rs WHERE rs.id = cs.related_session_id) AS related_date,
   cs.topic, cs.created_at, cs.updated_at`;
@@ -59,7 +61,8 @@ const SESSION_FROM = `
   JOIN classes c ON cs.class_id = c.id
   LEFT JOIN courses co ON cs.course_id = co.id
   LEFT JOIN users t ON cs.teacher_id = t.id
-  LEFT JOIN users st ON cs.substitute_teacher_id = st.id`;
+  LEFT JOIN users st ON cs.substitute_teacher_id = st.id
+  LEFT JOIN rooms r ON r.id = cs.room_id`;
 
 // ─────────────────────────────────────────────────────────────
 // 列表
@@ -117,7 +120,14 @@ router.get("/week", auth, (req, res) => {
   let where = "WHERE cs.session_date >= ? AND cs.session_date <= ?";
   const params = [ws, we];
 
-  if (view === "teacher") {
+  if (view === "all") {
+    // ★ 2026-09-30 校区反馈③：新增「全校视角」—— 不按班级 / 教师过滤，一次返回全校区本周课次。
+    //   仅 admin 可用：教师若能访问会看到非本班数据，与「教师仅见本班」的既有约定冲突。
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "仅管理员可查看全校视角" });
+    }
+    // where 只保留上方的时间区间条件
+  } else if (view === "teacher") {
     // Q8：teacher 角色默认锁定本人；admin 可指定任意教师
     let tid = req.user.role === "teacher" ? req.user.id : toIntOrNull(teacher_id);
     if (!tid) {
@@ -381,6 +391,30 @@ router.get("/:id", auth, (req, res) => {
   }
 
   res.json({ success: true, data: { session, students, evaluations, consumptions, related } });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 教室（★ 2026-09-30 v23 新增：校区反馈⑤）
+// ─────────────────────────────────────────────────────────────
+
+/** 修改课次教室：原教室维修、临时换教室等场景；传 null/空 = 清空（未指定教室） */
+router.put("/:id/room", auth, requireRole("admin", "teacher"), (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.prepare("SELECT id FROM class_sessions WHERE id = ?").get(id)) {
+    return res.status(404).json({ success: false, message: "课次不存在" });
+  }
+  // 与排课模板同级（都是"安排教室"），故 teacher 也可改，但限本人可访问的课次（含代课）
+  if (!canAccessSession(req, id)) {
+    return res.status(403).json({ success: false, message: "无权修改该课次" });
+  }
+  const roomRes = parseRoomId((req.body || {}).room_id);
+  if (!roomRes.ok) {
+    return res.status(400).json({ success: false, message: roomRes.message });
+  }
+  db.prepare(
+    "UPDATE class_sessions SET room_id = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+  ).run(roomRes.value, id);
+  res.json({ success: true, data: null });
 });
 
 // ─────────────────────────────────────────────────────────────
