@@ -9,8 +9,8 @@
 //   课程为空 → 报告「课程为空」（不做宽松兜底）。报告表 (source_table, source_id) 唯一，幂等可重跑。
 const db = require("../db");
 
-const PERIOD_MIN = 1;
-const PERIOD_MAX = 8;
+// ★ v24：节次范围由 period_times 表决定（原写死 1–8 已移除）——见 utils/period.js
+const { listPeriods } = require("./period");
 const STATUS_SCHEDULED = "待上课";
 const STATUS_DONE = "已上课";
 
@@ -102,6 +102,7 @@ function expandTemplates(termId) {
     )
     .all();
   const periodMap = getPeriodTimeMap();
+  const validPeriods = new Set(listPeriods().map(p => Number(p.period)));
   const today = todayStr();
 
   const cells = [];
@@ -109,7 +110,8 @@ function expandTemplates(termId) {
     const dow = Number(t.day_of_week);
     if (dow < 1 || dow > 7) continue;
     const period = Number(t.period);
-    if (period < PERIOD_MIN || period > PERIOD_MAX) continue;
+    // ★ v24：只展开「节次时间表里已配置」的节次 —— 否则会生成课表渲染不出行的悬空课次
+    if (!validPeriods.has(period)) continue;
     const pt = periodMap.get(period);
     const start_time = pt ? pt.start_time : "";
     const end_time = pt ? pt.end_time : "";
@@ -380,8 +382,6 @@ function backfillSessions(termId) {
 }
 
 module.exports = {
-  PERIOD_MIN,
-  PERIOD_MAX,
   STATUS_SCHEDULED,
   STATUS_DONE,
   todayStr,

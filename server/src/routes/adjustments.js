@@ -4,6 +4,7 @@
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
+const { checkPeriod } = require("../utils/period");
 const { canManageClass } = require("../utils/scope");
 const { audit } = require("../utils/audit");
 
@@ -72,8 +73,12 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
   }
   const d = Number(to_day_of_week);
   const per = Number(to_period);
-  if (d < 1 || d > 7 || per < 1 || per > 8) {
-    return res.status(400).json({ success: false, message: "星期范围 1-7，节次范围 1-8" });
+  if (d < 1 || d > 7) {
+    return res.status(400).json({ success: false, message: "星期范围 1-7" });
+  }
+  const periodRes = checkPeriod(per);
+  if (!periodRes.ok) {
+    return res.status(400).json({ success: false, message: periodRes.message });
   }
   const sc = db.prepare("SELECT * FROM schedules WHERE id = ?").get(Number(schedule_id));
   if (!sc) return res.status(404).json({ success: false, message: "课表条目不存在" });

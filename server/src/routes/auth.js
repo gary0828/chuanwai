@@ -70,10 +70,12 @@ const ROUTES = {
           meta: { title: "周课表" }
         },
         {
+          // ★ 2026-10-01：排课是校区负责人的配置动作（与学期/节次/教室同属一类）→ 收窄为仅 admin。
+          //   教师看课表走「周课表 → 教师视角」，不再拥有排课配置入口。
           path: "/data/schedules",
           component: "attendance/schedules/index",
           name: "Schedules",
-          meta: { title: "排课模板" }
+          meta: { title: "排课模板", roles: ["admin"] }
         },
         {
           path: "/data/adjustments",
@@ -329,12 +331,6 @@ const ROUTES = {
           component: "attendance/sessions/index",
           name: "Sessions",
           meta: { title: "周课表" }
-        },
-        {
-          path: "/data/schedules",
-          component: "attendance/schedules/index",
-          name: "Schedules",
-          meta: { title: "排课模板" }
         },
         {
           path: "/data/makeups",

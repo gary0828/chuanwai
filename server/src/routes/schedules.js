@@ -5,6 +5,7 @@ const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { classScopeClause, canManageClass } = require("../utils/scope");
 const { parseRoomId } = require("../utils/room");
+const { checkPeriod } = require("../utils/period");
 
 const router = express.Router();
 
@@ -166,8 +167,12 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
   }
   const d = Number(day_of_week);
   const per = Number(period);
-  if (d < 1 || d > 7 || per < 1 || per > 8) {
-    return res.status(400).json({ success: false, message: "星期范围 1-7，节次范围 1-8" });
+  if (d < 1 || d > 7) {
+    return res.status(400).json({ success: false, message: "星期范围 1-7" });
+  }
+  const periodRes = checkPeriod(per);
+  if (!periodRes.ok) {
+    return res.status(400).json({ success: false, message: periodRes.message });
   }
   if (!canManageClass(req, class_id)) {
     return res.status(403).json({ success: false, message: "无权为该校班级设置排课模板" });

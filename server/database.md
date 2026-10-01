@@ -36,7 +36,7 @@
 
 | v20  | 员工头像           | `users` 新增 `avatar TEXT NOT NULL DEFAULT ''`（**只存相对路径**，如 `/assets/avatars/avatar-3-20260923...png`）。配套三个自助端点（改密码 / 改资料 / 上传头像，admin 与 teacher 均只改自己）。文件本体落盘 `server/data/assets/avatars/`，**随 `server/data/` 一起备份**（只备份 db 会丢文件）。上传判型与落盘复用公共实现 `server/src/utils/image.js`，与站点 Logo 同一套魔数校验 |
 
-| v21  | 课次实体与任课关系 | **G1 课次实体 + G2 任课关系（地基型增量）**。新增 4 表：`period_times`（节次时间表，独立结构化配置，预置 1–8 节）、`teaching_assignments`（任课关系：班级 × 课程 × 教师(可空) × 学期(可空)）、`class_sessions`（课次实例，唯一键 `(class_id, session_date, period)`）、`session_migration_report`（历史回填报告，只落「未匹配」）。**重建** `attendances` / `class_evaluations`：加 `session_id`，唯一键由 `(student_id, course_id, date)` 改为 **Q7 双条件部分唯一索引**（`session_id IS NULL` → 保旧键；`session_id IS NOT NULL` → 挂课次）。`hour_consumptions` 加 `session_id`、`makeup_classes` 加 `original_session_id` / `makeup_session_id`（均不重建）。**既有历史行全部落在 legacy 分区（`session_id IS NULL`），迁移只加列不回填** —— 回填在「生成本学期课次」后的独立步骤执行（幂等、可重跑、失败显式进报告）。节次固定 1–8 不放宽（Q3） |
+| v21  | 课次实体与任课关系 | **G1 课次实体 + G2 任课关系（地基型增量）**。新增 4 表：`period_times`（节次时间表，独立结构化配置，预置 1–8 节）、`teaching_assignments`（任课关系：班级 × 课程 × 教师(可空) × 学期(可空)）、`class_sessions`（课次实例，唯一键 `(class_id, session_date, period)`）、`session_migration_report`（历史回填报告，只落「未匹配」）。**重建** `attendances` / `class_evaluations`：加 `session_id`，唯一键由 `(student_id, course_id, date)` 改为 **Q7 双条件部分唯一索引**（`session_id IS NULL` → 保旧键；`session_id IS NOT NULL` → 挂课次）。`hour_consumptions` 加 `session_id`、`makeup_classes` 加 `original_session_id` / `makeup_session_id`（均不重建）。**既有历史行全部落在 legacy 分区（`session_id IS NULL`），迁移只加列不回填** —— 回填在「生成本学期课次」后的独立步骤执行（幂等、可重跑、失败显式进报告）。节次固定 1–8 不放宽（Q3）— ★ 2026-10-01 已由 **v24/v25 修订**（节次改为可配置），见 **ADR-013** |
 
 当前最新版本：**v21**（`PRAGMA user_version` = 21）
 
@@ -773,7 +773,7 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 | label | TEXT | NOT NULL, DEFAULT '' | 显示名（空则回落「第N节」） |
 | updated_at | TEXT | NOT NULL, DEFAULT | 更新时间 |
 
-预置 1–8 节默认时间；admin 可在「节次时间」页修改。**课次生成时把起止时间快照写入 `class_sessions`**，日后改此表不回写历史（ADR-008 §9 只增不改）。
+预置 8 节默认时间（★ v24 起**可自由增删**，数量不受限）；admin 可在「节次时间」页增删与修改。**课次生成时把起止时间快照写入 `class_sessions`**，日后改此表不回写历史（ADR-008 §9 只增不改）。
 
 ### teaching_assignments（任课关系）
 
@@ -855,7 +855,7 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 | `POST /api/sessions/:id/substitute` | admin | 代课（原教师保留，另记代课人） |
 | `POST /api/sessions` | admin | 手工加课 / 补课（`origin = 手工/补课`） |
 | `GET/POST/PUT/DELETE /api/teaching-assignments` | GET auth（scope）/ 其余 admin | 任课关系 CRUD |
-| `GET /api/period-times` · `PUT /api/period-times` | auth / admin | 节次时间表 读取 / 批量保存（仅 1–8 节） |
+| `GET /api/period-times` · `PUT /api/period-times` | auth / admin | 节次时间表 读取 / 批量保存（★ v24：只能改已存在节次；另见 POST 新增、DELETE 删除） |
 
 > **权限**：课次 / 任课 / 节次时间的写端点均 **admin**；teacher 仅只读其「班主任或任课」范围。`finance` / `leads` 路由仍全程 `requireRole("admin")`，扩 `scope.js` 不外溢。
 > **历史数据**：迁移**只加列不落课次**，历史行 `session_id` 为空；回填后匹配不上的显式进报告（不静默置空）。
@@ -901,3 +901,37 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 > **生成继承**：`utils/session-engine.js` 展开排课模板时带出 `schedules.room_id` → 生成的课次自动带上教室。
 > **响应字段**：课次列表 / 详情 / 周视图统一新增 `room_name`（LEFT JOIN rooms），前端不再显示数字 id。
+
+---
+
+## 节次可配置（v24 + v25，2026-10-01）
+
+> 背景：校区反馈「机构不是学校，不能固定 8 节课」。原 v21 的「Q3 固定 1–8」按门禁**显式修订**（见 **ADR-013**）。
+
+### 约束变化（period 列）
+
+| 表 | 原约束 | 现约束 |
+| ---- | ---- | ---- |
+| `period_times.period` | `BETWEEN 1 AND 8` | **`>= 1`**（只保底、不封顶） |
+| `class_sessions.period` | `BETWEEN 1 AND 8` | **`>= 1`** |
+| `schedules.period` | `BETWEEN 1 AND 8` | **`>= 1`** |
+| `schedule_adjustments.from_period / to_period` | `BETWEEN 1 AND 8` | **`>= 1`** |
+
+- `day_of_week` 仍为 **1–7**（星期是固定的，未放开）
+- `UNIQUE(period)`（period_times）、`UNIQUE(class_id, course_id, day_of_week, period)`（schedules）、`UNIQUE(class_id, session_date, period)`（class_sessions）**全部保留**
+- 迁移方式：SQLite 不能改 CHECK → **重建表**（`024-configurable-periods` + `025-period-constraints-schedules`）。
+  ★ v25 是 v24 的**补漏**：v24 只改了 `period_times` / `class_sessions`，
+  漏了 `schedules` 与 `schedule_adjustments`（表现是排课时报「字段取值不在允许范围内」——
+  那是 `constraintMessage` 对 `CHECK constraint failed` 的翻译，看不出真因）。
+
+### 节次 API 变化
+
+| 端点 | 变化 |
+| ---- | ---- |
+| `GET /api/period-times` | 返回**实际配置**（几节就几行；不再补全到 8） |
+| `PUT /api/period-times` | ★ 只能修改**已存在**的节次（避免从这条路静默新增） |
+| `POST /api/period-times` | **新增**（v24 新增）：不传 `period` 则自动接在最后一节之后 |
+| `DELETE /api/period-times/:period` | **删除**（v24 新增）：被课次或排课模板引用时 **400**，提示说明在哪用了；**删除后序号不前移** |
+
+> **范围口径**：`server/src/utils/period.js`（原先散在 4 处的常量已收口到这里）。
+> **生成课次**：`session-engine` 只展开「节次时间表里已配置」的节次，不生成悬空课次。

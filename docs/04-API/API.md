@@ -313,8 +313,8 @@ updated: 2026-09-23
 | 任课关系 | POST | `/api/teaching-assignments` | admin | 新增任课关系（班级 × 课程 × 教师可空 × 学期可空） |
 | 任课关系 | PUT | `/api/teaching-assignments/:id` | admin | 修改任课关系 |
 | 任课关系 | DELETE | `/api/teaching-assignments/:id` | admin | 删除任课关系 |
-| 节次时间 | GET | `/api/period-times` | 登录 | 节次时间表（1–8 节起止时间，供周历与生成快照） |
-| 节次时间 | PUT | `/api/period-times` | admin | 批量保存节次时间（仅 1–8 节，HH:mm 或空串） |
+| 节次时间 | GET | `/api/period-times` | 登录 | 节次时间表（★ v24 起节次可自由增删，见 ADR-013） |
+| 节次时间 | PUT | `/api/period-times` | admin | 批量保存节次时间（★ v24：只能改**已存在**的节次；HH:mm 或空串） |
 | 健康 | GET | `/api/health` | 公开 | 容器健康检查 |
 
 ---
@@ -1168,7 +1168,8 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 
 - 响应沿用 `{ success, data?, message? }`。
 - 课次状态：`待上课 / 已上课 / 已停课 / 已挪课 / 已取消`；来源：`模板生成 / 挪课 / 补课 / 手工`。
-- 节次固定 **1–8**（Q3）；周基准 `week_start` 为**周一**；日期 `YYYY-MM-DD`，时间 `HH:mm`。
+- 节次**由「节次时间」表配置**（★ v24 起可自由增删，见 **ADR-013**；原 v21 的「Q3 固定 1–8」已部分修订）；周基准 `week_start` 为**周一**；日期 `YYYY-MM-DD`，时间 `HH:mm`。
+- 排课/加课/挪课时，**节次必须落在已配置的节次范围内**（否则会产生课表渲染不出行的悬空课次）。
 
 ### 9.2 生成（预览 → 确认 + 回填，均 admin）
 
@@ -1209,7 +1210,7 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 | GET | `/api/teaching-assignments` | 登录（教师仅本班） |
 | POST / PUT / DELETE | `/api/teaching-assignments[/:id]` | admin（唯一键 `(class_id, course_id, term_id)`；`term_id` 为空时另有部分唯一索引 `ux_ta_no_term`） |
 | GET | `/api/period-times` | 登录 |
-| PUT | `/api/period-times` | admin（`{items:[{period,start_time,end_time,label}]}`，仅 1–8 节，`HH:mm` 或空串） |
+| PUT | `/api/period-times` | admin（`{items:[{period,start_time,end_time,label}]}`；★ v24 只能改**已存在**的节次，`HH:mm` 或空串） |
 
 ### 9.6 ★归属过滤与可见性（G2）
 

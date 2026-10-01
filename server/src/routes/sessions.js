@@ -13,6 +13,7 @@ const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { canManageClass, canAccessSession, teacherClassPredicate } = require("../utils/scope");
 const { parseRoomId } = require("../utils/room");
+const { checkPeriod, listPeriods } = require("../utils/period");
 const { parseDate } = require("../utils/validate");
 const engine = require("../utils/session-engine");
 
@@ -168,17 +169,13 @@ router.get("/week", auth, (req, res) => {
     });
   }
 
-  const periodMap = engine.getPeriodTimeMap();
-  const periods = [];
-  for (let per = engine.PERIOD_MIN; per <= engine.PERIOD_MAX; per++) {
-    const pt = periodMap.get(per);
-    periods.push({
-      period: per,
-      label: (pt && pt.label) || `第${per}节`,
-      start_time: pt ? pt.start_time : "",
-      end_time: pt ? pt.end_time : ""
-    });
-  }
+  // ★ v24：节次不再固定 1–8，直接按「节次时间表」的实际配置返回（几节就几行）
+  const periods = listPeriods().map(p => ({
+    period: Number(p.period),
+    label: p.label || `第${p.period}节`,
+    start_time: p.start_time || "",
+    end_time: p.end_time || ""
+  }));
 
   res.json({ success: true, data: { week_start: ws, week_end: we, days, periods, sessions } });
 });

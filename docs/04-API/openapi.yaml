@@ -46,7 +46,7 @@ tags:
   - name: TeachingAssignments
     description: 任课关系（班级 × 课程 × 教师 × 学期，v21）
   - name: PeriodTimes
-    description: 节次时间表（1–8 节起止时间，v21）
+    description: 节次时间表（★ v24 起节次可自由增删，见 ADR-013）
 
 security:
   - bearerAuth: []
@@ -2256,7 +2256,7 @@ paths:
   /api/period-times:
     get:
       tags: [PeriodTimes]
-      summary: 节次时间表（1–8 节起止时间）
+      summary: 节次时间表（可增删）
       security: [{bearerAuth: []}]
       responses:
         "200":
@@ -2271,7 +2271,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
     put:
       tags: [PeriodTimes]
-      summary: 批量保存节次时间（仅 admin，仅 1–8 节）
+      summary: 批量保存节次时间（仅 admin；★ v24 只能改已存在的节次）
       security: [{bearerAuth: []}]
       requestBody:
         required: true
@@ -2888,3 +2888,29 @@ components:
         end_time: { type: string }
         label: { type: string }
 
+    post:
+      tags: [PeriodTimes]
+      summary: 新增一节（仅 admin；不传 period 则自动接在最后一节之后）
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, properties: { period: { type: integer }, start_time: { type: string }, end_time: { type: string }, label: { type: string } } }
+      responses:
+        "200": { description: 成功（返回新节次号） }
+        "400": { description: 节次重复 / 时间格式非法 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: 非 admin }
+  /api/period-times/{period}:
+    delete:
+      tags: [PeriodTimes]
+      summary: 删除一节（仅 admin；被课次或排课模板引用时 400；删除后序号不前移）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { name: period, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功 }
+        "400": { description: 仍被课次/排课模板使用 }
+        "404": { description: 节次不存在 }
+        "401": { $ref: "#/components/responses/Unauthorized" }

@@ -13,6 +13,7 @@ import {
 } from "@/api/attendance";
 import { AppPageHeader } from "@/components/AppPageHeader";
 import { getRoomList } from "@/api/rooms";
+import { getPeriodTimes } from "@/api/sessions";
 
 defineOptions({
   name: "Schedules"
@@ -25,7 +26,13 @@ const courseOptions = ref<any[]>([]);
 const allRows = ref<any[]>([]);
 
 const weekDays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-const periods = Array.from({ length: 8 }, (_, i) => i + 1);
+// ★ v24：节次不再固定 1–8 —— 从「节次时间」拉实际配置（有几节就渲染几行）
+const periods = ref<number[]>([]);
+function loadPeriods() {
+  getPeriodTimes().then((res: any) => {
+    if (res.success) periods.value = (res.data || []).map((p: any) => Number(p.period));
+  });
+}
 
 /** 当前班级课表：按 day_of_week × period 索引 */
 const scheduleMap = computed(() => {
@@ -245,6 +252,7 @@ onMounted(() => {
   loadClasses();
   loadCourses();
   loadRooms();
+  loadPeriods();
   loadData();
 });
 </script>

@@ -84,9 +84,19 @@ export const getPeriodTimes = () => {
   return http.request("get", "/api/period-times");
 };
 
-/** 批量保存节次时间（admin）→ data:null */
+/** 批量保存节次时间（admin；★ v24 只能改已存在的节次）→ data:null */
 export const savePeriodTimes = (data: object) => {
   return http.request("put", "/api/period-times", { data });
+};
+
+/** 新增一节（★ v24）：不传 period 则自动接在最后一节之后 → data:{ period } */
+export const createPeriodTime = (data?: object) => {
+  return http.request("post", "/api/period-times", { data: data || {} });
+};
+
+/** 删除一节（★ v24）：被课次或排课模板引用时后端会拒绝并说明 */
+export const deletePeriodTime = (period: number) => {
+  return http.request("delete", `/api/period-times/${period}`);
 };
 
 /** ---------- 任课关系（/api/teaching-assignments） ---------- */
