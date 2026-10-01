@@ -68,7 +68,7 @@ BASE=http://127.0.0.1:3000 node _verify_test/probe-business-chain.mjs  # 业务�
 # 前端改动
 pnpm lint && node ./node_modules/vite/bin/vite.js build
 # ★ Docker 已统一为「单端口统一入口」：页面与 /api 都在 18080（后端 3000 不再对外暴露）
-python _verify_test/verify-all-pages.py http://localhost:18080 http://127.0.0.1:18080   # 冷启动 28 项
+python _verify_test/verify-all-pages.py http://localhost:18080 http://127.0.0.1:18080   # 冷启动（脚本自动取全部菜单路径，当前 34 项）
 python server/scripts/ui-p0-verify.py  http://localhost:18080 http://127.0.0.1:18080   # P0 31 项
 
 # 部署改动

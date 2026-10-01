@@ -215,8 +215,18 @@ if (existsSync(logsDir)) {
     const age = (now - statSync(p).mtimeMs) / 86400000;
     const size = statSync(p).size / 1024;
     if (age > 30) warn(`日志 ${f} 已 ${Math.floor(age)} 天未归档 → memory/archive/`);
-    if (size > 6)
+    // ★ 2026-10-01：软上限（6KB）在实践中**从未被执行** —— 6 个日志全部超标、最大 59KB，
+    //   每次只 WARN 就过去了，日志退化成流水账。
+    //   → 改为「超软上限 **2 倍**（12KB）即 ERROR」：规则要会痛，否则等于没有。
+    //     （6–12KB 之间仍只是提醒，留出正常的写作空间）
+    if (size > 12) {
+      errors.push(
+        `日志 ${f} 已达 ${KB(statSync(p).size)}（超软上限 2 倍）→ 必须处理：` +
+          `把高信号条目 Promote 到 memory/knowledge/*.md，再精简或移入 memory/archive/`
+      );
+    } else if (size > 6) {
       warn(`日志 ${f} 超 6KB（${KB(statSync(p).size)}）→ 建议 Promote 高信号条目到主题文件（软上限，不阻塞）`);
+    }
   }
 }
 
