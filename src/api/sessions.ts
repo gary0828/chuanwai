@@ -79,7 +79,7 @@ export const migrationReportToTodo = (id: number) => {
 
 /** ---------- 节次时间（/api/period-times） ---------- */
 
-/** 节次时间表（1–8 节，含起止时间与显示名）→ [{ period, start_time, end_time, label }] */
+/** 节次时间表（★ v24 起节次可自由增删，数量不限；含起止时间与显示名）→ [{ period, start_time, end_time, label }] */
 export const getPeriodTimes = () => {
   return http.request("get", "/api/period-times");
 };
