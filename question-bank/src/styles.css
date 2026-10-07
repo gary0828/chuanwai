@@ -1,0 +1,431 @@
+/**
+ * 全局样式
+ *
+ * ★ 口径（feature-dev-flow §2.2「同类页面/组件写法」）：
+ *   本前端与 `ai-workbench/` 同属「工作台族」—— **用 Element Plus 组件**，
+ *   但**没有 pure-admin 的外壳与全局覆盖**，排版靠各自的 scoped CSS + 这份 styles.css。
+ *   ⇒ 抄工作台自己的页面（如 Knowledge.vue），**别照搬教务端的骨架类**。
+ */
+
+:root {
+  --qb-bg: #f5f7fa;
+  --qb-surface: #ffffff;
+  --qb-border: #e4e7ed;
+  --qb-text: #303133;
+  --qb-text-secondary: #606266;
+  --qb-text-tertiary: #909399;
+  --qb-primary: #409eff;
+  --qb-success: #67c23a;
+  --qb-warning: #e6a23c;
+  --qb-danger: #f56c6c;
+  --qb-radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", Arial, sans-serif;
+  font-size: 14px;
+  color: var(--qb-text);
+  background: var(--qb-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── 布局骨架 ────────────────────────────────────────────── */
+.qb-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.qb-sidebar {
+  width: 208px;
+  flex: 0 0 208px;
+  background: #2b3648;
+  color: #cfd6e4;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.qb-brand {
+  padding: 18px 16px;
+  font-size: 16px;
+  font-weight: 500;
+  color: #fff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.qb-brand small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: #8a94a6;
+  margin-top: 4px;
+}
+
+/* ── 学科切换器（侧栏顶部，比导航更高一层的上下文）────────── */
+.qb-subject-picker {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.qb-subject-label {
+  display: block;
+  font-size: 12px;
+  color: #8a94a6;
+  margin-bottom: 6px;
+}
+
+/* Element Plus 的 select 在深色侧栏里默认是白底，这里让它与侧栏协调 */
+.qb-subject-picker .el-select {
+  --el-fill-color-blank: rgba(255, 255, 255, 0.08);
+  --el-border-color: rgba(255, 255, 255, 0.16);
+  --el-text-color-regular: #e8ecf2;
+  --el-text-color-placeholder: #8a94a6;
+}
+
+/* ── 学科切换器（侧栏顶部，比导航更高一层的上下文）────────── */
+.qb-subject-picker {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.qb-subject-label {
+  display: block;
+  font-size: 12px;
+  color: #8a94a6;
+  margin-bottom: 6px;
+}
+
+/* Element Plus 的 select 在深色侧栏里默认是白底，这里让它与侧栏协调 */
+.qb-subject-picker .el-select {
+  --el-fill-color-blank: rgba(255, 255, 255, 0.08);
+  --el-border-color: rgba(255, 255, 255, 0.16);
+  --el-text-color-regular: #e8ecf2;
+  --el-text-color-placeholder: #8a94a6;
+}
+
+.qb-nav-group {
+  padding: 12px 16px 4px;
+  font-size: 12px;
+  color: #7b869a;
+}
+
+.qb-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #cfd6e4;
+  border-left: 3px solid transparent;
+}
+
+.qb-nav-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.qb-nav-item.active {
+  background: rgba(64, 158, 255, 0.16);
+  border-left-color: var(--qb-primary);
+  color: #fff;
+}
+
+.qb-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.qb-header {
+  height: 52px;
+  flex: 0 0 52px;
+  background: var(--qb-surface);
+  border-bottom: 1px solid var(--qb-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+}
+
+.qb-header h1 {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.qb-header .qb-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--qb-text-secondary);
+}
+
+.qb-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* ── 通用卡片 ────────────────────────────────────────────── */
+.card {
+  background: var(--qb-surface);
+  border: 1px solid var(--qb-border);
+  border-radius: var(--qb-radius);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── 统计小卡 ────────────────────────────────────────────── */
+.qb-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.qb-stat {
+  background: var(--qb-surface);
+  border: 1px solid var(--qb-border);
+  border-radius: var(--qb-radius);
+  padding: 14px 16px;
+}
+
+.qb-stat .n {
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.qb-stat .l {
+  font-size: 12px;
+  color: var(--qb-text-tertiary);
+  margin-top: 4px;
+}
+
+/* ── 筛选栏 ──────────────────────────────────────────────── */
+.qb-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+/* ── 题目卡片 ────────────────────────────────────────────── */
+.qb-question {
+  background: var(--qb-surface);
+  border: 1px solid var(--qb-border);
+  border-radius: var(--qb-radius);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+
+.qb-question:hover {
+  border-color: #c6e2ff;
+}
+
+.qb-q-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.qb-q-stem {
+  flex: 1;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.qb-q-options {
+  margin: 10px 0 0;
+  padding-left: 8px;
+}
+
+.qb-q-opt {
+  line-height: 1.9;
+  word-break: break-word;
+}
+
+.qb-q-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--qb-border);
+  font-size: 12px;
+  color: var(--qb-text-tertiary);
+}
+
+.qb-q-answer {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: #f4f9ff;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.qb-q-analysis {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #f7f8fa;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--qb-text-secondary);
+}
+
+/* ★ 公式渲染容器：KaTeX 输出是 HTML，必须让它内部的样式生效 */
+.qb-formula :deep(.katex),
+.qb-formula .katex {
+  font-size: 1.05em;
+}
+
+/* ── 查重提示 ────────────────────────────────────────────── */
+.qb-dup {
+  border: 1px solid #fde2c4;
+  background: #fef7ec;
+  border-radius: var(--qb-radius);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.qb-dup .qb-dup-item {
+  padding: 6px 0;
+  border-bottom: 1px dashed #f5dab1;
+  line-height: 1.6;
+}
+
+.qb-dup .qb-dup-item:last-child {
+  border-bottom: none;
+}
+
+/* ── 置信度提示（K-050：低置信必须显式标示）────────────────── */
+.qb-confidence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.qb-confidence.high {
+  background: #f0f9eb;
+  color: #529b2e;
+}
+
+.qb-confidence.mid {
+  background: #fdf6ec;
+  color: #b88230;
+}
+
+.qb-confidence.low {
+  background: #fef0f0;
+  color: #c45656;
+}
+
+/* ── 空态 ───────────────────────────────────────────────── */
+.qb-empty {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--qb-text-tertiary);
+}
+
+.qb-empty .qb-empty-title {
+  font-size: 15px;
+  color: var(--qb-text-secondary);
+  margin-bottom: 8px;
+}
+
+/* ── 三视角侧栏 ─────────────────────────────────────────── */
+.qb-aside {
+  width: 224px;
+  flex: 0 0 224px;
+  border-right: 1px solid var(--qb-border);
+  background: var(--qb-surface);
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.qb-aside h3 {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 8px;
+  color: var(--qb-text-secondary);
+}
+
+.qb-aside .qb-aside-item {
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.qb-aside .qb-aside-item:hover {
+  background: #f0f5ff;
+}
+
+.qb-aside .qb-aside-item.active {
+  background: #ecf5ff;
+  color: var(--qb-primary);
+}
+
+.qb-aside .qb-aside-count {
+  float: right;
+  color: var(--qb-text-tertiary);
+  font-size: 12px;
+}
+
+.qb-aside .qb-aside-child {
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--qb-text-secondary);
+}
+
+/* ── 工具条 ─────────────────────────────────────────────── */
+.qb-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.qb-toolbar .qb-grow {
+  flex: 1;
+}
+
+.qb-hint {
+  font-size: 12px;
+  color: var(--qb-text-tertiary);
+  line-height: 1.7;
+}

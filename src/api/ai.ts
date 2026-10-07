@@ -34,3 +34,19 @@ export const getAiTicket = () => {
     data: { origin: window.location.origin }
   });
 };
+
+/**
+ * 获取**智能题库**免登票据（2026-10-07 新增）。
+ *
+ * 与工作台共用同一张票据机制（同一次签发、两处落地），只是 `target` 不同：
+ *   · target 缺省 "workbench" → 跳 /ai/
+ *   · target = "qbank"→ 跳 /qb/
+ *
+ * ★ 题库换到的凭证是 `qb_agent`（**写**权限，仅放行 /api/qbank），
+ *   与工作台的 `ai_agent`（只读）刻意分开 —— 见 server/src/middleware/auth.js。
+ */
+export const getQbankTicket = () => {
+  return http.request<AiTicketResult>("post", "/api/ai/sso/ticket", {
+    data: { origin: window.location.origin, target: "qbank" }
+  });
+};

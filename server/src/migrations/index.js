@@ -29,7 +29,10 @@ const migrations = [
   require("./022-session-reschedule-rename"),
   require("./023-rooms"),
   require("./024-configurable-periods"),
-  require("./025-period-constraints-schedules")
+  require("./025-period-constraints-schedules"),
+  require("./026-question-bank"),
+  require("./027-question-bank-recycle"),
+  require("./028-question-subjects")
 ];
 
 function migrate(db) {

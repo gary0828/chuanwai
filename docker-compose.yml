@@ -1,10 +1,11 @@
 # ═══════════════════════════════════════════════════════════════════
 # 教务管理系统 · 统一入口部署（唯一编排文件）
 #
-# 形态：一个 nginx 同时托管「教务系统 + AI 工作台」，并把 /api 反代到后端。
+# 形态：一个 nginx 同时托管「教务系统 + AI 工作台 + 智能题库」，并把 /api 反代到后端。
 #   /        → 教务系统
 #   /ai/     → AI 教学工作台
-#   /api/    → 教务后端
+#   /qb/     → 智能题库（2026-10-07 新增）
+#   /api/    → 教务后端（三者共用）
 #
 # 为什么只有这一份（2026-09-23 起统一）：
 #   1. 「AI 助手」跳转地址 = 访问者当前 origin，天然兼容 IP / 域名 / 端口 / HTTPS；
@@ -57,6 +58,10 @@ services:
       - AI_WORKBENCH_URL=${AI_WORKBENCH_URL:-http://localhost}
       # 工作台挂在 /ai/ 子路径下，跳转 URL 需要带上该前缀
       - AI_WORKBENCH_BASE_PATH=${AI_WORKBENCH_BASE_PATH:-/ai}
+      # ★ 智能题库（2026-10-07 新增）：同样配成回环地址 → 跳转自动跟随访问者 origin，
+      #   复用与工作台完全一致的「免登不跳错端口」机制。
+      - QBANK_URL=${QBANK_URL:-http://localhost}
+      - QBANK_BASE_PATH=${QBANK_BASE_PATH:-/qb}
     volumes:
       # SQLite 数据持久化（首次启动自动建表 + 种子数据）
       - ./server/data:/app/data

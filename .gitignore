@@ -78,3 +78,13 @@ ai-workbench/node_modules/
 dify/volumes/
 # 上游源码临时克隆目录（仅用于取 docker 配置，用完即删）
 .dify-src/
+
+# ── 第三方参考产物（不入库）───────────────────────────────────────
+# book-structuring-webext-* 是第三方商业浏览器插件的打包产物（28MB/ 553 文件），
+# 含其 license 与第三方 IP。仅作本地参考，**不得入库**（体积臃肿 + 非本项目代码）。
+# 分析结论已沉淀到 docs/08-参考/参考系统插件源码分析-2026-10-07.md
+book-structuring-webext-*/
+
+# Python 字节码（py_compile / pytest 产生）
+__pycache__/
+*.py[cod]

@@ -29,6 +29,13 @@ const TICKET_TTL_SEC = 60;
 const TICKET_TYPE = "ai_sso";
 /** 工作台凭证有效期：覆盖一个工作日的使用即可，过期需重新从教务系统进入 */
 const AGENT_TOKEN_TTL = "12h";
+/**
+ * 题库凭证有效期（2026-10-07新增）。
+ * 题库与工作台**共用同一张免登票据**（同一次进入、两处落地），
+ * 但签发的是**另一种类型**的凭证 `qb_agent`，权限边界见 middleware/auth.js。
+ * 同样 12h：老师不会在一个工作日内反复重登。
+ */
+const QB_TOKEN_TTL = "12h";
 
 /** 已使用票据：jti -> 过期时间（毫秒） */
 const usedTickets = new Map();
@@ -122,9 +129,9 @@ function parseSafeOrigin(origin) {
 }
 
 /** 兜底路径也要带上子路径前缀，否则同源部署下会落到教务系统的 404 */
-function withBasePath(base) {
+function withBasePath(base, basePath = config.aiWorkbenchBasePath || "") {
   const s = String(base || "");
-  const path = config.aiWorkbenchBasePath || "";
+  const path = basePath;
   if (!path) return s;
   try {
     const u = new URL(s);
@@ -134,6 +141,37 @@ function withBasePath(base) {
   } catch {
     return s;
   }
+}
+
+/**
+ * 题库系统跳转基址（2026-10-07 新增）。
+ *
+ * 与工作台**同源同形态**：统一入口 nginx 同时托管三端
+ *   /       教务系统  ·  /ai/  工作台  ·  /qb/  题库系统
+ * 因此复用上面那套「同源即跟随访问者 origin」的安全解析逻辑，
+ * 只把子路径从 `AI_WORKBENCH_BASE_PATH` 换成 `QBANK_BASE_PATH`。
+ *
+ * ⚠ 为什么单独一个环境变量而不是硬编码 "/qb"：
+ *   万一将来题库要独立部署（像 09-23 前的工作台那样单独起端口），
+ *   只需改配置，不用再动这里 —— 这正是 09-23/09-16两次端口事故教会我们的。
+ */
+function resolveQbankUrl(origin) {
+  const raw = String(config.qbankUrl || config.aiWorkbenchUrl || "").trim();
+  const basePath = config.qbankBasePath || "/qb";
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return raw + basePath;
+  }
+
+  // 非回环 = 配了真实地址 → 尊重配置，只补子路径
+  if (!LOOPBACK_HOSTS.includes(u.hostname)) return withBasePath(raw, basePath);
+
+  // 回环 → 借访问者的 origin（题库与工作台同源，端口必须跟随访问者）
+  const o = parseSafeOrigin(origin);
+  if (!o) return withBasePath(raw, basePath);
+  return o.origin + basePath;
 }
 
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];
@@ -169,13 +207,22 @@ router.post("/sso/ticket", auth, (req, res) => {
 
   // 前端把自己访问教务系统用的 origin 传过来，避免跳到「访问者本机的 localhost」。
   // 同时兼容旧的 `host` 字段（老版本前端），但新前端一律传 origin。
-  const base = resolveWorkbenchUrl(req.body?.origin || req.body?.host);
+  //
+  // ★ target 决定跳去哪个系统（2026-10-07 新增）：
+  //   · 缺省 "workbench" → /ai/（保持既有行为不变，向后兼容）
+  //   · "qbank"          → /qb/（题库系统）
+  // 两者共用同一张票据，一次签发、两处落地。
+  const target = req.body?.target === "qbank" ? "qbank" : "workbench";
+  const base =
+    target === "qbank"
+      ? resolveQbankUrl(req.body?.origin || req.body?.host)
+      : resolveWorkbenchUrl(req.body?.origin || req.body?.host);
   // URL 用 hash 路由承载票据，避免随请求发送到服务器
   const url = `${base}/#/sso?ticket=${encodeURIComponent(ticket)}`;
 
   res.json({
     success: true,
-    data: { ticket, url, expiresIn: TICKET_TTL_SEC }
+    data: { ticket, url, target, expiresIn: TICKET_TTL_SEC }
   });
 });
 
@@ -236,6 +283,22 @@ router.post("/sso/verify", (req, res) => {
     { expiresIn: AGENT_TOKEN_TTL }
   );
 
+  // 题库系统专用凭证（2026-10-07 新增）：**写**权限，仅放行 /api/qbank。
+  // ★ 刻意不是复用 agentToken —— 两者权限面完全不同，混用会让
+  //   ai_agent 的「只读网关」定位名存实亡（详见 middleware/auth.js 注释）。
+  //   同一个用户两条凭证互不干扰：工作台那侧即使拿到 qb token 也访问不了 /api/agent。
+  const qbAgentToken = jwt.sign(
+    {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      tv: Number(user.token_version ?? 0),
+      type: "qb_agent"
+    },
+    SECRET,
+    { expiresIn: QB_TOKEN_TTL }
+  );
+
   res.json({
     success: true,
     data: {
@@ -246,6 +309,9 @@ router.post("/sso/verify", (req, res) => {
       // 工作台据此决定可用范围（教师版 / 教务版）
       scope: user.role === "admin" ? "all" : "own",
       agentToken,
+      // 题库系统凭证（同一张票据换取，两端各自使用自己的凭证）
+      qbAgentToken,
+      qbankUrl: resolveQbankUrl(req.body?.origin),
       expiresIn: AGENT_TOKEN_TTL
     }
   });

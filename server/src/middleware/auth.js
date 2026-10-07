@@ -111,6 +111,30 @@ function auth(req, res, next) {
       });
     }
   }
+  // 题库系统凭证（type=qb_agent）：**写**权限，仅放行 /api/qbank
+  //
+  // ── 为什么必须是**独立类型**，不能给 ai_agent 加口子（2026-10-07）────────
+  // ai_agent 的定位是「**只读**网关」（ADR-007 最小权限），上面那段注释里对
+  // /api/growth 的三条安全边界（老师只能碰自己带的班 / 不含金额与家长信息 /
+  // 管理动作挡住）全部依赖「这个凭证不改业务数据」这个前提。
+  // 题库要**写**（老师录题）。塞进 ai_agent 会让那8 条边界论述名存实亡——
+  // 将来推理「这个凭证能做什么」时基线整个变了。
+  //
+  // 边界靠三处保证，不靠路径前缀单点：
+  //  1. 路径白名单只有 /api/qbank（一期只有题库域，绝不牵连既有业务端点）；
+  //  2. 题库路由内部**逐个端点**校验归属（teacher 只能改/删自己录入的题，
+  //     见 routes/qbank.js 的 canManageQuestion）；
+  //  3. 配图上传有体积与 MIME 白名单限制（防把图库当文件盘用）。
+  if (payload.type === "qb_agent") {
+    const qbPath = String(req.originalUrl || req.url || "").split("?")[0];
+    const QB_OK = /^\/api\/qbank(\/|$)/.test(qbPath);
+    if (!QB_OK) {
+      return res.status(403).json({
+        success: false,
+        message: "该凭证仅可用于题库系统接口"
+      });
+    }
+  }
   // 吊销校验：用户不存在、或 token 版本已过期（登出/改密/改角色/删号）即拒绝
   const tv = currentTokenVersion(payload.id);
   if (tv === null || tv !== Number(payload.tv ?? 0)) {

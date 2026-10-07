@@ -1,9 +1,10 @@
 # ═══════════════════════════════════════════════════════════════════
-# 统一入口镜像：一个 nginx 同时托管「教务系统」与「AI 教学工作台」
+# 统一入口镜像：一个 nginx 同时托管「教务系统」「AI 教学工作台」「智能题库」
 #
 # 对应 nginx 配置：deploy/nginx-unified.conf
 #   → 教务系统挂在 /       （/usr/share/nginx/html）
 #   → AI 工作台挂在 /ai/   （/usr/share/nginx/html-ai）
+#   → 智能题库挂在 /qb/    （/usr/share/nginx/html-qb）2026-10-07 新增
 #
 # 为什么推荐这种部署形态：见 deploy/nginx-unified.conf 顶部说明。
 # 一句话：同源同端口 → 免登跳转永远指向访问者当前地址，不会跳错端口。
@@ -39,6 +40,8 @@ COPY . .
 RUN pnpm build
 # AI 工作台：产物在 /app/ai-workbench/dist
 RUN pnpm exec vite build --config ai-workbench/vite.config.ts
+# 智能题库：产物在 /app/question-bank/dist（2026-10-07 新增）
+RUN pnpm exec vite build --config question-bank/vite.config.ts
 
 FROM nginx:stable-alpine AS production-stage
 
@@ -50,6 +53,12 @@ COPY --from=build-stage /app/dist /usr/share/nginx/html
 # nginx 配置里用 `root` 让 /ai/xxx 落到 html-ai/ai/xxx，因此这里要把产物
 # 放进 html-ai/ai/ 子目录，路径才对齐。
 COPY --from=build-stage /app/ai-workbench/dist /usr/share/nginx/html-ai/ai
+
+# 智能题库 → /usr/share/nginx/html-qb/qb（URL 前缀 /qb/，URL 前缀≠磁盘目录名 html-qb）
+# 注意：URL 前缀是 /qb/，磁盘目录名是 html-qb，二者故意不同 ——
+# nginx 配置里用root 让 /qb/xxx 落到 html-qb/qb/xxx，因此这里要把产物
+# 放进 html-qb/qb/ 子目录，路径才对齐。
+COPY --from=build-stage /app/question-bank/dist /usr/share/nginx/html-qb/qb
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

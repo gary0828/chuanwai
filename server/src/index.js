@@ -209,6 +209,13 @@ app.use("/api/growth", require("./routes/growth"));
 app.use("/api/sessions", require("./routes/sessions"));
 app.use("/api/teaching-assignments", require("./routes/teaching-assignments"));
 app.use("/api/period-times", require("./routes/period-times"));
+// 智能题库系统（一期）。凭证：qb_agent 类型放行 /api/qbank（见 middleware/auth.js）。
+// 教务系统正式登录 token 也能访问 —— 老师从教务端跳转过来时可能仍带教务 token。
+app.use("/api/qbank", require("./routes/qbank"));
+app.use("/api/qbank", require("./routes/qbank-ocr"));
+// 知识点与章节管理（2026-10-07 新增）。挂在同一前缀下，
+// 因此 qb_agent 凭证的路径白名单自动覆盖，无需改中间件。
+app.use("/api/qbank", require("./routes/qbank-taxonomy"));
 
 // 404
 app.use((_req, res) => {

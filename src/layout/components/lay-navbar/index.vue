@@ -11,10 +11,11 @@ import LogoutCircleRLine from "~icons/ri/logout-circle-r-line";
 import UserSettingsLine from "~icons/ri/user-settings-line";
 import Setting from "~icons/ri/settings-3-line";
 import AiIcon from "~icons/ep/magic-stick";
+import QbankIcon from "~icons/ep/collection";
 
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { getAiTicket } from "@/api/ai";
+import { getAiTicket, getQbankTicket } from "@/api/ai";
 import { message } from "@/utils/message";
 
 const {
@@ -31,6 +32,7 @@ const {
 
 const router = useRouter();
 const aiLoading = ref(false);
+const qbLoading = ref(false);
 
 /** 个人中心：刻意不进菜单，只能从顶栏下拉进入（与 /ai-admin 同理） */
 function goProfile() {
@@ -56,6 +58,28 @@ async function openAiWorkbench() {
     message("无法连接 AI 教学工作台，请确认服务已启动", { type: "error" });
   } finally {
     aiLoading.value = false;
+  }
+}
+
+/**
+ * 进入智能题库（2026-10-07 新增）：
+ * 与 AI 工作台同一套免登机制 —— 换60 秒一次性票据 → 题库用票据换自己的会话。
+ * 差别只在于 target=qbank，换到的是题库自己的凭证（可写题目）。
+ */
+async function openQuestionBank() {
+  if (qbLoading.value) return;
+  qbLoading.value = true;
+  try {
+    const res = await getQbankTicket();
+    if (!res?.success || !res?.data?.url) {
+      message("获取免登票据失败，请稍后重试", { type: "error" });
+      return;
+    }
+    window.open(res.data.url, "_blank", "noopener,noreferrer");
+  } catch {
+    message("无法打开题库，请确认题库服务已启动", { type: "error" });
+  } finally {
+    qbLoading.value = false;
   }
 }
 </script>
@@ -92,6 +116,16 @@ async function openAiWorkbench() {
       >
         <IconifyIconOffline :icon="AiIcon" />
         <span class="ai-entry-text">AI 助手</span>
+      </span>
+      <!-- 智能题库（免登进入独立题库系统· 2026-10-07） -->
+      <span
+        class="ai-entry navbar-bg-hover"
+        :class="{ 'is-loading': qbLoading }"
+        title="进入智能题库（录题 / 查题 / 组卷）"
+        @click="openQuestionBank"
+      >
+        <IconifyIconOffline :icon="QbankIcon" />
+        <span class="ai-entry-text">题库</span>
       </span>
       <!-- 退出登录 -->
       <el-dropdown trigger="click">

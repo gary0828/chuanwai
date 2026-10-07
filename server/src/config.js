@@ -116,6 +116,26 @@ const config = {
   })(),
 
   /**
+   * 题库系统跳转基址与子路径前缀（2026-10-07 新增 · 智能题库一期）
+   *
+   * 与工作台同源同形态：统一入口 nginx 同时托管三端
+   *   `/` 教务系统 · `/ai/` 工作台 · `/qb/` 题库系统
+   *
+   * 两种部署形态与 `aiWorkbenchUrl` 完全一致：
+   * 1. 固定地址：配 `QBANK_URL=http://10.0.0.5:5301`，跳转恒指向它；
+   * 2. 跟随访问者（同源，推荐）：配回环地址 `QBANK_URL=http://127.0.0.1`，
+   *    后端会自动替换为访问者当前 origin（见 routes/ai.js 的 resolveQbankUrl）。
+   *
+   * `QBANK_BASE_PATH` 缺省 `/qb`；独立部署（另起端口）时留空。
+   */
+  qbankUrl: (process.env.QBANK_URL || "http://127.0.0.1:5301").replace(/\/$/, ""),
+  qbankBasePath: (() => {
+    const raw = (process.env.QBANK_BASE_PATH || "/qb").trim();
+    if (!raw || raw === "/") return "";
+    return "/" + raw.replace(/^\/+|\/+$/g, "");
+  })(),
+
+  /**
    * 大模型配置（可选）。未配置 apiKey 时 `/api/ai/generate` 返回 503，
    * 工作台自动回退规则引擎，不阻塞主流程。
    *
