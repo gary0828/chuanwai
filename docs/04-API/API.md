@@ -1256,7 +1256,196 @@ AI 教学工作台是**独立部署**的教师端应用（仓库内 `ai-workbenc
 > 定位：删除保护（K-052）会拒绝删除，但用户需要**提前知道代价**而不是点完才发现。
 > 该端点只读、不产生副作用。
 
-## 10. 新增 / 修改 API 的流程（必须遵守）
+## 10. 智能题库（`/api/qbank`，v26–v28 新增）
+
+> 独立前端 `question-bank/`，挂统一入口 `/qb/`。凭证 `qb_agent`（**写**权限，仅放行本前缀）。
+> 完整决策见 `ADR-014`。下列 28 个端点中，**带 🔒 的需 `role ∈ {admin, teacher}`**，
+> 其余只需登录；`qb_agent` 与教务 token 均可访问。
+
+### 10.1 通用约定（三条，务必先读）
+
+| 约定 | 说明 |
+|---|---|
+| **学科隔离** | 除「学科/章节/知识点管理」与「按 id 操作」的端点外，**所有题目读写都要带 `course_id`**；不传 = 跨学科（管理员跨学科查看时用） |
+| **软删** | 题目删除是**软删**（`deleted_at`），一律不出现在列表/详情/导出/概览/查重/回收站之外的任何查询里 |
+| **权限** | teacher **只能改/删自己录入的**（`created_by`）；admin 全量。读权限校区共享 |
+
+### 10.2 概览与筛选侧栏
+
+#### GET /api/qbank/overview
+题库概览：总数、未挂知识点数、AI 辅助录入数，以及题型/来源/难度/状态四个分布。
+- **Query**：`course_id?`
+- **返回**：`{ total, withoutKp, aiAssisted, byStatus[], byType[], bySource[], byDifficulty[] }`
+
+#### GET /api/qbank/subjects
+**学科清单**（供前端学科切换器）。含每学科题量与章节数。
+- **返回**：`{ list: [{ id, code, name, questionCount, chapterCount }] }`
+
+#### GET /api/qbank/facets
+三视角筛选侧栏数据（一次取全，避免前端串行发四个请求）。
+- **Query**：`course_id?`
+- **返回**：`{ knowledge[], chapters[], methods[], tags[], years[] }`
+- ★ 五个维度**全部**按学科过滤 —— 否则切到物理会列出数学的知识点。
+
+### 10.3 题目 CRUD
+
+#### GET /api/qbank/questions
+题目列表（分页）。
+- **Query**：`keyword`（题干+解析，LIKE 包含匹配）· `type` · `difficulty`(1–5) · `source` · `status` · `kp_id` · `chapter_id` · `include_sub_folders`(1 时含章节子树) · `solve_method` · `exam_year` · `custom_tag` · `course_id` · `sort` · `page` · `pageSize`(≤100)
+- **`sort` 白名单**：`updated`(默认) · `created` · `difficulty_asc` · `difficulty_desc` · `quality_asc` · `quality_desc` · `type` · `year_desc`
+- **返回**：`{ list[], total, page, pageSize }`，每项含 `kp_ids`(JSON 字符串)、`quality_score`、`course_id`、`figure_path` 等
+- ★ 检索用 `LIKE '%kw%'` **不用 FTS5**：实测 `unicode61` 与 `trigram` 在 `node:sqlite` 下**中文都搜不到**。
+
+#### POST /api/qbank/questions 🔒
+新建题目。
+- **必填**：`stem`(≤4000) · `source` · `course_id` · 选择题需 `options` ≥ 2
+- **可选**：`type` · `answer`(≤2000) · `analysis`(≤4000) · `difficulty`(1–5，默认 3) · `kp_ids[]` · `chapter_id` · `solve_method`(≤100) · `custom_tags[]` · `exam_year` · `region` · `status`(默认草稿) · `figure_path` · `parse_status`
+- **返回**：`{ id, content_hash }`
+- ★ `course_id` **必填且不给默认值** —— 默认数学会让忘选学科的物理题**静默记成数学题**。
+- ★ `kp_ids` 里的 id 会校验是否真实存在，不存在的**静默剔除**。
+- ★ 自动计算 `quality_score`（解析/知识点/解题方法各 1/3，满分 1）。
+
+#### GET /api/qbank/questions/:id
+单题详情。不存在或已删 → **404**「题目不存在或已被删除」。
+
+#### PUT /api/qbank/questions/:id 🔒
+修改题目（部分更新，未传字段沿用原值）。
+- **可选**：`course_id`（**可改** —— 录错学科应当有救）、`figure_path`（换图时自动删旧文件）、其余同 POST
+- **权限**：teacher 仅限自己录入的，否则 **403**；题不存在 → **404**
+
+#### DELETE /api/qbank/questions/:id 🔒
+**软删**（移入回收站）。可恢复。
+- **返回**：`{ id, recycle: true, message }`
+
+### 10.4 回收站（v27）
+
+#### GET /api/qbank/questions/recycle
+回收站列表，按删除时间倒序。
+- **Query**：`keyword?` · `course_id?` · `page` · `pageSize`
+- **返回**：`{ list[], total, page, pageSize }`，每项含 `deleted_at`、`deleted_by_name`
+
+#### POST /api/qbank/questions/restore 🔒
+恢复（单个或批量）。
+- **Body**：`{ ids: number[] }`
+- **返回**：`{ restored, skipped, message }`
+- ★ 权限与删除**完全对称**；不在回收站的题计入 `skipped`（不报错）。
+
+#### POST /api/qbank/questions/purge 🔒
+**彻底删除**（物理删除 + 清理配图文件，不可恢复）。
+- **Body**：`{ ids: number[] }` 或 `{ all: true }`（清空回收站，**仅 admin**，且须显式传 `all:true`）
+- **返回**：`{ purged, skipped, message }`
+- ★ **只允许对已在回收站的题** —— 直接调它无法绕过软删干掉正常题。
+
+### 10.5 查重（两级，限定同一学科内）
+
+#### POST /api/qbank/questions/check-duplicate
+录入前查重。
+- **Body**：`{ stem, excludeId?, course_id? }`
+- **返回**：`{ exact: [{id, stem, created_by}], similar: [{id, stem, similarity}] }`
+- **L1** 题干归一化哈希（去空格/标点/大小写）→ 差一个空格也算重复
+- **L2** LIKE 粗筛题干前段 → 候选集算 Jaccard ≥ **0.75**
+- ★ **`course_id` 必传**（同学科内查）。跨学科判重会误导：物理题与数学题撞相似度，
+  老师点进去发现是另一科的题，反而怀疑系统。
+
+### 10.6 Excel 导入导出
+
+#### GET /api/qbank/questions/template.xlsx
+下载导入模板（含表头 + 一行示例）。
+
+#### GET /api/qbank/questions/export
+按**当前筛选条件**导出全部（不只当前页，上限 5000 条）。
+- **Query**：与 `GET /questions` **完全相同**（共用 `buildQuestionFilter()`）
+- ★ **第一列是「学科」** —— 管理员跨学科导出时靠它分辨。
+- ★ 文件名带时间戳（`questions-YYYYMMDDHHmmss.xlsx`），多次导出不互相覆盖。
+
+#### POST /api/qbank/questions/import 🔒
+Excel 批量导入，**逐行校验、逐行回报**。
+- **Body**：`{ course_id, rows: [...] }`
+- **返回**：`{ total, imported, failed, errors: [{row, message}] }`（`errors` 最多 50 条）
+- ★ `row` 是 **Excel 行号**（第 1 行是表头，数据从第 2 行起）
+- ★ 学科从**请求**取，不从 Excel 行里读 —— 老师是在"某学科下"导入的，逐行填学科啰嗦且易错。
+
+### 10.7 批量操作
+
+#### POST /api/qbank/questions/batch-status 🔒
+批量改状态。
+- **Body**：`{ ids, status }`（status ∈草稿/待审/已启用/已归档）
+- **返回**：`{ updated, skipped }`；`skipped` 含**无权限**与**不存在**两种
+
+#### POST /api/qbank/questions/batch-delete 🔒
+批量**软删**。
+- **Body**：`{ ids }`
+- **返回**：`{ deleted, skipped, message }`
+
+### 10.8 配图（v26）
+
+#### POST /api/qbank/questions/figure 🔒
+上传配图（题干插图）。
+- **Content-Type**：`image/*`，**原始二进制**（不是 multipart）
+- **限制**：魔数判型，仅 PNG/JPEG/WebP/GIF/ICO/SVG，**上限 2MB**（与头像/Logo 同一份 `utils/image.js`）
+- **返回**：`{ path: "/assets/questions/fig-xxx.png", filename, size }`
+- ★ 前端先传图拿路径 → 再随 `POST /questions` 的 `figure_path` 一起提交。
+- ★ 换图时后端自动删旧文件；**软删不删文件**（恢复后还要用）。
+
+### 10.9 AI 截图识别与出题
+
+#### POST /api/qbank/ocr/recognize 🔒
+截图 → 结构化题卡。
+- **Body**：`{ image: "data:image/png;base64,...", course_id }`
+- **校验顺序**：**先入参（400）再查模型 Key（503）** —— 否则没配 Key 时会把「你没选学科」这个更基础的错误盖掉
+- **返回**：`{ card: { type, stem, options[], answer, analysis, difficulty, kpIds[], course_id }, confidence, duplicate: { exact[], similar[] }, raw }`
+- ★ **知识点反查限定在本学科内**（不同学科有同名知识点，不限会交叉污染学情统计）。
+- ★ `hasFigure` 为真时**不自动裁图**，界面提示老师手工截图后用配图上传。
+
+#### POST /api/qbank/ocr/generate 🔒
+按主题批量出题。
+- **Body**：`{ topic | kpId, type?, difficulty?, count?(1–10), course_id }`
+- **返回**：`{ cards: [{type, stem, options[], answer, analysis, difficulty, kpIds[], knowledgePoints[]}], model, cost, raw }`
+
+### 10.10 知识点与章节管理（v26，2026-10-07）
+
+> **权限**：admin 与 teacher **都可增删改**（用户 2026-10-07 拍板）。
+> 代价是必须有**引用保护** —— 见 10.11。
+
+#### GET /api/qbank/taxonomy
+知识点树 + 章节树（各带引用计数）。
+- **Query**：`course_id?`
+- **返回**：`{ knowledge[], chapters[] }`，知识点每项含 `questionCount`、`assessmentCount`
+
+#### POST /api/qbank/taxonomy/kp 🔒 · PUT /api/qbank/taxonomy/kp/:id 🔒
+新增/修改知识点。
+- **Body**：`{ name, course_id, difficulty?, parent_id?, code?, description?, is_active? }`
+- ★ `code` 是 `UNIQUE`；留空自动生成（`K-` + 8 位随机）。
+- ★ **上级知识点必须同一学科** —— 否则会造出跨科的父子关系。
+- ★ 改上级时做**成环检测**（沿 parent 链上溯）。
+
+#### DELETE /api/qbank/taxonomy/kp/:id 🔒
+删除知识点。**有引用则 409 拒绝**，并说明是哪类引用。
+- ★ **学生测评记录（`kp_assessments`，成长曲线证据源）是 `ON DELETE CASCADE`** ——
+  删知识点会**连带删掉学生的测评记录**（不可重建），因此这是最优先的拒绝理由。
+
+#### POST /api/qbank/taxonomy/chapter 🔒 · PUT /api/qbank/taxonomy/chapter/:id 🔒
+新增/修改章节。
+- **Body**：`{ name, course_id, parent_id?, sort? }`
+- ★ **只允许两层**（章 → 节）；有子章节的章不能降级（会变三层）；删除章会连带删子树。
+
+#### DELETE /api/qbank/taxonomy/chapter/:id 🔒
+删除章节。**子树里任一章节有题目在用 → 409 拒绝**（报出会波及多少道题）。
+
+### 10.11 引用保护（★ 删除前必查，2026-10-07 横向扫描发现）
+
+删除知识点/章节前会检查引用，**被引用则 409 拒绝并说明原因**：
+
+| 节点 | 检查的引用 | 拒绝理由 |
+|---|---|---|
+| 知识点 | `questions.kp_ids`（题量） | 「该知识点下还有 N 道题在用」 |
+| 知识点 | `kp_assessments`（**学生测评记录**） | 「已有 N 条学生测评记录（成长曲线的证据）。删除会连带删掉这些真实教学记录」→ **建议改名加「（已停用）」** |
+| 知识点 | 子节点 | 「还有 N 个子知识点」 |
+| 章节 | 整棵**子树**的题量 | 「该章节（含 N 个下级章节）下还有 M 道题在用」 |
+
+★ 界面侧已在每个节点旁直接显示「题目 N」「学生测评 N」，**删除风险前置可见**，不用点了才知道删不掉。
+
+## 11. 新增 / 修改 API 的流程（必须遵守）
 
 1. 在 `server/src/routes/<module>.js` 中实现，复用 `auth` / `requireRole` / `utils/scope.js`。
 2. 需要新表 / 新字段 → **新增迁移脚本**（`server/src/migrations/0NN-*.js`，版本连续递增），同步更新 `server/database.md`。

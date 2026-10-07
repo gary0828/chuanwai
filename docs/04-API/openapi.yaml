@@ -47,6 +47,8 @@ tags:
     description: 任课关系（班级 × 课程 × 教师 × 学期，v21）
   - name: PeriodTimes
     description: 节次时间表（★ v24 起节次可自由增删，见 ADR-013）
+  - name: QBank
+    description: 智能题库（v26-v28）。独立前端挂 /qb/；凭证 qb_agent（写权限，仅放行本前缀）
 
 security:
   - bearerAuth: []
@@ -1825,7 +1827,9 @@ paths:
   /api/sessions/week:
     get:
       tags: [Sessions]
-      summary: 周课表（一次取全 days / periods / sessions）（view=class/teacher/all；all 仅 admin，全校视角）
+      summary: >-
+        周课表（一次取全 days / periods / sessions；
+        view=class/teacher/all，all 仅 admin，全校视角）
       description: |
         班级视角需 `class_id`（教师须为本班）；教师视角 teacher 角色默认锁定本人（Q8）。
         前端据此建 `map[date|period]`，同格 ≥2 张即冲突（前端计算）。
@@ -2296,6 +2300,611 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  # ── 智能题库（v26-v28）────────────────────────────────────────────
+  # ★ 三条通用约定（详见 API.md 第 10.1 节）：
+  #   ① 除「按 id 操作」与「管理」类端点外，题目读写都应带 course_id（不传 = 跨学科，管理员用）
+  #   ② 删除是软删（deleted_at），不会出现在任何列表/详情/导出/概览/查重里
+  #   ③ teacher 只能改/删自己录入的（created_by）；读权限校区共享
+
+  /api/qbank/overview:
+    get:
+      tags: [QBank]
+      summary: 题库概览（按学科过滤）
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/QBankOverview' }
+
+  /api/qbank/subjects:
+    get:
+      tags: [QBank]
+      summary: 学科清单（供前端学科切换器；含每学科题量与章节数）
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      list:
+                        type: array
+                        items: { $ref: '#/components/schemas/QBankSubject' }
+
+  /api/qbank/facets:
+    get:
+      tags: [QBank]
+      summary: 三视角筛选侧栏数据（知识点/章节/解题方法/标签/年份，五维全按学科过滤）
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/QBankFacets' }
+
+  /api/qbank/questions:
+    get:
+      tags: [QBank]
+      summary: 题目列表（分页 + 多维筛选）
+      description: >-
+        检索用 LIKE 包含匹配，刻意不用 FTS5 —— 实测 unicode61 与 trigram
+        在 node:sqlite 下中文都搜不到。
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - { name: keyword, in: query, schema: { type: string }, description: 题干+解析包含匹配 }
+        - { name: type, in: query, schema: { type: string, enum: [单选题, 多选题, 填空题, 判断题, 解答题, 简答题] } }
+        - { name: difficulty, in: query, schema: { type: integer, minimum: 1, maximum: 5 } }
+        - { name: source, in: query, schema: { type: string, enum: [自编, AI 原创, 教材, 授权题库] } }
+        - { name: status, in: query, schema: { type: string, enum: [草稿, 待审, 已启用, 已归档] } }
+        - { name: kp_id, in: query, schema: { type: integer } }
+        - { name: chapter_id, in: query, schema: { type: integer } }
+        - { name: include_sub_folders, in: query, schema: { type: string, enum: ['1'] }, description: 章节筛选含子树 }
+        - { name: solve_method, in: query, schema: { type: string } }
+        - { name: exam_year, in: query, schema: { type: integer } }
+        - { name: custom_tag, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: sort
+          in: query
+          description: 排序白名单（不接受任意列名，防注入）
+          schema:
+            type: string
+            enum: [updated, created, difficulty_asc, difficulty_desc, quality_asc, quality_desc, type, year_desc]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/QBankQuestionPage' }
+    post:
+      tags: [QBank]
+      summary: 新建题目
+      description: >-
+        course_id 必填且刻意不给默认值 —— 默认数学会让忘选学科的物理题
+        静默记成数学题（比直接报错难发现得多）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QBankQuestionInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      content_hash: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/qbank/questions/{id}:
+    get:
+      tags: [QBank]
+      summary: 单题详情
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/QBankQuestion' }
+        '404':
+          description: 题目不存在或已被删除
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    put:
+      tags: [QBank]
+      summary: 修改题目（部分更新；course_id 可改 —— 录错学科应当有救）
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QBankQuestionInput' }
+      responses:
+        '200': { description: OK }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: 无权限（teacher 改别人录入的题）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404': { description: 题目不存在 }
+    delete:
+      tags: [QBank]
+      summary: 删除题目（软删，移入回收站）
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200': { description: 已移入回收站 }
+        '403': { description: 无权限 }
+
+  /api/qbank/questions/recycle:
+    get:
+      tags: [QBank]
+      summary: 回收站列表（按删除时间倒序）
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - { name: keyword, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/QBankQuestionPage' }
+
+  /api/qbank/questions/restore:
+    post:
+      tags: [QBank]
+      summary: 从回收站恢复（单个或批量）
+      description: 权限与删除完全对称；不在回收站的题计入 skipped（不报错）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QBankIdsBody' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QBankPurgeResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/qbank/questions/purge:
+    post:
+      tags: [QBank]
+      summary: 彻底删除（不可恢复；all=true 时清空回收站，仅 admin）
+      description: 只允许对已在回收站的题 —— 直接调它无法绕过软删干掉正常题
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids: { type: array, items: { type: integer } }
+                all: { type: boolean, description: 清空回收站（仅 admin，须显式传 true） }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QBankPurgeResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: 非 admin 不可清空回收站 }
+
+  /api/qbank/questions/check-duplicate:
+    post:
+      tags: [QBank]
+      summary: 查重（L1 精确哈希 + L2 Jaccard 大于等于 0.75）
+      description: >-
+        course_id 应必传（同学科内查）。跨学科判重会误导 ——
+        物理题与数学题撞相似度，老师点进去发现是另一科的题，反而怀疑系统。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stem: { type: string, maxLength: 4000 }
+                excludeId: { type: integer }
+                course_id: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/QBankDuplicateResult' }
+
+  /api/qbank/questions/import:
+    post:
+      tags: [QBank]
+      summary: Excel 批量导入（逐行校验、逐行回报）
+      description: >-
+        学科从请求取，不从 Excel 行里读 —— 老师是在「某学科下」导入的，
+        逐行填学科啰嗦且易错。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [course_id, rows]
+              properties:
+                course_id: { type: integer }
+                rows:
+                  type: array
+                  items: { $ref: '#/components/schemas/QBankQuestionInput' }
+      responses:
+        '200':
+          description: OK（部分成功也返回 200）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/QBankImportResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/qbank/questions/export:
+    get:
+      tags: [QBank]
+      summary: 按当前筛选条件导出 Excel
+      description: >-
+        查询参数与 GET /questions 完全相同（共用 buildQuestionFilter()）。
+        导出上限 5000 条。第一列是「学科」；文件名带时间戳，多次导出不互相覆盖。
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string } }
+        - { name: difficulty, in: query, schema: { type: integer } }
+        - { name: source, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: kp_id, in: query, schema: { type: integer } }
+        - { name: chapter_id, in: query, schema: { type: integer } }
+        - { name: solve_method, in: query, schema: { type: string } }
+        - { name: exam_year, in: query, schema: { type: integer } }
+        - { name: custom_tag, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: xlsx 文件
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+
+  /api/qbank/questions/template.xlsx:
+    get:
+      tags: [QBank]
+      summary: 下载导入模板（含表头 + 一行示例）
+      responses:
+        '200':
+          description: xlsx 文件
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+
+  /api/qbank/questions/figure:
+    post:
+      tags: [QBank]
+      summary: 上传题目配图
+      description: >-
+        Content-Type 为 image/*，原始二进制（不是 multipart）。
+        魔数判型（仅 png/jpeg/webp/gif/ico/svg），上限 2MB，
+        与「员工头像」「站点 Logo」共用同一份 utils/image.js。
+        前端先传图拿路径，再随建题的 figure_path 一起提交。
+      requestBody:
+        required: true
+        content:
+          image/png: { schema: { type: string, format: binary } }
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/webp: { schema: { type: string, format: binary } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      path: { type: string, example: /assets/questions/fig-20261007120000-ab12cd34.png }
+                      filename: { type: string }
+                      size: { type: integer }
+        '400':
+          description: 格式不支持或未上传
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '413':
+          description: 超过 2MB
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/qbank/questions/batch-delete:
+    post:
+      tags: [QBank]
+      summary: 批量软删
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QBankIdsBody' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QBankPurgeResult' }
+
+  /api/qbank/questions/batch-status:
+    post:
+      tags: [QBank]
+      summary: 批量改状态
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, status]
+              properties:
+                ids: { type: array, items: { type: integer } }
+                status: { type: string, enum: [草稿, 待审, 已启用, 已归档] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QBankPurgeResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/qbank/ocr/recognize:
+    post:
+      tags: [QBank]
+      summary: AI 截图识别转结构化题卡
+      description: >-
+        校验顺序刻意为先入参（400）再查模型 Key（503）——
+        否则没配 Key 时会把「你没选学科」这个更基础的错误盖掉。
+        知识点反查限定在本学科内。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image, course_id]
+              properties:
+                image: { type: string, description: 'data:image/png;base64,...' }
+                course_id: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      card: { $ref: '#/components/schemas/QBankQuestion' }
+                      confidence: { type: number, nullable: true }
+                      duplicate: { $ref: '#/components/schemas/QBankDuplicateResult' }
+                      raw: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '502': { description: 模型输出无法解析 }
+        '503': { description: 尚未配置大模型 Key }
+
+  /api/qbank/ocr/generate:
+    post:
+      tags: [QBank]
+      summary: AI 按主题批量出题
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [course_id]
+              properties:
+                topic: { type: string, description: 主题（或用 kpId 代替） }
+                kpId: { type: integer }
+                type: { type: string }
+                difficulty: { type: integer, minimum: 1, maximum: 5 }
+                count: { type: integer, minimum: 1, maximum: 10 }
+                course_id: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      cards:
+                        type: array
+                        items: { $ref: '#/components/schemas/QBankQuestion' }
+                      model: { type: string }
+                      cost: { type: number, nullable: true }
+                      raw: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { description: 尚未配置大模型 Key }
+
+  /api/qbank/taxonomy:
+    get:
+      tags: [QBank]
+      summary: 知识点树 + 章节树（各带引用计数）
+      parameters:
+        - $ref: '#/components/parameters/CourseId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/QBankTaxonomy' }
+
+  /api/qbank/taxonomy/kp:
+    post:
+      tags: [QBank]
+      summary: 新增知识点
+      description: 上级知识点必须同一学科（防造出跨科父子关系）；code 留空自动生成（UNIQUE）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QBankKpInput' }
+      responses:
+        '200': { description: OK }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/qbank/taxonomy/kp/{id}:
+    put:
+      tags: [QBank]
+      summary: 修改知识点（改上级时做成环检测）
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QBankKpInput' }
+      responses:
+        '200': { description: OK }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { description: 知识点不存在 }
+    delete:
+      tags: [QBank]
+      summary: 删除知识点（有引用则 409 拒绝）
+      description: >-
+        学生测评记录（kp_assessments，成长曲线证据源）是 ON DELETE CASCADE ——
+        删知识点会连带删掉学生的测评记录（不可重建），这是最优先的拒绝理由。
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200': { description: 已删除 }
+        '404': { description: 知识点不存在 }
+        '409':
+          description: 有引用（题量 / 学生测评记录 / 子节点），响应体 message 说明具体是哪类
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/qbank/taxonomy/chapter:
+    post:
+      tags: [QBank]
+      summary: 新增章节（只允许两层：章到节）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QBankChapterInput' }
+      responses:
+        '200': { description: OK }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/qbank/taxonomy/chapter/{id}:
+    put:
+      tags: [QBank]
+      summary: 修改章节（有子章节的章不能降级，会变三层）
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QBankChapterInput' }
+      responses:
+        '200': { description: OK }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { description: 章节不存在 }
+    delete:
+      tags: [QBank]
+      summary: 删除章节（子树里任一章节有题在用则 409）
+      parameters:
+        - $ref: '#/components/parameters/IdPathParam'
+      responses:
+        '200': { description: 已删除（连带子树） }
+        '404': { description: 章节不存在 }
+        '409':
+          description: 子树中有章节被题目引用
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/period-times/{period}:
+    delete:
+      tags: [PeriodTimes]
+      summary: 删除一节（仅 admin；被课次或排课模板引用时 400；删除后序号不前移）
+      security: [{bearerAuth: []}]
+      parameters:
+        - { name: period, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: 成功 }
+        "400": { description: 仍被课次/排课模板使用 }
+        "404": { description: 节次不存在 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2325,6 +2934,36 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
 
+  # ── 智能题库（v26-v28）────────────────────────────────────────────
+
+  # 复用参数
+  parameters:
+    # ↓↓ 三个通用参数：题库 paths 引用了它们；此前历史 path 都是内联写的，
+    #    这里补成 components 级，后续新增 path 可直接复用（DRY）。
+    PageParam:
+      name: page
+      in: query
+      required: false
+      description: 页码，从 1 开始
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSizeParam:
+      name: pageSize
+      in: query
+      required: false
+      description: 每页条数（服务端收敛到 ≤100）
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    IdPathParam:
+      name: id
+      in: path
+      required: true
+      description: 资源 id
+      schema: { type: integer }
+    CourseId:
+      name: course_id
+      in: query
+      required: false
+      description: 学科 id（courses.id）。不传 = 跨学科，仅管理员跨学科查看时用
+      schema: { type: integer }
   schemas:
     SuccessEnvelope:
       type: object
@@ -2902,15 +3541,230 @@ components:
         "400": { description: 节次重复 / 时间格式非法 }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { description: 非 admin }
-  /api/period-times/{period}:
-    delete:
-      tags: [PeriodTimes]
-      summary: 删除一节（仅 admin；被课次或排课模板引用时 400；删除后序号不前移）
-      security: [{bearerAuth: []}]
-      parameters:
-        - { name: period, in: path, required: true, schema: { type: integer } }
-      responses:
-        "200": { description: 成功 }
-        "400": { description: 仍被课次/排课模板使用 }
-        "404": { description: 节次不存在 }
-        "401": { $ref: "#/components/responses/Unauthorized" }
+    QBankQuestion:
+      type: object
+      properties:
+        id: { type: integer }
+        type: { type: string, enum: [单选题, 多选题, 填空题, 判断题, 解答题, 简答题] }
+        stem:
+          type: string
+          description: 题干，LaTeX 用 $...$ / $$...$$ 包裹
+          example: '已知向量 $\vec{a}=(-4,1)$，则与它共线的单位向量坐标为'
+        options: { type: string, description: 选�� JSON 数组字符串 }
+        answer: { type: string }
+        analysis: { type: string }
+        difficulty: { type: integer, minimum: 1, maximum: 5 }
+        kp_ids: { type: string, description: '知识点 id 的 JSON 数组字符串，如 "[1,7]"' }
+        chapter_id: { type: integer, nullable: true }
+        solve_method: { type: string }
+        source: { type: string, enum: [自编, AI 原创, 教材, 授权题库] }
+        custom_tags: { type: string, description: 自定义标签 JSON 数组字符串 }
+        exam_year: { type: integer, nullable: true }
+        region: { type: string }
+        figure_path: { type: string, description: 配图路径（/assets/questions/xxx.png） }
+        quality_score:
+          type: number
+          nullable: true
+          description: 录入完整度 0-1（解析 / 知识点 / 解题方法 各 1/3）
+        status: { type: string, enum: [草稿, 待审, 已启用, 已归档] }
+        parse_status: { type: string, enum: [manual, pending, recognized, filled, confirmed, failed] }
+        ocr_confidence: { type: number, nullable: true }
+        course_id: { type: integer, description: 所属学科（v28） }
+        created_by: { type: integer, nullable: true }
+        created_by_name: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+        deleted_at: { type: string, nullable: true, description: 非空 = 在回收站 }
+
+    QBankQuestionInput:
+      type: object
+      required: [stem, source, course_id]
+      properties:
+        type: { type: string, enum: [单选题, 多选题, 填空题, 判断题, 解答题, 简答题] }
+        stem: { type: string, maxLength: 4000 }
+        options: { type: array, items: { type: string }, maxItems: 12 }
+        answer: { type: string, maxLength: 2000 }
+        analysis: { type: string, maxLength: 4000 }
+        difficulty: { type: integer, minimum: 1, maximum: 5, default: 3 }
+        kp_ids:
+          type: array
+          items: { type: integer }
+          description: 知识点 id；不存在的会被静默剔除
+        chapter_id: { type: integer, nullable: true }
+        solve_method: { type: string, maxLength: 100 }
+        source: { type: string, enum: [自编, AI 原创, 教材, 授权题库] }
+        custom_tags: { type: array, items: { type: string }, maxItems: 20 }
+        exam_year: { type: integer }
+        region: { type: string }
+        status: { type: string, enum: [草稿, 待审, 已启用, 已归档], default: 草稿 }
+        figure_path: { type: string }
+        course_id: { type: integer }
+
+    QBankQuestionPage:
+      type: object
+      properties:
+        list: { type: array, items: { $ref: '#/components/schemas/QBankQuestion' } }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    QBankSubject:
+      type: object
+      properties:
+        id: { type: integer }
+        code: { type: string, example: JUN-PHY }
+        name: { type: string, example: 初中物理 }
+        questionCount: { type: integer }
+        chapterCount: { type: integer }
+
+    QBankOverview:
+      type: object
+      properties:
+        total: { type: integer }
+        withoutKp: { type: integer, description: 未挂知识点的通用题数 }
+        aiAssisted: { type: integer, description: AI 辅助录入数 }
+        byStatus: { type: array, items: { $ref: '#/components/schemas/QBankCountBy' } }
+        byType: { type: array, items: { $ref: '#/components/schemas/QBankCountBy' } }
+        bySource: { type: array, items: { $ref: '#/components/schemas/QBankCountBy' } }
+        byDifficulty: { type: array, items: { $ref: '#/components/schemas/QBankCountBy' } }
+
+    QBankCountBy:
+      type: object
+      properties:
+        status: { type: string }
+        type: { type: string }
+        source: { type: string }
+        difficulty: { type: integer }
+        c: { type: integer }
+
+    QBankFacets:
+      type: object
+      description: 五个维度全部按学科过滤
+      properties:
+        knowledge: { type: array, items: { $ref: '#/components/schemas/QBankKpNode' } }
+        chapters:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              parent_id: { type: integer, nullable: true }
+              name: { type: string }
+        methods: { type: array, items: { $ref: '#/components/schemas/QBankCountBy' } }
+        tags:
+          type: array
+          items:
+            type: object
+            properties: { name: { type: string } }
+        years:
+          type: array
+          items:
+            type: object
+            properties: { year: { type: integer } }
+
+    QBankDuplicateResult:
+      type: object
+      properties:
+        exact:
+          type: array
+          description: L1 精确命中（题干归一化哈希）
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              stem: { type: string }
+              created_by: { type: integer }
+        similar:
+          type: array
+          description: L2 疑似重复（Jaccard 大于等于 0.75，限定同学科）
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              stem: { type: string }
+              similarity: { type: number, example: 0.8125 }
+
+    QBankImportResult:
+      type: object
+      properties:
+        total: { type: integer }
+        imported: { type: integer }
+        failed: { type: integer }
+        errors:
+          type: array
+          maxItems: 50
+          description: row 为 Excel 行号（第 1 行是表头，数据从第 2 行起）
+          items:
+            type: object
+            properties:
+              row: { type: integer }
+              message: { type: string }
+
+    QBankIdsBody:
+      type: object
+      required: [ids]
+      properties:
+        ids: { type: array, items: { type: integer }, minItems: 1 }
+
+    QBankPurgeResult:
+      type: object
+      description: skipped 含无权限与不存在两种，接口如实回报不隐藏
+      properties:
+        deleted: { type: integer }
+        restored: { type: integer }
+        purged: { type: integer }
+        skipped: { type: integer }
+        message: { type: string }
+
+    QBankTaxonomy:
+      type: object
+      properties:
+        knowledge: { type: array, items: { $ref: '#/components/schemas/QBankKpNode' } }
+        chapters:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              parent_id: { type: integer, nullable: true }
+              name: { type: string }
+              sort: { type: integer }
+              course_id: { type: integer, nullable: true }
+              questionCount: { type: integer }
+
+    QBankKpNode:
+      type: object
+      properties:
+        id: { type: integer }
+        parent_id: { type: integer, nullable: true }
+        code: { type: string }
+        name: { type: string }
+        difficulty: { type: integer, minimum: 1, maximum: 5 }
+        seq: { type: integer }
+        is_active: { type: integer }
+        description: { type: string }
+        questionCount: { type: integer, description: 被多少道题引用 }
+        assessmentCount:
+          type: integer
+          description: 学生测评记录数（非 0 表示删了会丢学生数据）
+
+    QBankKpInput:
+      type: object
+      required: [name, course_id]
+      properties:
+        name: { type: string, maxLength: 60 }
+        course_id: { type: integer }
+        difficulty: { type: integer, minimum: 1, maximum: 5, default: 2 }
+        parent_id: { type: integer, nullable: true, description: 必须与 course_id 同学科 }
+        code: { type: string, description: UNIQUE；留空自动生成（K- 加 8 位随机） }
+        description: { type: string, maxLength: 300 }
+        is_active: { type: integer, enum: [0, 1] }
+
+    QBankChapterInput:
+      type: object
+      required: [name, course_id]
+      properties:
+        name: { type: string, maxLength: 80 }
+        course_id: { type: integer }
+        parent_id: { type: integer, nullable: true, description: 留空 = 章；有值 = 节（只允许两层） }
+        sort: { type: integer, default: 0 }

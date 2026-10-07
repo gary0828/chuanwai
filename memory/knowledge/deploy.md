@@ -182,3 +182,104 @@ fileMatchPattern:
 ```bash
 bash server/scripts/docker-verify.sh     # 9 项：健康/前端/SPA fallback/反代/登录/数据/持久化
 ```
+
+
+## ★★ K-067 · 新增后端依赖必须写进 `server/package.json`（2026-10-07 容器起不来）
+
+**症状**：本地 `node src/index.js` 一切正常，**容器里启动即崩**：
+```
+Error: Cannot find module 'xlsx'
+Require stack: /app/src/routes/qbank.js
+```
+
+**根因**：`server/src` 的 `require` 分**两处**安装：
+| 位置 | 谁用 | 装到哪 |
+|---|---|---|
+| 根 `package.json` | 前端 + 题库前端 | `pnpm install`（根node_modules） |
+| **`server/package.json`** | 后端 | 镜像内 `npm ci --omit=dev`（**只有 server 自己的 node_modules**） |
+
+★ **本地会向上查找 root 的 node_modules** → 掩盖了「server 没声明这个包」，
+所以**本地全绿、容器必崩**。这是「本地自测通≠ 部署通」的典型。
+
+**判据**：往 `server/src` 加 `require('xxx')` 时，先问「`server/package.json` 里有吗」。
+**横向扫描命令**（一次查全）：
+```bash
+for p in xlsx bcryptjs cors express jsonwebtoken helmet express-rate-limit; do
+  C=$(grep -rl "require('$p')" server/src 2>/dev/null | wc -l)
+  D=$(grep -c "\"$p\"" server/package.json 2>/dev/null || echo 0)
+  echo "$p: 用到 $C 处 / 声明 $D 处"
+done
+```
+
+**正确加法**（写 lockfile，本地先验再重建镜像）：
+```bash
+cd server && npm install --package-lock-only --registry=https://registry.npmmirror.com <pkg>@<ver>
+npm ci --omit=dev && node -e "require('<pkg>')"   # 本地先验
+```
+
+## ★★ K-068 · 开发后端与容器**争同一个库**会让备份报 `database disk image is malformed`
+
+**症状**：跑 `server/scripts/backup-db.sh` 或任何 `VACUUM INTO` → 报 `database disk image is malformed`，
+但 `docker exec ... node -e "PRAGMA integrity_check"` 若**换 Node 版本或换进程**读又是 `ok`。
+
+**根因**：为跑验证脚本在宿主机起了 `node src/index.js`（bind mount 同一个 `server/data/attendance.db`），
+它与容器内服务**同时写 WAL**。SQLite 多连接并发下 `VACUUM INTO` 快照会失败。
+**这是 K-053 红线（「不要用宿主机进程在容器运行时写库」）的当场复发。**
+
+**正确顺序**：
+```bash
+# ★ 任何备份/迁移/重建之前：先停开发进程
+netstat -ano | grep ":3000" | grep LISTENING        # 找 PID
+taskkill //F //PID <pid>
+# 再确认容器服务本身健康（这才是数据好坏的判据）
+docker exec attendance-server wget -qO- http://127.0.0.1:3000/api/health
+```
+
+★ **推论**：验证脚本里**不要把 API 基址硬编码成开发端口**。
+`ui-qbank.py` 原写死 `127.0.0.1:3000`，重建 Docker 后该端口无监听 → 502 误报成「题库坏了」。
+已改为**从页面基址推导**（同源部署下 `/api` 同 origin）。
+
+## ★★ K-075 · 本机直连 SQLite 会读到**陈旧快照**，并让容器报 `disk I/O error`
+
+**症状**（2026-10-07，给题库做数据卫生检查时踩到）：
+- 本机 `node -e "new DatabaseSync('server/data/attendance.db')"` 读出 **33 道题**
+- 同一个文件，通过**容器 API** 查只有 **2 道**
+- `docker exec ... require('node:sqlite')` 直读报 **`disk I/O error`**
+
+**根因**：`server/data` 是 bind mount，本机进程与容器内的 server **同时打开同一个 SQLite 文件**。
+SQLite 的 WAL 允许多读者，但**跨容器/宿主边界**时（不同 mount namespace 的锁语义）
+会出现读陈旧快照、甚至 I/O 错误。
+**这是 K-068 的延伸** —— 当时只知道"备份会失败"，现在知道**读也会读到错的数据**。
+
+**铁律**：**容器在跑时，查数据一律走 API，不要本机直连数据库文件。**
+```bash
+# ✗ 不要（会读到不一致快照）
+node -e "...new DatabaseSync('server/data/attendance.db')..."
+# ✓ 要（走服务，看到的就是真实状态）
+curl -s -H "Authorization: Bearer $T" http://127.0.0.1:18080/api/qbank/overview
+```
+
+**处置**：`docker compose restart server` 可恢复（重建连接与 WAL）。
+**★ 误判风险**：我曾据此以为"清理没生效"，实际是**读到了删除前的快照**，
+白折腾了好几轮。**看到"数据对不上"时，先怀疑读取路径，再怀疑业务逻辑。**
+
+## ★★ K-076 · 测试数据清理必须**循环**（软删后数据在两处之间移动）
+
+**症状**：回收站上线后，测试数据越跑越多，最多堆了 28 道。
+
+**根因有两层**：
+1. `batch-delete` 变成软删后**不再真删**，只调它 = 数据全进回收站（第一层，容易想到）；
+2. **单轮清理会漏**：数据在「正常列表」与「回收站」两处，
+   一轮里「先查列表→软删，再查回收站→彻底删」，
+   但**刚软删的那批在这一轮的回收站查询里可能还看不到**（下一轮才可见）。
+   ⇒ 实测：单轮清了 5 道，剩 20 道留在列表里。
+
+**正解**（`purge_by_keyword`，三个 UI 脚本共用同一份）：
+**循环**「列表→软删，回收站→彻底删」，直到某一轮什么都没清掉为止（上限 5 轮）。
+```python
+for _ in range(max_rounds):
+    n = 0
+    ...清列表...; ...清回收站...
+    if n == 0: break
+```
+**并断言最终两处都为 0**（只断言列表为 0 会漏掉回收站的堆积）。

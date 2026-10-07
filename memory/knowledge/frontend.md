@@ -44,6 +44,32 @@ fileMatchPattern: ["src/**", "ai-workbench/**", ".env.*", "vite.config.ts", "bui
   ② `getHistoryMode` 加默认参数 `"hash"` + 非法值兜底。
   ★ 教训：**构建期 env 是代码的一部分，不是密钥**，必须入库。
 
+- **K-056 · `@pureadmin/utils` 的 `useECharts` 在「数据异步到达」时会静默不绘制**（2026-10-03）：
+  症状 = **接口 200、字段齐全、容器高度 340px、控制台无任何报错，但页面上一个 canvas 都没有**。
+  根因（读 `node_modules/@pureadmin/utils/dist/iife.global.js` 定位）两条叠加：
+  ① `setOptions` 开头 `if (el.offsetHeight === 0) { 延时重试一次; return }`；
+  ② `init` **同步**读取传入的 ref / `querySelector(选择器)`，此时 DOM 尚未挂载 → undefined。
+  三种错法**都试过、都不行**：`v-if`+ref（元素新建、实例仍绑旧节点）／
+  `v-show`+ref（`display:none` → `offsetHeight` 恒 0）／字符串选择器（setup 时也查不到）。
+  ★ **正解：自持 ECharts 实例**（`echarts.init(el)` 时机自己控）+ `ResizeObserver` 兜底
+  （Element Plus 的 tab-pane 切换带过渡动画，`nextTick` 时容器仍是 `display:none`）。
+  已封装为 `src/components/AppChartCard/`，新增图表**一律用它**。
+  首页/ 考勤统计页能用是因为它们的数据在首屏同步就位 —— 别被它们误导。
+- **K-057 · 扫「用了某个库」要搜 hook 名，不是库名**（2026-10-03）：
+  用 `grep -rln "echarts"` 扫到只有 `main.ts` + `plugins/echarts.ts`，于是得出"全项目零图表"，
+  实际有 2 个页面在用 —— 因为代码写的是 `useECharts`（来自 `@pureadmin/utils`），
+  **字面量里没有 "echarts" 这个词**。搜库的实际调用形态（hook / 组件 / 指令名）。
+- **K-058 · vue-tsc 对 `<div ref="x" :style="{...}"/>` 会误报 TS2345**：
+  报`Argument of type '{ style: {...}; class: string; ref: string; }' is not assignable...`
+  —— 它把 `ref` 当成了普通 HTML 属性（"误报"派别的往往是真问题，这次是真误报）。
+  修法：`:style` 改传**字符串**（`` :style="`height: ${h};"` ``）而不是对象。
+  项目既有写法参考 `src/views/attendance/statistics/index.vue:475`。
+- **K-059 · 路由是 hash 模式**（`.env.production: VITE_ROUTER_HISTORY = "hash"`）：
+  浏览器验证脚本必须用 `http://host/#/finance/statistics`；
+  写成 `http://host/finance/statistics` 会被路由守卫踢回工作台，**看起来像"页面没渲染"**。
+  另外登录态注入的 Cookie `domain` 必须与实际 host 一致（沙箱绑 `127.0.0.1`，
+  写 `localhost` 则 cookie 不生效 → 同样被踢回 /login）。
+
 ## ★ K-048 · 菜单是**后端下发**的：pure-admin 的两个必须知道的行为（2026-09-26）
 
 > 侧边栏 = `GET /api/auth/async-routes` 返回的 `ROUTES[role]`，前端 `utils.ts` 的
@@ -137,3 +163,38 @@ beforeUpload: (rawFile: UploadRawFile) => ...
 
 - `bash server/scripts/docker-verify.sh`（含 SPA fallback 深链接）
 - 全页面冷启动巡检 `_verify_test/verify-all-pages.py`（改路由 / 菜单后必跑）
+
+## ★★★ K-073 · Element Plus 的 `el-select` 选中值**不在 `input.value`**（浪费 10+ 轮）
+
+**症状**：Playwright 里点完下拉选项，读 `input.value` **恒为空** → 判定"没选中"
+→ 把**本来正常的功能**标成 SKIP，还写了两轮"测试工具局限"的辩解。
+
+**真相**：`el-select` 的 `<input>` 是 **readonly 搜索框**，它的 `value` **永远是空串**。
+选中值渲染在 `.el-select`（或 `.el-select__selected-item`）的**可见文本**里。
+
+**正确判据**（`_verify_test/ui-full-qbank.py` 的 `read_select`）：
+```js
+const sel = hit.querySelector('.el-select');
+const txt = (sel.innerText || '').trim();     // ← 这才是选中值
+const isPlaceholder = txt === '必选' || txt.startsWith('可不选');  // 未选中时显示的是 placeholder
+```
+
+**对照验证法**：拿一个**有默认值**的 select（如「状态」默认"草稿"）当对照 ——
+它的 `input.value` 也是空，但可见文本是"草稿"。这一步能立刻区分
+"读取方式错" 与 "真的没选中"。
+
+**★ 教训（比这个 bug 本身更重要）**：
+  连续两轮把**验证工具的缺陷**归因成"产品/工具局限"并写进 SKIP，
+  还编了三条合理解释（toast 竞争、Teleport 不稳定、后端 CHECK 兜底）。
+  **「解释得通」不等于「解释得对」** —— 当时应该做的是
+  「找一个已知会成功的对照组」（如那个有默认值的 select），而不是解释为什么测不出。
+
+## ★★ K-074 · `el-dialog` 里 el-select 面板的**定位**要挑「当前可见的」
+
+所有 el-select 的下拉面板都 Teleport 到 body 下的**共用容器**，
+因此 `document.querySelectorAll('.el-select-dropdown__item')` 会匹配到
+**所有 select 的选项**（含隐藏的）。按文本全局找「自编」会点错面板。
+
+**正解**：挑 `offsetParent !== null`（当前可见）的那个面板；
+且**点开 select 后要等 ~900ms** 让 transition 完成，否则面板还不可见。
+（`_verify_test/ui-full-qbank.py` 的 `select_option`）
