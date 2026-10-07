@@ -530,6 +530,11 @@ export const getBusinessStatistics = () => {
   return http.request("get", "/api/finance/stats/business");
 };
 
+/** 课消统计（dimension=teacher|course|student，start/end 时间范围，仅 admin） */
+export const getConsumptionStatistics = (params?: object) => {
+  return http.request("get", "/api/finance/stats/consumption", { params });
+};
+
 /** ---------- 排课优化：冲突检测 / 调课 / 补课（v12） ---------- */
 
 /** 冲突检测（保存前预览：同班同段拒绝 + 同教师跨班同段警告） */

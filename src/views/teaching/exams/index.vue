@@ -13,6 +13,7 @@ import {
   getExamScorecard
 } from "@/api/teaching";
 import { AppPageHeader } from "@/components/AppPageHeader";
+import { AppChartCard } from "@/components/AppChartCard";
 
 defineOptions({
   name: "TeachingExams"
@@ -77,10 +78,17 @@ function handleReset() {
   handleSearch();
 }
 
-function typeTag(type: string) {
+/**
+ * 考试类型 → el-tag 配色。
+ *
+ * ★ 返回 `undefined` 而**不是空字符串**：el-tag 的 type 不接受 `""`
+ *   （" " 会报 TS2322），传 undefined 时它走自己的默认样式。
+ * ★ 返回类型也必须收窄成字面量联合，否则 vue-tsc 报 TS2322。
+ */
+function typeTag(type: string): "warning" | "danger" | undefined {
   if (type === "期中") return "warning";
   if (type === "期末") return "danger";
-  return "";
+  return undefined;
 }
 
 function scorePercent(row: any) {
@@ -202,6 +210,82 @@ function openScores(row: any) {
     })
     .finally(() => (scoreLoading.value = false));
 }
+
+/** 分数段分布直方图（随 scoreRows 实时重算）
+ *  分段按百分制归一：无论满分是 100 还是其他值，都分10 段，标签显示实际分数区间。
+ *  低于60% 用红、高于85% 用绿，中间用中性色 —— 与项目内"状态色=语义"的约定一致。 */
+const scoreDistributionChart = computed(() => {
+  const full = Number(scoreExam.value?.full_score) || 100;
+  const scores = scoreRows.value
+    .map((s: any) => s.score)
+    .filter(
+      (v: any) => v !== null && v !== undefined && v !== "" && !Number.isNaN(Number(v))
+    )
+    .map(Number);
+  if (!scores.length) return null;
+
+  const bucketCount = 10;
+  const step = full / bucketCount;
+  const buckets = new Array(bucketCount).fill(0);
+  scores.forEach(v => {
+    const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor(v / step)));
+    buckets[idx] += 1;
+  });
+
+  const labels = buckets.map((_, i) => {
+    const lo = (i * step).toFixed(step < 1 ? 1 : 0);
+    const hi = ((i + 1) * step).toFixed(step < 1 ? 1 : 0);
+    return `${lo}~${hi}`;
+  });
+  const colors = buckets.map((count, i) => {
+    const mid = ((i + 0.5) * step) / full;
+    if (mid < 0.6) return "var(--chart-attendance-absent)";
+    if (mid >= 0.85) return "var(--chart-attendance-normal)";
+    return "var(--chart-cat-2)";
+  });
+
+  return {
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      backgroundColor: "var(--surface-card)",
+      borderColor: "var(--border-default)",
+      textStyle: { color: "var(--ink-700)", fontSize: 12 },
+      formatter: (params: any[]) =>
+        `${params[0].axisValue} 分<br/>${params[0].value} 人`
+    },
+    grid: { left: 4, right: 8, top: 16, bottom: 0, containLabel: true },
+    xAxis: {
+      type: "category",
+      data: labels,
+      axisLine: { lineStyle: { color: "var(--chart-axis-line)" } },
+      axisTick: { show: false },
+      axisLabel: {
+        color: "var(--chart-axis-label)",
+        fontSize: 11,
+        interval: 0,
+        rotate: labels.some((l: string) => l.length > 6) ? 35 : 0
+      }
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      axisLabel: { color: "var(--chart-axis-label)", fontSize: 12 },
+      splitLine: { lineStyle: { color: "var(--chart-split-line)" } }
+    },
+    series: [
+      {
+        name: "人数",
+        type: "bar",
+        barCategoryGap: "18%",
+        data: buckets.map((count, i) => ({
+          value: count,
+          itemStyle: { color: colors[i], borderRadius: [4, 4, 0, 0] }
+        }))
+      }
+    ]
+  };
+});
 
 function saveScores() {
   const payload = scoreRows.value
@@ -511,6 +595,18 @@ onMounted(() => {
       width="720px"
     >
       <div v-loading="scoreLoading">
+        <!-- 分数段分布：随录入实时更新，录完立刻能看出整体偏向
+             满分不同 → 分段宽度按 full_score 动态计算，不写死 10 分一档 -->
+        <div class="mb-3">
+          <AppChartCard
+            title="分数段分布"
+            :options="scoreDistributionChart"
+            height="clamp(200px, 26vh, 240px)"
+            empty-title="还没有录入成绩"
+            empty-description="在上方表格填入分数后，分布图会立即出现"
+          />
+        </div>
+
         <el-table :data="scoreRows" border stripe max-height="440">
           <el-table-column type="index" label="#" width="55" align="center" />
           <el-table-column prop="student_no" label="学号" min-width="110" />

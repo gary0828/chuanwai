@@ -91,6 +91,24 @@ html:root {
   --chart-split-line: var(--ink-100);
   --chart-axis-label: var(--ink-500);
 
+  /* ── 4b. 财务图表配色 ──────────────────────────────────────────────────
+     缴费 / 退费 / 净额三色：绿=收入、红=支出、深蓝=净额（业务口径上的"留多少"）。
+     退费取红而非灰 —— 退费是需要被看见的异常信号，归入中性色会被忽略。 */
+  --chart-finance-gross: #2e7d5b;
+  --chart-finance-refund: #b3453c;
+  --chart-finance-net: #1f4e79;
+
+  /* ── 4c. 分类图表配色（课程 / 渠道 / 分数段） ────────────────────────────
+     多类别场景需一套稳定的有序色板：相邻色跨度足够大，10 项以内不混淆。 */
+  --chart-cat-1: #2e7d5b;
+  --chart-cat-2: #1f4e79;
+  --chart-cat-3: #b7791f;
+  --chart-cat-4: #7a5b9e;
+  --chart-cat-5: #b3453c;
+  --chart-cat-6: #64798a;
+  --chart-cat-7: #4a7c59;
+  --chart-cat-8: #a8763e;
+
   /* ── 5. 排版 ─────────────────────────────────────────────────────────── */
   /* 中文场景不引入 Web 字体（中文子集动辄数 MB，得不偿失），
      改用系统字体栈：在 Windows / macOS / iPadOS 上均落到高质量中文字体。 */
@@ -212,6 +230,21 @@ html.dark:root {
   --chart-attendance-early: #e8c37a;
   --chart-attendance-absent: #de7265;
   --chart-attendance-leave: #7d8d9c;
+
+  /* 财务图表 · 深色取值 */
+  --chart-finance-gross: #57b98a;
+  --chart-finance-refund: #de7265;
+  --chart-finance-net: #6fa8dc;
+
+  /* 分类色板 · 深色取值 */
+  --chart-cat-1: #57b98a;
+  --chart-cat-2: #6fa8dc;
+  --chart-cat-3: #e8c37a;
+  --chart-cat-4: #a98bc9;
+  --chart-cat-5: #de7265;
+  --chart-cat-6: #8b9aa8;
+  --chart-cat-7: #7fb08a;
+  --chart-cat-8: #d4a06a;
 
   /* 阴影 */
   --shadow-xs: 0 1px 2px rgb(0 0 0 / 40%);

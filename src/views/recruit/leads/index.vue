@@ -15,6 +15,7 @@ import {
 } from "@/api/attendance";
 import { useUserStoreHook } from "@/store/modules/user";
 import { AppPageHeader } from "@/components/AppPageHeader";
+import { AppChartCard } from "@/components/AppChartCard";
 
 defineOptions({
   name: "RecruitLeads"
@@ -29,18 +30,23 @@ const pagination = reactive({ page: 1, pageSize: 10, total: 0 });
 
 const SOURCE_OPTIONS = ["转介绍", "线上", "地推", "广告"];
 const STATUS_OPTIONS = ["新线索", "跟进中", "已转化", "已流失"];
+/**
+ * el-tag 的 `type` 只接受**字面量联合类型**；标成 `Record<string, string>`
+ * 会让 vue-tsc 报 TS2322（Type 'string' is not assignable to…）。
+ */
+type ElTagType = "primary" | "success" | "warning" | "danger" | "info";
 const STATUS_TAG = {
   新线索: "primary",
   跟进中: "warning",
   已转化: "success",
   已流失: "info"
-} as Record<string, string>;
+} as Record<string, ElTagType>;
 const SOURCE_TAG = {
   转介绍: "success",
   线上: "primary",
   地推: "warning",
   广告: "info"
-} as Record<string, string>;
+} as Record<string, ElTagType>;
 
 const courseOptions = ref<any[]>([]);
 const classOptions = ref<any[]>([]);
@@ -120,6 +126,131 @@ function loadChannels() {
     })
     .finally(() => (channelLoading.value = false));
 }
+
+/* ---------- 图表配置 ----------
+   配色用 CSS 变量字符串，由 AppChartCard 渲染前解析为当前主题色值。 */
+
+/** 线索转化漏斗
+ *  ★ 两个坑（都是实测踩出来的）：
+ *  1. leads.status 四个值互斥（一个线索只有一个状态），不能把「新线索/跟进中/已转化」
+ *     直接当漏斗三段 —— 那是并列关系。改用严格单调口径：全部 → 进入过跟进 → 已转化。
+ *  2. ECharts漏斗在某段值为 0 时该段形状塌陷，整张图会看起来是空白（实测 total=6/following=0/converted=0
+ *     时画面上什么都看不到）。故**过滤掉 0 值阶段**，并在无任何阶段可画时走空态。 */
+const funnelChart = computed(() => {
+  const s = channelSummary.value;
+  if (!s || !s.total) return null;
+  const engaged = (s.following || 0) + (s.converted || 0);
+  const allStages = [
+    { name: "全部线索", value: s.total },
+    { name: "进入跟进", value: engaged },
+    { name: "已转化", value: s.converted || 0 }
+  ];
+  // 过滤 0 值阶段：留一个 0 会让整张漏斗塌成空白
+  const stages = allStages.filter(x => x.value > 0);
+  if (stages.length < 2) return null;
+
+  const COLORS = ["var(--chart-cat-2)", "var(--chart-cat-1)", "var(--chart-cat-3)"];
+  return {
+    tooltip: {
+      trigger: "item",
+      backgroundColor: "var(--surface-card)",
+      borderColor: "var(--border-default)",
+      textStyle: { color: "var(--ink-700)", fontSize: 12 },
+      formatter: (p: any) => {
+        const prev = p.dataIndex === 0 ? null : stages[p.dataIndex - 1].value;
+        const rate =
+          prev && p.value > 0
+            ? `<br/>较上一阶段：${((p.value / prev) * 100).toFixed(1)}%`
+            : "";
+        return `${p.name}<br/>${p.value} 条${rate}`;
+      }
+    },
+    series: [
+      {
+        name: "线索转化",
+        type: "funnel",
+        left: "6%",
+        right: "6%",
+        top: 12,
+        bottom: 12,
+        minSize: "18%",
+        sort: "descending",
+        gap: 4,
+        label: {
+          show: true,
+          position: "inside",
+          formatter: (p: any) => `${p.name} ${p.value}`,
+          color: "#fff",
+          fontSize: 12
+        },
+        itemStyle: {
+          borderColor: "var(--surface-card)",
+          borderWidth: 2
+        },
+        data: stages.map((st, i) => ({
+          name: st.name,
+          value: st.value,
+          itemStyle: { color: COLORS[i % COLORS.length] }
+        }))
+      }
+    ]
+  };
+});
+
+/** 各渠道线索数与已转化对比（分组柱状） */
+const channelChart = computed(() => {
+  if (!channelList.value?.length) return null;
+  const rows = channelList.value;
+  return {
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      backgroundColor: "var(--surface-card)",
+      borderColor: "var(--border-default)",
+      textStyle: { color: "var(--ink-700)", fontSize: 12 }
+    },
+    legend: {
+      icon: "roundRect",
+      itemWidth: 8,
+      itemHeight: 8,
+      itemGap: 16,
+      textStyle: { color: "var(--ink-600)", fontSize: 12 },
+      top: 0,
+      right: 0
+    },
+    grid: { left: 4, right: 8, top: 40, bottom: 0, containLabel: true },
+    xAxis: {
+      type: "category",
+      data: rows.map((i: any) => i.source),
+      axisLine: { lineStyle: { color: "var(--chart-axis-line)" } },
+      axisTick: { show: false },
+      axisLabel: { color: "var(--chart-axis-label)", fontSize: 12 }
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      axisLabel: { color: "var(--chart-axis-label)", fontSize: 12 },
+      splitLine: { lineStyle: { color: "var(--chart-split-line)" } }
+    },
+    series: [
+      {
+        name: "线索总数",
+        type: "bar",
+        barMaxWidth: 28,
+        barGap: "20%",
+        itemStyle: { color: "var(--chart-cat-2)", borderRadius: [4, 4, 0, 0] },
+        data: rows.map((i: any) => Number(i.total) || 0)
+      },
+      {
+        name: "已转化",
+        type: "bar",
+        barMaxWidth: 28,
+        itemStyle: { color: "var(--chart-cat-1)", borderRadius: [4, 4, 0, 0] },
+        data: rows.map((i: any) => Number(i.converted) || 0)
+      }
+    ]
+  };
+});
 
 function openCreate() {
   editMode.value = "create";
@@ -497,6 +628,23 @@ onMounted(() => {
 
       <!-- ================= 渠道统计 ================= -->
       <el-tab-pane label="渠道统计" name="channels">
+        <div v-loading="channelLoading" class="chart-grid mb-4">
+          <AppChartCard
+            title="线索转化漏斗"
+            :options="funnelChart"
+            empty-title="还没有形成转化"
+            empty-description="目前线索都停留在「新线索」阶段。把状态改为「跟进中」或转化后，这里会显示漏斗。"
+            footnote="口径：全部线索 → 进入过跟进（跟进中+已转化）→ 已转化。三个状态互斥，故按累计口径统计；某阶段为 0 时不绘制。"
+          />
+          <AppChartCard
+            title="各渠道线索数与转化"
+            :options="channelChart"
+            empty-title="还没有渠道数据"
+            empty-description="新增线索时选择来源渠道后，这里会显示各渠道的线索数量"
+            footnote="每组两根柱：浅色为线索总数，深色为其中已转化的数量。"
+          />
+        </div>
+
         <el-card shadow="never">
           <div v-loading="channelLoading">
             <div v-if="channelSummary" class="mb-3 flex gap-8">
