@@ -1,13 +1,16 @@
 ---
 inclusion: fileMatch
-fileMatchPattern: ["src/**", "ai-workbench/**", ".env.*", "vite.config.ts", "build/**"]
+fileMatchPattern: ["src/**", "ai-workbench/**", "question-bank/**", ".env.*", "vite.config.ts", "build/**"]
 ---
 
 # 前端（L2 · 主题）
 
 > 深读：`docs/03-开发指南/前端两端差异.md`（**两端差异**，改页面必读）、
 > `docs/03-开发指南/前端视觉规范.md`（配色/组件）。
-> 条目：K-002 · K-003 · K-025 · **K-036（凭证已吊销后必须静默登出）**
+> 条目：K-002 · K-003 · K-025 · **K-036（凭证已吊销后必须静默登出）** · **K-080（模板里不能用 location/window）**
+>
+> ★ 2026-10-09 补 `question-bank/**` 到匹配模式 —— 题库是第三个前端（与工作台同构），
+>   此前不在本文件的覆盖范围内，改动它不会命中本主题的教训（K-080 就是这么漏出来的）。
 
 ## 凭证已被服务端吊销后：必须静默登出（K-036 · 2026-09-23）
 
@@ -198,3 +201,42 @@ const isPlaceholder = txt === '必选' || txt.startsWith('可不选');  // 未�
 **正解**：挑 `offsetParent !== null`（当前可见）的那个面板；
 且**点开 select 后要等 ~900ms** 让 transition 完成，否则面板还不可见。
 （`_verify_test/ui-full-qbank.py` 的 `select_option`）
+
+## `<script setup>` 的模板里不能用 `location` / `window`（K-080 · 2026-10-09）
+
+**症状**：按钮点了**毫无反应**，也不弹任何错误 —— 控制台只有一条：
+```
+TypeError: Cannot set properties of undefined (setting 'href')
+```
+
+**根因**：把宿主对象直接写进了**模板表达式**：
+```html
+<!-- ❌ 坏了 -->
+@click="() => (location.href = crmUrl())"
+```
+`<script setup>` 的模板编译会给「模板里的自由标识符」加 `_ctx.` 前缀，
+而 `location` / `window` / `document` **不在** Vue 的全局白名单里
+（白名单只有 `Math` / `Date` / `JSON` / `console` / `parseInt` 之类）
+⇒ 编译成 `_ctx.location` = `undefined` ⇒ `undefined.href = …` 抛错。
+
+**修法**：宿主对象**只出现在 script 里**，模板调函数：
+```ts
+function goCrm() { window.location.href = crmUrl(); }
+```
+```html
+@click="goCrm"     <!-- ✅ -->
+```
+
+**★ 错因与防法**：题库是从 `ai-workbench/src/App.vue` 照抄的，那儿的写法
+（`window.location.href = crmUrl();`，在 script 里）**本来是对的** ——
+**抄的时候把 `window.` 丢了、还把它搬进了模板**。
+⇒ 跨端照抄代码时，**宿主对象的前缀要连着一起来**，别只抄右边那半句。
+
+**同类检查命令**（改模板前后都值得跑）：
+```bash
+grep -rn '@click="[^"]*location\|@click="[^"]*window\|{{ *location\|{{ *window' <前端目录> --include=*.vue
+```
+2026-10-09 全仓扫描结果：题库 2 处坏（`App.vue` + `views/Sso.vue`）、
+工作台与教务端均为 script 内的 `window.location`（正确）。
+
+> ★ 这一条同时印证 K-050「静默即缺陷」：**点了没反应且不报错**，比报错更难查。

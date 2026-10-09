@@ -1073,3 +1073,102 @@ AI 工作台「知识库 → 题库」只能读 21 道 mock 演示题。
 ① `/api/period-times/{period}` 这个 path 错放在 `components:` 之下（吸收了文件末尾的 schema）
 ② 同一文件里有一句 `（view=class/teacher/all…）` 缩进为 0，导致 YAML 解析失败
 —— 二者都是「门禁只验解析与 $ref、验不出结构语义」暴露的盲区。
+
+---
+
+## 2026-10-09 · 题库实测反馈 2 个 bug 修复 + 侧栏默认视角落地
+
+**来源**：用户在 18080 实测题库后反馈 —— ① **学科下拉框点不动** ② **最下方「返回教务系统」点击无效果**。
+
+### 一、反馈 ②：模板里写 `location.href`（点了毫无反应）
+
+**根因**：`question-bank/src/App.vue` 把宿主对象直接写进了**模板表达式**：
+`@click="() => (location.href = crmUrl())"`。`<script setup>` 的模板编译会给自由标识符
+加 `_ctx.` 前缀，而 `location` / `window` **不在** Vue 的全局白名单里 ⇒ 编译成 `_ctx.location`
+= `undefined` ⇒ `undefined.href = …` 抛 `TypeError` 并被吞掉 ⇒ **点击无任何反馈、也不报错**。
+
+**修法**：宿主对象只出现在 script 里，模板调 `goCrm()`。
+**同类第 2 处一并修**：`views/Sso.vue` 免登**失败页**的「返回题库首页」按钮是同一种坏法
+（同样是死的），且目标 `/` 就是题库首页 → 逻辑死循环，已改为「返回教务系统」。
+证伪/对照：工作台 `ai-workbench/src/App.vue` 写的是 script 内的 `window.location.href`（正确）
+—— 错因正是**从工作台照抄时丢了 `window.` 并把它搬进了模板**。
+
+### 二、反馈 ①：学科下拉框点不动 = **SSO 验票与 loadSubjects 的竞态**（不是"没登录"）
+
+**定位证据**（后端请求序列，`docker logs attendance-server`）：
+```
+POST /login 200 · GET /subjects 401 · POST /sso/ticket 200 · POST /sso/verify 200 · GET /facets 200 · GET /questions 200
+                                                        ↑ 全程没有 GET /subjects 200
+```
+`loadSubjects()` 只在 `App.vue` 的 `onMounted` 跑一次，与 `Sso.vue` 的 `await verify()` **并发**
+（Vue 子组件 onMounted 先于父组件，且 verify 是 async）→ 常抢在验票前发出 → 401
+→ `subjectList` 永久为空 → 切换器 `:disabled`；而验票成功后只 `router.replace("/")`，
+**App 不重新挂载** ⇒ 没有任何代码补这一次请求。因为是竞态，**时好时坏**。
+
+**★ 连带影响（同根因、更隐蔽）**：`currentSubjectId` 停在 0 → `withSubject()` 不写 `course_id`
+→ 列表请求不带学科过滤 → 后端 `courseFilter()` 返回空条件 → **把各学科的题混在一起显示**，
+直接违反「按学科隔离」的设计。
+
+**修法**：`watch(isRealUser, v => v && ensureSubjects())` —— 会话一出现就补拉，
+覆盖"会话由任何路径后到"的所有情况；并用 `hadSession` 闸住那声 401 **假警报**
+（免登途中弹「未登录或登录已过期」是错报）。
+
+### 三、侧栏默认视角（ROADMAP §12.2 ①，用户拍板 A）＋ 同类项
+
+**实测查证**：23 门学科里**只有原有的「初中数学」有知识点（13 个）**，
+其余 **22 门全是"有章节、无知识点"**（知识点按 ADR-014 刻意不预置）
+⇒ 打开任何一门新学科，题目库三视角侧栏默认停在「知识点」都是**一片空白**，
+老师会以为题库坏了。**不是"物理一个特例"，是 22 门全中。**
+
+- 修：知识点为空、章节非空 → 三视角默认**自动落「章节」**；**只判首屏一次**
+  （不放进 watch/computed，否则老师正看知识点、一搜索就被弹走）
+- **同类项一并修**：`views/Taxonomy.vue`（知识点与章节页）的页签有同一个病
+- 反向保护：有知识点的学科（初中数学）**不得**被自动弹走
+
+### 四、无会话时的界面（用户拍板「加常驻提示条」）
+
+原先无会话时只靠一条飘过的 toast，而切换器是**静默禁用**的 → 老师只能猜。
+现侧栏**常驻**提示条：「未从教务系统进入 · 当前为只读浏览…」+ 可点的「返回教务系统」；
+`/sso` 路由下不显示（免登途中"还没有会话"是正常中间态，避免闪报）。
+另把三视角三处空态文案从「还没有知识点数据」改成**指出去哪儿加**。
+
+### 五、顺手清理（零行为变化）
+
+- `QuestionList.vue`：`buildFilterQuery()` 里**重复的 2 行** `withSubject(qs)`（含重复注释）
+- `styles.css`：`.qb-subject-picker` 相关样式**整块被复制了两遍**
+- `_verify_test/ui-qbank.py`：默认基址还写着旧的沙箱端口 `8849`，一跑就是 HTTP 502
+  （看着像"服务坏了"，实际是套件在找不存在的端口）→ 对齐为 18080
+
+### 六、验证：129 项全绿 / 0 失败（测试后零残留）
+
+| 套件 | 结果 |
+|---|---|
+| `ui-qbank-subjects.py` | **29 / 0**（原 16 → 新增 13） |
+| `ui-qbank.py` | 20 / 0 |
+| `ui-qbank-v2.py` | 36 / 0 |
+| `ui-full-qbank.py` | 44 / 0 |
+
+新增断言**直接钉住根因**（不是只看界面）：`/api/qbank/subjects` 最终拿到 **200**、
+落地后切换器可用、`currentSubjectId>0`、**点「返回教务系统」真的导航到教务端**、
+有知识点的学科不被自动弹走、管理页同类项。
+
+### 七、★★ 本轮最重要的一条教训（为什么 546 项断言全绿却一个 bug 都抓不到）
+
+**不是断言写错了，是测的东西不对**：所有 UI 套件都是「先往 `localStorage` 注入 session，
+再 `reload()`」—— **把免登落地这条真实路径整条绕过**，于是竞态永远复现不出来；
+且没有一条断言检查「**点完之后状态真的变了**」。
+⇒ 已补 `ui-qbank-subjects.py` 的 **M7「真实免登链路」**一节：走真票据整页跳转，
+断言 `/subjects` 最终 200 + 点返回真的导航。
+（★ 写这条测试时又踩一坑：`/qb/#/` → `/qb/#/sso?ticket=` **只换 hash，浏览器不重载**，
+必须先跳到不同路径再进票据地址，否则等于没测冷启动。）
+
+### 八、同步修改的文档 / 沉淀
+
+`ROADMAP.md`（§12.2 ① 由待决策 → 已实现）· `memory/knowledge/frontend.md` **K-080**
+（`<script setup>` 模板里不能用 `location`/`window`；跨端照抄别丢宿主前缀）·
+`memory/knowledge/process.md` **K-081**（「只在 onMounted 拉一次」+ 异步建会话 = 竞态；
+注入式 UI 测试会绕过真实链路）· `memory/knowledge/_index.md`（登记 K-080/K-081，
+并把 `question-bank/**` 补进 frontend 主题的 fileMatch）· `memory/logs/2026-10-09.md`
+
+**状态**：修复已构建部署（镜像 `957a0f4c5431`，容器 ID 已核对）并自测全绿；
+**用户实测结论待补**（07-10 部署后实测）。
