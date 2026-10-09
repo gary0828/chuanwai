@@ -251,7 +251,17 @@ async function deleteChapter(c: ChapterNode) {
   }
 }
 
-onMounted(loadAll);
+onMounted(async () => {
+  await loadAll();
+  // ★★ 同类修正（2026-10-09，横向同类扫描发现）：
+  //   本页俩页签也默认停在「知识点」，而 22 门学段学科**只预置了章节**
+  //   （知识点刻意不预置，见 ADR-014）→ 切过去就是一片空白。
+  //   这与题目库「三视角侧栏」是**同一个病**，按同一口径一并修：
+  //   知识点为空、章节非空 → 落到「章节」。同样只判首屏一次。
+  if (tab.value === "kp" && !knowledge.value.length && chapters.value.length) {
+    tab.value = "chapter";
+  }
+});
 </script>
 
 <template>

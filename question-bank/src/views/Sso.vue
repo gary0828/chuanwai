@@ -9,11 +9,26 @@
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { saveSession, type CurrentUser } from "../session";
+import { crmUrl, saveSession, type CurrentUser } from "../session";
 
 const router = useRouter();
 const state = ref<"loading" | "ok" | "fail">("loading");
 const message = ref("正在登录题库…");
+
+/**
+ * 返回教务系统。
+ *
+ * ★★ 2026-10-09 修 bug：原来写的是 `@click="() => (location.href = '/')"`，
+ *   有两个问题：
+ *   ① 同 App.vue 的 bug —— `location` 写在**模板**里会被编译成 `_ctx.location`
+ *      （不在 Vue 全局白名单内）→ undefined → TypeError → **按钮点了没反应**。
+ *      而这个按钮恰恰是"免登失败"时唯一的出路，用户会被卡死在这一页。
+ *   ② 目标是 `/`（题库首页），而票都验不过，回首页还是进不去 → 逻辑上死循环。
+ *   正确目标是**教务系统**（老师在那里重新点「题库」入口）。
+ */
+function goCrm() {
+  window.location.href = crmUrl();
+}
 
 onMounted(async () => {
   const ticket = new URLSearchParams(location.hash.split("?")[1] || "").get("ticket");
@@ -69,9 +84,7 @@ onMounted(async () => {
       <el-icon size="30" color="#f56c6c"><WarningFilled /></el-icon>
       <div class="qb-empty-title" style="margin-top: 12px">无法进入题库</div>
       <div style="max-width: 420px; margin: 0 auto 16px">{{ message }}</div>
-      <el-button type="primary" @click="() => (location.href = '/')">
-        返回题库首页
-      </el-button>
+      <el-button type="primary" @click="goCrm">返回教务系统</el-button>
     </template>
   </div>
 </template>

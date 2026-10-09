@@ -203,9 +203,6 @@ function buildFilterQuery(withPaging = true): string {
   // ★ 学科（迁移 028）：列表与导出**共用**这个函数，一处加上两边都有 ——
   //   这正是当初把它抽出来的价值（一期导出漏参数就是因为两处各写一遍）。
   withSubject(qs);
-  // ★ 学科（迁移 028）：列表与导出**共用**这个函数，一处加上两边都有 ——
-  //   这正是当初把它抽出来的价值（一期导出漏参数就是因为两处各写一遍）。
-  withSubject(qs);
   if (filters.keyword.trim()) qs.set("keyword", filters.keyword.trim());
   if (filters.type) qs.set("type", filters.type);
   if (filters.difficulty !== "") qs.set("difficulty", String(filters.difficulty));
@@ -686,6 +683,18 @@ watch(
 
 onMounted(async () => {
   await loadFacets();
+  // ★★ 默认视角自动回落（ROADMAP §12.2 A，用户 2026-10-09 拍板）：
+  //   知识点是**刻意不预置**的（教材版本差异大，编不准会污染教学体系，见 ADR-014），
+  //   所以 23 门学科里只有原有的「初中数学」有知识点 —— 其余 22 门进来，
+  //   三视角侧栏默认停在「知识点」页签就是**一片空白**，老师会以为题库坏了。
+  //   ⇒ 本学科没有知识点、但有章节时，默认落到「章节」。
+  //
+  //   ★ 刻意只在**首屏**判断一次（onMounted 内），不放进 watch/computed：
+  //     否则老师正在看「知识点」，一搜索、一翻页就可能被弹到「章节」——
+  //     那比空白更糟（操作被"抢走"）。手动切到「知识点」仍尊重老师的选择。
+  if (view.value === "knowledge" && !kpTree.value.length && chapterTree.value.length) {
+    view.value = "chapter";
+  }
   await loadList();
   if (!isRealUser.value) {
     ElMessage.warning({
@@ -746,7 +755,9 @@ onMounted(async () => {
 
       <template v-if="view === 'knowledge'">
         <h3>按知识点</h3>
-        <div v-if="!kpTree.length" class="qb-hint">还没有知识点数据</div>
+        <div v-if="!kpTree.length" class="qb-aside-empty">
+          本学科还没有知识点。<br />知识点由各校区按自己的教材维护，去「知识点与章节」页新增。
+        </div>
         <div v-for="r in kpTree" :key="r.id">
           <div
             class="qb-aside-item"
@@ -769,7 +780,9 @@ onMounted(async () => {
 
       <template v-else-if="view === 'chapter'">
         <h3>按章节（含下级）</h3>
-        <div v-if="!chapterTree.length" class="qb-hint">还没有章节数据</div>
+        <div v-if="!chapterTree.length" class="qb-aside-empty">
+          本学科还没有章节。<br />去「知识点与章节」页按自己用的教材补充。
+        </div>
         <div v-for="r in chapterTree" :key="r.id">
           <div
             class="qb-aside-item"
@@ -797,8 +810,8 @@ onMounted(async () => {
 
       <template v-else>
         <h3>按解题方法</h3>
-        <div v-if="!facets?.methods?.length" class="qb-hint">
-          题库里还没有填过解题方法
+        <div v-if="!facets?.methods?.length" class="qb-aside-empty">
+          题库里还没有填过解题方法。<br />录题时填写「解题方法」，这里就能按方法聚合。
         </div>
         <div
           v-for="m in facets?.methods || []"

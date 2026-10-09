@@ -96,25 +96,39 @@ body {
   --el-text-color-placeholder: #8a94a6;
 }
 
-/* ── 学科切换器（侧栏顶部，比导航更高一层的上下文）────────── */
-.qb-subject-picker {
-  padding: 12px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+/* ── 无会话提示条（2026-10-09 新增）─────────────────────────
+ * 侧栏是深色底（#2b3648），所以这里用**低透明度暖色**而不是 Element 的白底 warning，
+ * 否则一块亮白会把这列导航切得七零八落。
+ * 它是**常驻**的（不是浮层、不是 toast）：没有会话这件事，看多久就该显示多久。
+ */
+.qb-session-warn {
+  margin: 12px 14px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(230, 162, 60, 0.14);
+  border: 1px solid rgba(230, 162, 60, 0.42);
 }
 
-.qb-subject-label {
-  display: block;
+.qb-session-warn-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #ffc978;
+  margin-bottom: 4px;
+}
+
+.qb-session-warn-desc {
   font-size: 12px;
-  color: #8a94a6;
-  margin-bottom: 6px;
+  line-height: 1.6;
+  color: #b9c2d0;
+  margin-bottom: 8px;
 }
 
-/* Element Plus 的 select 在深色侧栏里默认是白底，这里让它与侧栏协调 */
-.qb-subject-picker .el-select {
-  --el-fill-color-blank: rgba(255, 255, 255, 0.08);
-  --el-border-color: rgba(255, 255, 255, 0.16);
-  --el-text-color-regular: #e8ecf2;
-  --el-text-color-placeholder: #8a94a6;
+/* ── 章节/知识点空态：给一句「去哪儿加」而不只是「没有数据」─── */
+.qb-aside .qb-aside-empty {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--qb-text-tertiary);
+  padding: 4px 2px;
 }
 
 .qb-nav-group {
