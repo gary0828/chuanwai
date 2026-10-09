@@ -162,3 +162,54 @@ timeout 180 git -c http.proxy= -c https.proxy= \
 
 **不要用 `_` 前缀做删除匹配** —— 会误删 `memory/knowledge/_index.md` 这类正常文件。
 （2026-09-23 犯过；现在 `_index.md` 已纳入 check.mjs 的必备文件检查。）
+
+## ★★ K-082 · 推送挂死的**主因是 GCM**，不是代理（2026-10-09 实测修正 K-039 / K-042）
+
+> K-039 / K-042 记的是「清掉环境变量代理就好」。**2026-10-09 实测：代理那层清干净了，push 照样挂死。**
+> 真凶是 **GCM（git-credential-manager）在非交互会话里等一个看不见的提示**（Windows 上很可能是弹了 GUI 框）。
+> 别再照着"清代理"重排一遍。
+
+### 现场证据（2026-10-09，同一次故障的完整分诊链）
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| ① 只清 git config 代理 | `git -c http.proxy= -c https.proxy= push gitee main` | **挂死**，被 SIGTERM |
+| ② 连环境变量一起清 | `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY git push gitee main` | **仍然挂死**（`timeout 300` → EXIT=124） |
+| ③ **分诊**：dry-run | 同上 + `git push --dry-run` | **也挂死** → 卡点不在传对象，**在认证** |
+| ④ 单独取凭据 | `printf 'protocol=https\nhost=gitee.com\n\n' \| git credential-manager get` | **exit=0、秒回**，username/password 都拿到了 |
+| ⑤ 绕过 GCM 推 | 内联 helper（见下） | ✅ **6 秒成功** |
+
+★ **③ + ④ 是本条的核心**：`dry-run 挂死` 而 `credential-manager get 单独调用正常`
+⇒ **GCM 本身没坏，是它被 git 以交互方式调用时挂住**。这一对组合就能定罪，不必再试别的。
+
+### ★ 标准动作（以后推送挂死，直接照这个走）
+
+```bash
+cd <repo>
+CRED=$(printf "protocol=https\nhost=gitee.com\n\n" | timeout 90 \
+        env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+        GIT_TERMINAL_PROMPT=0 git credential-manager get)
+GU=$(printf '%s\n' "$CRED" | sed -n 's/^username=//p')
+GP=$(printf '%s\n' "$CRED" | sed -n 's/^password=//p')
+[ -n "$GU" ] && [ -n "$GP" ] || { echo "凭据没取到，先查 GCM 登录状态"; exit 1; }
+
+timeout 240 env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+  GIT_TERMINAL_PROMPT=0 GIT_USER="$GU" GIT_PASS="$GP" \
+  git -c credential.helper= \
+      -c credential.helper='!f() { echo username=$GIT_USER; echo password=$GIT_PASS; }; f' \
+      push gitee main
+```
+
+要点（每一条都是踩过的）：
+- `-c credential.helper=`（**空值在前**）先清空 helper 列表，**再加**自己的 —— GCM 的配置是**追加**语义，不清就还会被调用。
+- 凭据**只经环境变量传递**，不写进 `.git/config`、不 `echo`、不落文件。`git credential-manager get`
+  的输出里含密码，取值后**不要整段打印**（本项目的 gitee 用户名本身就是手机号，输出要克制）。
+- ★ **必须在后台跑**（`run_in_background`）：前台挂死会被系统 SIGTERM，留下**孤儿 git.exe**。
+- ★ **挂了之后先清场再重试**，否则第二次也推不动：
+  ```bash
+  MSYS_NO_PATHCONV=1 tasklist /FI "IMAGENAME eq git.exe"      # 找 PID
+  MSYS_NO_PATHCONV=1 taskkill /F /PID <pid> [<pid>…]          # 按记忆：被中断会留孤儿进程 + index.lock
+  ls .git/index.lock                                          # 有就删
+  ```
+- ★ **别用 `ls-remote` 通就断定推送没问题**（K-042 已记一次，本次又验证一次：
+  `ls-remote` 全程秒回，push 全挂）。
