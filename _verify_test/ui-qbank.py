@@ -10,7 +10,9 @@
 
 用法：
   "C:\\Program Files\\Python314\\python" _verify_test/ui-qbank.py [基址]
-默认基址http://127.0.0.1:8849/qb/
+默认基址 http://127.0.0.1:18080/qb/（统一入口。★ 2026-10-09 修正：
+  原默认值是旧的**沙箱**端口 8849，本机没起沙箱时一跑就是 HTTP 502，
+  看起来像"服务坏了"，其实是套件在找一个不存在的端口。其余题库套件默认都是 18080。）
 """
 import json
 import os
@@ -19,7 +21,7 @@ import time
 import urllib.request
 import urllib.parse
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8849/qb/").rstrip("/")
+BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18080/qb/").rstrip("/")
 # ★ API 基址从页面基址推导（2026-10-07 实测踩坑）：
 #   原来硬编码 127.0.0.1:3000，那是**开发后端**；
 #   重建 Docker 后后端在容器内（只经 nginx 暴露 18080），3000 端口本机根本没监听 → 502。
