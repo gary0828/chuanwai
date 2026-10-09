@@ -213,3 +213,16 @@ timeout 240 env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
   ```
 - ★ **别用 `ls-remote` 通就断定推送没问题**（K-042 已记一次，本次又验证一次：
   `ls-remote` 全程秒回，push 全挂）。
+
+### ★ 取退出码：别用 `$?`，要用 `${PIPESTATUS[0]}`（2026-10-09 差点误判）
+
+`git push … 2>&1 | tail -6 && echo "EXIT=$?"` 里的 `$?` 是**管道最后一个命令（`tail`）**的退出码，
+**恒为 0** ⇒ 被 SIGTERM 杀掉的推送**也会报 `EXIT=0`**，看起来"推成功了"。
+本次真踩到：一条挂死 1 小时 39 分后被杀的 push，最后回报 `PUSH_EXIT=0`。
+
+**正确写法**（K-082 的标准动作里用的就是这个）：
+```bash
+git push … 2>&1 | tail -6 ; echo "EXIT=${PIPESTATUS[0]}"
+```
+★ 判据：**以远端 SHA 为准，不以退出码为准** ——
+`git rev-parse HEAD` 与 `git ls-remote gitee main` 两边一致才算真推上去了。
