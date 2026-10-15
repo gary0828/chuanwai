@@ -11,6 +11,7 @@ const {
   teacherClassPredicate
 } = require("../utils/scope");
 const { getDeductStatuses } = require("../utils/attendance-rules");
+const { SOURCE, reconcile } = require("../utils/hours-reconcile");
 const { attendanceRate } = require("../utils/attendance-rate");
 const { parseDate } = require("../utils/validate");
 
@@ -187,8 +188,15 @@ router.post("/batch", auth, (req, res) => {
     "UPDATE orders SET remain_hours = MIN(total_hours, remain_hours + 1), updated_at = datetime('now','localtime') WHERE id = ?"
   );
   // 课时消耗流水：扣减/回补后落流水（date 为考勤日期，session_id 课次分支落课次 id，legacy 为 NULL）
+  //  ★ v29：新增 `source`（来源）与 `attendance_id`（精确关联考勤）——
+  //    没有 attendance_id 时，对账只能按日期"宽松匹配"历史流水，会把补课/手工调整的流水
+  //    误认成"这条考勤扣过了"。带上它之后，每一条考勤的扣减/回补都能被精确追踪。
   const insertCons = db.prepare(
-    "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, session_id, hours, type, operator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, session_id, hours, type, source, attendance_id, operator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  );
+  // legacy 分支的考勤 id 回查（session 分支用 findAttBySession）
+  const getAttIdLegacy = db.prepare(
+    "SELECT id FROM attendances WHERE student_id = ? AND course_id = ? AND date = ?"
   );
   // 扣课状态集中读取点（G1-P0-12），行为不变
   const DEDUCT_STATUSES = getDeductStatuses();
@@ -255,6 +263,10 @@ router.post("/batch", auth, (req, res) => {
           const classId = session
             ? effClassId
             : getStudentClass.get(sid)?.class_id ?? null;
+          // 本条考勤的 id（v29：写进流水，供对账精确追踪）
+          const attId = session
+            ? (existing ?? findAttBySession.get(effSessionId, sid))?.id ?? null
+            : getAttIdLegacy.get(sid, effCourseId, effDate)?.id ?? null;
           if (!oldDeduct && newDeduct) {
             deductOrder.run(order.id);
             insertCons.run(
@@ -266,6 +278,8 @@ router.post("/batch", auth, (req, res) => {
               effSessionId,
               1,
               "扣减",
+              SOURCE.ATTENDANCE,
+              attId,
               req.user.id
             );
           } else if (oldDeduct && !newDeduct) {
@@ -279,6 +293,8 @@ router.post("/batch", auth, (req, res) => {
               effSessionId,
               1,
               "回补",
+              SOURCE.ATTENDANCE,
+              attId,
               req.user.id
             );
           }
@@ -315,8 +331,30 @@ router.post("/batch", auth, (req, res) => {
         }
       }
     }
+
+    // ★★ v29 对账式兜底补扣（2026-10-12 修复真实事故）★★
+    //   上面事件式的扣减/回补只能覆盖"考勤状态刚好发生变化"的那一瞬间，
+    //   凡是事件丢失的场景都会**永久漏扣且毫无提示**：
+    //     · 订单当时没有课时包（total_hours = 0）—— 「线索转化」建的单就是这种
+    //     · 先点名、后报班
+    //     · 订单退班后又改回「在读」
+    //   对账以"本学员本课程已有的出勤考勤"为基准重核一遍，缺多少补多少（幂等，可重复执行）。
+    //   ★ 本函数不开事务 —— 这里已经在事务里，SQLite 不支持嵌套事务。
+    const reconciled = [];
+    const touched = new Set(records.map(r => `${Number(r.student_id)}|${effCourseId}`));
+    for (const key of touched) {
+      const [stuId, couId] = key.split("|").map(Number);
+      const rc = reconcile(db, {
+        studentId: stuId,
+        courseId: couId,
+        operatorId: req.user.id,
+        source: SOURCE.ATTENDANCE
+      });
+      if (rc.fixed > 0) reconciled.push({ student_id: stuId, fixed: rc.fixed });
+    }
+
     db.exec("COMMIT");
-    res.json({ success: true, data: { count: records.length } });
+    res.json({ success: true, data: { count: records.length, reconciled } });
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;

@@ -535,6 +535,24 @@ export const getConsumptionStatistics = (params?: object) => {
   return http.request("get", "/api/finance/stats/consumption", { params });
 };
 
+/** ---------- 学员档案与课时对账（v29） ---------- */
+
+/** 学员档案：基本信息 + 报班与账户 + 缴费退费 + 考勤与课时流水
+ *  ★ 剩余学费口径见 ADR-003；teacher 角色拿到的金额字段为 null（响应含 can_see_amount） */
+export const getStudentProfile = (id: number) => {
+  return http.request("get", `/api/students/${id}/profile`);
+};
+
+/** 课时对账差异清单（仅 admin）：所有「出勤考勤 > 已扣流水」的 学员+课程 组合 */
+export const getHoursReconcileList = () => {
+  return http.request("get", "/api/finance/hours-reconcile");
+};
+
+/** 执行课时对账：`{ student_id, course_id }` 修一条；`{ all: true }` 全量修（仅 admin，幂等） */
+export const applyHoursReconcile = (data: object) => {
+  return http.request("post", "/api/finance/hours-reconcile", { data });
+};
+
 /** ---------- 排课优化：冲突检测 / 调课 / 补课（v12） ---------- */
 
 /** 冲突检测（保存前预览：同班同段拒绝 + 同教师跨班同段警告） */

@@ -5,6 +5,7 @@ const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { canManageStudent } = require("../utils/scope");
 const { parseDate } = require("../utils/validate");
+const { SOURCE } = require("../utils/hours-reconcile");
 
 const router = express.Router();
 
@@ -152,7 +153,7 @@ router.put(
       "UPDATE orders SET remain_hours = MIN(total_hours, remain_hours + 1), updated_at = datetime('now','localtime') WHERE id = ?"
     );
     const insertCons = db.prepare(
-      "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, operator_id) VALUES (?, ?, ?, ?, ?, ?, '回补', ?)"
+      "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, source, attendance_id, operator_id) VALUES (?, ?, ?, ?, ?, ?, '回补', ?, ?, ?)"
     );
     const getStudentClass = db.prepare(
       "SELECT class_id FROM students WHERE id = ?"
@@ -184,7 +185,7 @@ router.put(
         // 2. 回写考勤：请假日期范围内已有考勤（正常/迟到/早退→请假，缺勤/请假不变）
         const affected = db
           .prepare(
-            `SELECT student_id, course_id, date FROM attendances
+            `SELECT id, student_id, course_id, date FROM attendances
            WHERE student_id = ? AND date BETWEEN ? AND ? AND status IN ('正常', '迟到', '早退')`
           )
           .all(leave.student_id, leave.start_date, leave.end_date);
@@ -204,6 +205,8 @@ router.put(
               classId,
               a.date,
               1,
+              SOURCE.LEAVE,
+              a.id,
               req.user.id
             );
           }

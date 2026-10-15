@@ -4,6 +4,11 @@ import crypto from "node:crypto";
 
 const BASE = process.argv[2] || "http://127.0.0.1:3101";
 const OLD_PUBLIC_SECRET = "attendance-secret-key-change-me";
+// 白名单来源断言不能写死：`vite dev` 下是 8848，而统一入口部署（docker compose）下
+// CORS_ORIGINS 缺省为 http://localhost,http://localhost:8080 —— 写死会让后者恒失败。
+const ALLOWED_ORIGIN = (process.env.CORS_ORIGINS || "http://localhost:8848")
+  .split(",")[0]
+  .trim();
 
 let pass = 0;
 let fail = 0;
@@ -97,11 +102,11 @@ check(
   `实际=${evil.headers.get("access-control-allow-origin")}`
 );
 const allowed = await req("GET", "/api/health", {
-  headers: { Origin: "http://localhost:8848" }
+  headers: { Origin: ALLOWED_ORIGIN }
 });
 check(
-  "白名单来源 http://localhost:8848 被放行",
-  allowed.headers.get("access-control-allow-origin") === "http://localhost:8848",
+  `白名单来源 ${ALLOWED_ORIGIN} 被放行`,
+  allowed.headers.get("access-control-allow-origin") === ALLOWED_ORIGIN,
   `实际=${allowed.headers.get("access-control-allow-origin")}`
 );
 
@@ -165,6 +170,14 @@ const cls = await req("GET", "/api/classes/all", { token: tk });
 const classId = cls.json?.data?.[0]?.id;
 check("取到班级（前置条件）", Boolean(classId));
 
+// ★ 2026-09-26 起订单的 course_id 改为必填（考勤按「学员+课程」匹配订单扣课时）。
+//   本脚本此前未传 course_id → 建单恒 400，连带后面 4 项用例全部 404/连带失败。
+//   更隐蔽的是：[6] 里三条「被拒」断言会因「缺课程」而**错误地**变绿（假阳性），
+//   补上 course_id 后这三条才真正校验金额/课时的边界逻辑。
+const cou = await req("GET", "/api/courses/all", { token: tk });
+const courseId = cou.json?.data?.[0]?.id;
+check("取到课程（前置条件）", Boolean(courseId), JSON.stringify(cou.json));
+
 const stuNo = "VERIFY" + Date.now();
 const stu = await req("POST", "/api/students", {
   token: tk,
@@ -175,7 +188,7 @@ check("创建验证学员成功（前置条件）", Boolean(studentId), JSON.str
 
 const negAmount = await req("POST", "/api/finance/orders", {
   token: tk,
-  body: { student_id: studentId, class_id: classId, amount: -500, total_hours: 10 }
+  body: { student_id: studentId, class_id: classId, course_id: courseId, amount: -500, total_hours: 10 }
 });
 check(
   "负数订单金额被拒（400）",
@@ -185,7 +198,7 @@ check(
 
 const hugeAmount = await req("POST", "/api/finance/orders", {
   token: tk,
-  body: { student_id: studentId, class_id: classId, amount: 99999999999, total_hours: 10 }
+  body: { student_id: studentId, class_id: classId, course_id: courseId, amount: 99999999999, total_hours: 10 }
 });
 check(
   "超大订单金额被拒（400）",
@@ -195,7 +208,7 @@ check(
 
 const badHours = await req("POST", "/api/finance/orders", {
   token: tk,
-  body: { student_id: studentId, class_id: classId, amount: 1000, total_hours: -3 }
+  body: { student_id: studentId, class_id: classId, course_id: courseId, amount: 1000, total_hours: -3 }
 });
 check(
   "负数课时被拒（400）",
@@ -205,7 +218,7 @@ check(
 
 const okOrder = await req("POST", "/api/finance/orders", {
   token: tk,
-  body: { student_id: studentId, class_id: classId, amount: 1000, total_hours: 10 }
+  body: { student_id: studentId, class_id: classId, course_id: courseId, amount: 1000, total_hours: 10 }
 });
 const orderId = okOrder.json?.data?.id;
 check("正常订单创建成功（前置条件）", Boolean(orderId), JSON.stringify(okOrder.json));

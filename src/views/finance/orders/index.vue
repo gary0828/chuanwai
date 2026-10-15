@@ -160,6 +160,12 @@ function handleCreate() {
     ElMessage.warning("请选择课程（不选课程将无法自动扣课时）");
     return;
   }
+  // ★ v29（2026-10-12）：「课时包总课时」必填 —— 填 0 的订单不会随考勤扣课时。
+  //   真实事故：订单没填课时包 → 点名后剩余课时纹丝不动，且界面毫无提示。
+  if (!Number(createForm.total_hours)) {
+    ElMessage.warning("请填写「总课时」（不填课时包将无法按考勤自动扣课时）");
+    return;
+  }
   submitting.value = true;
   createFinanceOrder({
     ...createForm,
@@ -563,7 +569,7 @@ onMounted(() => {
             class="w-full"
           />
         </el-form-item>
-        <el-form-item label="总课时">
+        <el-form-item label="总课时" required>
           <el-input-number
             v-model="createForm.total_hours"
             :min="0"
@@ -572,7 +578,9 @@ onMounted(() => {
             class="w-full"
           />
           <span class="ml-2 text-xs text-gray-400"
-            >考勤正常/迟到/早退自动扣 1 课时</span
+            >考勤正常/迟到/早退自动扣 1 课时；<b class="text-red-500"
+              >必须填写，否则不会自动扣课时</b
+            ></span
           >
         </el-form-item>
         <el-form-item label="备注">

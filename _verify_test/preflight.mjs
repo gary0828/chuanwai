@@ -20,7 +20,12 @@ const warns = [];
 
 const SKIP_DIRS = new Set([
   "node_modules", ".git", "dist", "evidence", ".workbuddy", "dify",
-  "build", "public", "_tmp", "archive"
+  "build", "public", "_tmp", "archive",
+  // ★ 2026-10-15：e2e 运行器的录制缓存（`_verify_test/e2e-flow/.e2e/`）。
+  //   它是**生成物**（agent.act 的录制/回放记录，含大段自然语言说明），不是源码；
+  //   且 e2e-flow 整个目录已按 K-085「上传排除测试数据」排除入库 →
+  //   在这里报出的问题**无法处理也不该处理**，只会污染真问题的信号。
+  ".e2e"
 ]);
 const TEXT_EXT = new Set([".md", ".js", ".mjs", ".ts", ".vue", ".yaml", ".yml", ".json", ".scss"]);
 // 生成的/第三方的跳过

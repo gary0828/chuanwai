@@ -200,7 +200,7 @@ router.put(
   requireRole("admin"),
   (req, res) => {
     const id = Number(req.params.id);
-    const { class_id, course_id, amount = 0, remark = "" } = req.body || {};
+    const { class_id, course_id, amount = 0, remark = "", total_hours } = req.body || {};
     if (!class_id)
       return res
         .status(400)
@@ -209,6 +209,21 @@ router.put(
       return res
         .status(403)
         .json({ success: false, message: "无权将该学员分配到该班级" });
+    }
+    // ★ v29（2026-10-12）：转化时**可选**填「课时包课时」。
+    //   本次真实事故的源头就是这里 —— 转化自动建的订单不带课时包（total_hours = 0），
+    //   而考勤扣课要求 `total_hours > 0` → 点名后**静默不扣课时**，界面上毫无提示。
+    //   现在留空仍可转化（不阻塞业务流程），但会把提醒回传给前端要求用户确认。
+    //   上限与 `routes/finance.js` 的 MAX_HOURS 保持一致。
+    let hours = 0;
+    if (total_hours !== undefined && total_hours !== null && total_hours !== "") {
+      const n = Number(total_hours);
+      if (!Number.isInteger(n) || n < 0 || n > 100000) {
+        return res
+          .status(400)
+          .json({ success: false, message: "课时包课时必须是不超过 100000 的非负整数" });
+      }
+      hours = n;
     }
     const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(id);
     if (!lead)
@@ -268,8 +283,8 @@ router.put(
         ).lastInsertRowid;
       db.prepare(
         `
-      INSERT INTO orders (student_id, class_id, course_id, enroll_date, amount, status, enroll_user_id, remark)
-      VALUES (?, ?, ?, ?, ?, '在读', ?, ?)
+      INSERT INTO orders (student_id, class_id, course_id, enroll_date, amount, total_hours, remain_hours, status, enroll_user_id, remark)
+      VALUES (?, ?, ?, ?, ?, ?, ?, '在读', ?, ?)
     `
       ).run(
         studentId,
@@ -277,6 +292,8 @@ router.put(
         course_id ? Number(course_id) : lead.intent_course_id,
         new Date().toLocaleDateString("sv"),
         Number(amount) || 0,
+        hours,
+        hours,
         req.user.id,
         remark || "线索转化建档"
       );
@@ -290,7 +307,15 @@ router.put(
       audit(req.user, "线索转化", `线索#${id} → 学员#${studentId}`);
       res.json({
         success: true,
-        data: { student_id: studentId, student_no: studentNo }
+        data: {
+          student_id: studentId,
+          student_no: studentNo,
+          // 未填课时包时回传提醒（前端据此提示：考勤点名不会自动扣课时）
+          hours_warning:
+            hours > 0
+              ? ""
+              : "未填写课时包课时：该订单不会随考勤自动扣课时，请到「报班管理」补填课时包"
+        }
       });
     } catch (err) {
       db.exec("ROLLBACK");

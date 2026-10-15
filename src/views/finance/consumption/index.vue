@@ -144,7 +144,9 @@ onMounted(query);
           </template>
           <template v-else>
             <el-table-column prop="student_no" label="学号" min-width="110" />
-            <el-table-column prop="name" label="姓名" min-width="90" />
+            <!-- ★ 2026-10-12 修既有缺陷：这里原绑定 prop="name"，但接口返回的是
+                 student_name → 「姓名」列一直渲染空白。 -->
+            <el-table-column prop="student_name" label="姓名" min-width="90" />
             <el-table-column prop="class_name" label="班级" min-width="130" />
           </template>
 
@@ -178,18 +180,31 @@ onMounted(query);
             />
           </template>
           <template v-else>
-            <el-table-column
-              prop="total_hours"
-              label="总课时"
-              width="90"
-              align="center"
-            />
-            <el-table-column
-              prop="remain_hours"
-              label="剩余课时"
-              width="90"
-              align="center"
-            />
+            <!-- ★ 2026-10-12 口径透明化：这两列只算「在读」订单。
+                 学员若已结业/退班，这里会是 0，而本行又因有课消流水而存在
+                 → 不加说明会被读成「数据错了」。 -->
+            <el-table-column label="总课时" width="118" align="center">
+              <template #default="{ row }">
+                <div>{{ n(row.total_hours) }}</div>
+                <div
+                  v-if="n(row.closed_order_count) > 0"
+                  class="text-xs text-gray-400"
+                >
+                  含已结业/退班：{{ n(row.total_hours_all) }}
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="剩余课时" width="118" align="center">
+              <template #default="{ row }">
+                <div>{{ n(row.remain_hours) }}</div>
+                <div
+                  v-if="n(row.closed_order_count) > 0"
+                  class="text-xs text-gray-400"
+                >
+                  含已结业/退班：{{ n(row.remain_hours_all) }}
+                </div>
+              </template>
+            </el-table-column>
           </template>
 
           <template #empty>

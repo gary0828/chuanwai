@@ -207,6 +207,14 @@ const ROUTES = {
           component: "finance/consumption/index",
           name: "FinanceConsumption",
           meta: { title: "课消统计" }
+        },
+        {
+          // v29（2026-10-12）：课时对账 —— 核对「出勤考勤」与「已扣流水」的差额并补扣，
+          //   修掉旧版「事件式扣课」造成的永久漏扣。涉及账目，仅 admin。
+          path: "/finance/hours-reconcile",
+          component: "finance/hours-reconcile/index",
+          name: "FinanceHoursReconcile",
+          meta: { title: "课时对账", roles: ["admin"] }
         }
       ]
     },
@@ -221,6 +229,14 @@ const ROUTES = {
           component: "attendance/students/index",
           name: "Students",
           meta: { title: "学生管理" }
+        },
+        {
+          // v29（2026-10-12）：学员档案 —— 剩余课时 / 剩余学费 / 缴费退费 / 课消流水一处看全。
+          //   金额字段由接口按角色裁剪（teacher 返回 null），故两端都可挂此菜单。
+          path: "/student/profile",
+          component: "attendance/students/profile/index",
+          name: "StudentProfile",
+          meta: { title: "学员档案" }
         },
         {
           path: "/data/classes",
@@ -279,6 +295,16 @@ const ROUTES = {
           meta: { title: "回填报告" }
         }
       ]
+    },
+    {
+      // 使用指南（2026-10-15）：面向**没有技术背景的校区老师**的单页操作说明。
+      // ★ rank 9 排在最末（不与日常业务抢位置），且 **admin 与 teacher 两份数组都要有** ——
+      //   只加一份的话，老师登录后就看不到这份指南（而老师恰恰是最需要它的人）。
+      // ★ 页面本体 src/views/guide/index.vue 是静态单页，文案在 src/views/guide/content.ts。
+      path: "/guide",
+      component: "guide/index",
+      name: "Guide",
+      meta: { title: "使用指南", icon: "ep:reading", rank: 9 }
     }
   ],
   teacher: [
@@ -388,12 +414,27 @@ const ROUTES = {
           meta: { title: "学生管理" }
         },
         {
+          // v29：学员档案（teacher 亦可看，但接口不返回任何金额字段）
+          path: "/student/profile",
+          component: "attendance/students/profile/index",
+          name: "StudentProfile",
+          meta: { title: "学员档案" }
+        },
+        {
           path: "/data/classes",
           component: "attendance/classes/index",
           name: "Classes",
           meta: { title: "班级管理" }
         }
       ]
+    },
+    {
+      // 使用指南（2026-10-15）：与 admin 的同一项。★ 两份数组必须同步，
+      // 漏掉这一份 → 老师看不到指南（详见 admin 数组里的注释）。
+      path: "/guide",
+      component: "guide/index",
+      name: "Guide",
+      meta: { title: "使用指南", icon: "ep:reading", rank: 9 }
     }
   ]
 };

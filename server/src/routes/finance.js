@@ -11,6 +11,7 @@ const { canManageStudent } = require("../utils/scope");
 const { audit } = require("../utils/audit");
 const { parseDate, parseDateTime } = require("../utils/validate");
 const { scanReferences, describeImpacts } = require("../utils/delete-guard");
+const { SOURCE, reconcile, listGaps, computeGap, findGrantOrder } = require("../utils/hours-reconcile");
 
 const { paidNetSql, REFUND_TIME_SQL } = require("../utils/money");
 
@@ -64,6 +65,42 @@ function parseHours(value, { field = "课时" } = {}) {
     return { ok: false, message: `${field}不能超过 ${MAX_HOURS}` };
   }
   return { ok: true, value: n };
+}
+
+/**
+ * v29：订单的课时包 / 课程 / 状态发生变化后，立刻对该学员做一次课时对账补扣。
+ *
+ * ★ 为什么必须在这里对账（2026-10-12 真实事故）：
+ *   用户从「线索转化」建的订单**没有课时包**（total_hours = 0），此时点名考勤
+ *   匹配不到订单 → 静默不扣；等用户后来把课时包补上，那节课已经**永久漏扣**了。
+ *   在"课时包变得可用"的这一刻做一次对账，正好把这类历史欠扣补齐。
+ *
+ * ★ 对账失败**不能**让订单操作失败 —— 订单本身已经提交成功，此时回滚等于把用户的
+ *   操作吞掉。故这里独立事务 + 失败仅记日志（对账是幂等的，下次任何触发点都会重试）。
+ */
+function reconcileQuietly(studentId, courseIds, operatorId) {
+  const list = (Array.isArray(courseIds) ? courseIds : [courseIds])
+    .map(Number)
+    .filter(c => Number.isFinite(c) && c > 0);
+  for (const cid of [...new Set(list)]) {
+    try {
+      db.exec("BEGIN");
+      reconcile(db, {
+        studentId: Number(studentId),
+        courseId: cid,
+        operatorId,
+        source: SOURCE.RECONCILE
+      });
+      db.exec("COMMIT");
+    } catch (e) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        /* 回滚失败时忽略：下一步的连接状态检查会兜住 */
+      }
+      console.error(`[hours-reconcile] 学员#${studentId} 课程#${cid} 对账失败：${e.message}`);
+    }
+  }
 }
 
 // ==================== 报班订单 ====================
@@ -158,6 +195,15 @@ router.post("/orders", auth, requireRole("admin"), (req, res) => {
   const hoursRes = parseHours(total_hours, { field: "课时包总课时" });
   if (!hoursRes.ok) return res.status(400).json({ success: false, message: hoursRes.message });
   const hours = hoursRes.value;
+  // ★ v29（2026-10-12）：课时包总课时改为**必填且大于 0**。
+  //   原由：不填课时包建出的订单 `total_hours = 0`，考勤扣课的匹配条件含 `total_hours > 0`
+  //   → **永远不会自动扣课时**，而界面毫无提示（用户以为在扣、课时只增不减）。
+  if (hours <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: "请填写「课时包总课时」（填 0 的订单考勤点名时不会自动扣课时）"
+    });
+  }
   // 报班日期：提供时必须是真实存在的 YYYY-MM-DD（未提供则取当天）
   let enrollDate = new Date().toLocaleDateString("sv");
   if (enroll_date !== undefined && enroll_date !== null && enroll_date !== "") {
@@ -180,6 +226,8 @@ router.post("/orders", auth, requireRole("admin"), (req, res) => {
     remark || ""
   );
   audit(req.user, "新增报班订单", `订单#${info.lastInsertRowid} 学员ID=${student_id}`);
+  // v29：新单生效后对账 —— 覆盖「先点名、后报班」：此前的出勤考勤这次一并补扣
+  reconcileQuietly(student_id, course_id, req.user.id);
   res.json({ success: true, data: { id: info.lastInsertRowid } });
 });
 
@@ -195,6 +243,11 @@ router.put("/orders/:id/status", auth, requireRole("admin"), (req, res) => {
   `).run(status, id);
   if (info.changes === 0) return res.status(404).json({ success: false, message: "订单不存在" });
   audit(req.user, "变更订单状态", `订单#${id} → ${status}`);
+  // v29：重新置为「在读」时对账 —— 订单退班期间产生的出勤考勤此前无法扣减，此时补齐
+  if (status === "在读") {
+    const cur = db.prepare("SELECT student_id, course_id FROM orders WHERE id = ?").get(id);
+    if (cur) reconcileQuietly(cur.student_id, cur.course_id, req.user.id);
+  }
   res.json({ success: true, data: null });
 });
 
@@ -261,8 +314,8 @@ router.put("/orders/:id", auth, requireRole("admin"), (req, res) => {
     }
     if (manualAdjust) {
       db.prepare(`
-        INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, operator_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, source, operator_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '手工调整', ?)
       `).run(
         cur.student_id,
         id,
@@ -286,6 +339,8 @@ router.put("/orders/:id", auth, requireRole("admin"), (req, res) => {
       ? `订单#${id}（剩余课时 ${prevRemain} → ${nextRemain}，已记流水 ${adjustHours} 课时）`
       : `订单#${id}`
   );
+  // v29：课时包补填后对账 —— 这正是本次事故的场景（remaining 0 → 16 之后，那节课该被补扣）
+  reconcileQuietly(cur.student_id, [cur.course_id, course_id], req.user.id);
   res.json({ success: true, data: null });
 });
 
@@ -840,16 +895,30 @@ router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
       student_count: Number(r.student_count || 0)
     }));
   } else if (dimension === "student") {
+    // ★ 2026-10-12：补 LEFT JOIN classes —— 前端「班级」列绑定 class_name，
+    //   而此前查询根本没 join 班级表 → 该列一直渲染空白（与「姓名」列同一个缺陷）。
     list = db.prepare(`
       SELECT s.id AS student_id, s.student_no, s.name AS student_name,
+             c.name AS class_name,
              ${consumedExpr} AS consumed,
              ${refundedExpr} AS refunded,
              COALESCE((SELECT SUM(o.total_hours) FROM orders o
                        WHERE o.student_id = s.id AND o.status = '在读' AND o.total_hours > 0), 0) AS total_hours,
              COALESCE((SELECT SUM(o.remain_hours) FROM orders o
-                       WHERE o.student_id = s.id AND o.status = '在读' AND o.total_hours > 0), 0) AS remain_hours
+                       WHERE o.student_id = s.id AND o.status = '在读' AND o.total_hours > 0), 0) AS remain_hours,
+             -- ★ 2026-10-12 口径透明化：上面两列只算「在读」，退班学员会显示 0
+             --   而本行又因有课消流水而出现（消耗课时 > 0）→ 自相矛盾。
+             --   增补全量口径供界面做对照说明；**不改动上面两列的语义**，
+             --   因为它们同时被「剩余课时分布」图消费，放宽会把已退班学员算进分布。
+             COALESCE((SELECT SUM(o.total_hours) FROM orders o
+                       WHERE o.student_id = s.id AND o.total_hours > 0), 0) AS total_hours_all,
+             COALESCE((SELECT SUM(o.remain_hours) FROM orders o
+                       WHERE o.student_id = s.id AND o.total_hours > 0), 0) AS remain_hours_all,
+             COALESCE((SELECT COUNT(*) FROM orders o
+                       WHERE o.student_id = s.id AND o.status <> '在读'), 0) AS closed_order_count
       FROM hour_consumptions hc
       JOIN students s ON s.id = hc.student_id
+      LEFT JOIN classes c ON c.id = s.class_id
       WHERE ${where}
       GROUP BY s.id
       ORDER BY consumed DESC
@@ -857,10 +926,14 @@ router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
       student_id: r.student_id,
       student_no: r.student_no,
       student_name: r.student_name,
+      class_name: r.class_name || "—",
       consumed: Number(r.consumed || 0),
       refunded: Number(r.refunded || 0),
       total_hours: Number(r.total_hours || 0),
-      remain_hours: Number(r.remain_hours || 0)
+      remain_hours: Number(r.remain_hours || 0),
+      total_hours_all: Number(r.total_hours_all || 0),
+      remain_hours_all: Number(r.remain_hours_all || 0),
+      closed_order_count: Number(r.closed_order_count || 0)
     }));
   } else {
     // teacher（默认）：按班级聚合，班主任为空归「未绑定班主任」
@@ -915,6 +988,103 @@ router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
       }
     }
   });
+});
+
+// ==================== 课时对账（v29） ====================
+// 背景（2026-10-12 真实事故）：原先扣课时是「事件式」的 —— 只在考勤状态发生变化的那一瞬间扣，
+//   一旦此刻匹配不到订单（没设课时包 / 还没报班 / 课程不符），就**永久漏扣且毫无提示**。
+//   本组接口把「已有出勤考勤」与「已扣流水」的差额摆到台面上，既可逐条修，也可一键全修。
+// 权限：仅 admin（涉及学员课时账目）。
+
+/** 差异清单：所有「出勤考勤 > 已扣流水」的 (学员,课程) 组合，并给出能否自动补扣 */
+router.get("/hours-reconcile", auth, requireRole("admin"), (req, res) => {
+  const gaps = listGaps(db);
+  const list = gaps.map(g => {
+    const detail = computeGap(db, g.student_id, g.course_id);
+    const order = findGrantOrder(db, g.student_id, g.course_id);
+    let reason = "";
+    if (!order) {
+      reason = "该学员在此课程下没有「在读且已设课时包」的订单，无法补扣";
+    } else if (Number(order.remain_hours) <= 0) {
+      reason = "剩余课时已为 0，请先补足课时包（补足后再对账即可继续补）";
+    }
+    return {
+      student_id: g.student_id,
+      student_no: g.student_no,
+      student_name: g.student_name,
+      course_id: g.course_id,
+      course_name: g.course_name || "未指定课程",
+      attend_count: detail.attendCount,
+      flow_count: detail.flowCount,
+      gap: detail.gap,
+      surplus: detail.surplus,
+      missing_dates: detail.missing.map(m => m.date).join("、"),
+      fixable: !reason,
+      reason
+    };
+  });
+  res.json({
+    success: true,
+    data: {
+      list,
+      total_gap: list.reduce((s, x) => s + x.gap, 0),
+      fixable_gap: list.filter(x => x.fixable).reduce((s, x) => s + x.gap, 0)
+    }
+  });
+});
+
+/** 执行对账：`{ student_id, course_id }` 修一条；`{ all: true }` 全量修。幂等，可反复执行 */
+router.post("/hours-reconcile", auth, requireRole("admin"), (req, res) => {
+  const body = req.body || {};
+  const targets = [];
+  if (body.all === true) {
+    for (const g of listGaps(db)) {
+      targets.push({ studentId: g.student_id, courseId: g.course_id });
+    }
+  } else {
+    const sid = Number(body.student_id);
+    const cid = Number(body.course_id);
+    if (!Number.isFinite(sid) || sid <= 0) {
+      return res.status(400).json({ success: false, message: "请指定学员" });
+    }
+    if (!Number.isFinite(cid) || cid <= 0) {
+      return res.status(400).json({ success: false, message: "请指定课程" });
+    }
+    targets.push({ studentId: sid, courseId: cid });
+  }
+
+  const results = [];
+  db.exec("BEGIN");
+  try {
+    for (const t of targets) {
+      const rc = reconcile(db, {
+        studentId: t.studentId,
+        courseId: t.courseId,
+        operatorId: req.user.id,
+        source: SOURCE.RECONCILE
+      });
+      results.push({
+        student_id: t.studentId,
+        course_id: t.courseId,
+        gap: rc.gap,
+        fixed: rc.fixed,
+        reason: rc.reason
+      });
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  const fixedTotal = results.reduce((s, r) => s + r.fixed, 0);
+  if (fixedTotal > 0) {
+    audit(
+      req.user,
+      "课时对账补扣",
+      `共补扣 ${fixedTotal} 课时，涉及 ${results.filter(r => r.fixed > 0).length} 个「学员+课程」`
+    );
+  }
+  res.json({ success: true, data: { results, fixed: fixedTotal } });
 });
 
 module.exports = router;

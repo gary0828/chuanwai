@@ -6,6 +6,7 @@ const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { canManageClass, canManageStudent } = require("../utils/scope");
 const { audit } = require("../utils/audit");
+const { SOURCE } = require("../utils/hours-reconcile");
 
 const router = express.Router();
 
@@ -126,7 +127,7 @@ router.put("/:id/status", auth, requireRole("admin", "teacher"), (req, res) => {
     "UPDATE orders SET remain_hours = MIN(total_hours, remain_hours + 1), updated_at = datetime('now','localtime') WHERE id = ?"
   );
   const insertCons = db.prepare(
-    "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, operator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, source, operator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   const getCourse = db.prepare("SELECT id FROM courses WHERE id = ?");
 
@@ -140,10 +141,10 @@ router.put("/:id/status", auth, requireRole("admin", "teacher"), (req, res) => {
       if (order) {
         if (toComplete) {
           deductOrder.run(order.id);
-          insertCons.run(mk.student_id, order.id, mk.course_id, mk.class_id, mk.makeup_date, 1, "扣减", req.user.id);
+          insertCons.run(mk.student_id, order.id, mk.course_id, mk.class_id, mk.makeup_date, 1, "扣减", SOURCE.MAKEUP, req.user.id);
         } else {
           refundOrder.run(order.id);
-          insertCons.run(mk.student_id, order.id, mk.course_id, mk.class_id, mk.makeup_date, 1, "回补", req.user.id);
+          insertCons.run(mk.student_id, order.id, mk.course_id, mk.class_id, mk.makeup_date, 1, "回补", SOURCE.MAKEUP, req.user.id);
         }
       }
     }
@@ -178,7 +179,7 @@ router.delete("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
       "UPDATE orders SET remain_hours = MIN(total_hours, remain_hours + 1), updated_at = datetime('now','localtime') WHERE id = ?"
     );
     const insertCons = db.prepare(
-      "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, operator_id) VALUES (?, ?, ?, ?, ?, ?, '回补', ?)"
+      "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, source, operator_id) VALUES (?, ?, ?, ?, ?, ?, '回补', '补课', ?)"
     );
     db.exec("BEGIN");
     try {

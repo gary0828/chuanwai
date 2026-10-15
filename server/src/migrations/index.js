@@ -32,7 +32,8 @@ const migrations = [
   require("./025-period-constraints-schedules"),
   require("./026-question-bank"),
   require("./027-question-bank-recycle"),
-  require("./028-question-subjects")
+  require("./028-question-subjects"),
+  require("./029-hours-consumption-source")
 ];
 
 function migrate(db) {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
 import {
@@ -460,6 +461,12 @@ onMounted(() => {
   loadClasses();
   loadData();
 });
+
+// v29：跳转「学员档案」—— 剩余课时 / 剩余学费 / 缴费退费 / 课时流水汇总页
+const router = useRouter();
+function openProfile(row: any) {
+  router.push({ path: "/student/profile", query: { id: String(row.id) } });
+}
 </script>
 
 <template>
@@ -554,8 +561,11 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" align="center" fixed="right">
+        <el-table-column label="操作" width="190" align="center" fixed="right">
           <template #default="{ row }">
+            <el-button type="primary" link @click="openProfile(row)"
+              >档案</el-button
+            >
             <el-button type="primary" link @click="openEdit(row)"
               >编辑</el-button
             >

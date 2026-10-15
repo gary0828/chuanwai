@@ -130,12 +130,19 @@ async function part1(adminTk, teacherTk) {
   console.log(`  派生路由 ${routes.length} 条`);
 
   // 白名单：无需认证即可访问
+  // 注意：本表是**精确路径**匹配（p === wp），所以 `GET /api/site-info` 被放行
+  //   不会连带放行 `GET /api/site-info/admin` 与 `PUT /api/site-info`（它们仍必须 401）。
   const WHITELIST = [
     ["POST", "/api/auth/login"],
     ["POST", "/api/auth/sms-code"],
     ["POST", "/api/auth/wechat"],
     ["POST", "/api/auth/refresh-token"],
-    ["GET", "/api/health"]
+    ["GET", "/api/health"],
+    // ↓ 2026-10-12 补录：两条均为源码注释中**明确声明**的公开接口，此前漏收导致本套件恒有 1 项失败
+    //   · site-info.js：「1. GET /api/site-info —— 免登录公开接口（登录页要用），字段白名单」
+    //   · ai.js：「→ 工作台 POST /api/ai/sso/verify（公开）换取会话」（未认证时 400 是"缺 body 参数"，非鉴权失败）
+    ["GET", "/api/site-info"],
+    ["POST", "/api/ai/sso/verify"]
   ];
   const isWhite = (m, p) => WHITELIST.some(([wm, wp]) => wm === m && p === wp);
 

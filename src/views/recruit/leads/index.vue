@@ -78,6 +78,8 @@ const convertForm = reactive({
   class_id: "",
   course_id: "",
   amount: 0,
+  // v29：可选填「课时包课时」。留空仍可转化，但该订单不会随考勤自动扣课时
+  total_hours: 0,
   remark: ""
 });
 
@@ -364,6 +366,7 @@ function openConvert(row: any) {
     class_id: "",
     course_id: row.course_id ?? "",
     amount: 0,
+    total_hours: 0,
     remark: ""
   });
   convertVisible.value = true;
@@ -379,13 +382,21 @@ function handleConvert() {
     class_id: Number(convertForm.class_id),
     course_id: convertForm.course_id ? Number(convertForm.course_id) : null,
     amount: Number(convertForm.amount),
+    total_hours: Number(convertForm.total_hours) || 0,
     remark: convertForm.remark
   })
     .then((res: any) => {
       if (res.success) {
-        ElMessage.success(
-          `转化成功，已生成学员档案（学号 ${res.data.student_no}），请到财务补录课时包与缴费`
-        );
+        // ★ 静默即缺陷：没填课时包必须说清楚后果，不能只说"转化成功"
+        if (res.data?.hours_warning) {
+          ElMessage.warning(
+            `转化成功（学号 ${res.data.student_no}）。${res.data.hours_warning}`
+          );
+        } else {
+          ElMessage.success(
+            `转化成功，已生成学员档案（学号 ${res.data.student_no}），并建立 ${Number(convertForm.total_hours) || 0} 课时包`
+          );
+        }
         convertVisible.value = false;
         handleSearch();
         loadChannels();
@@ -855,6 +866,20 @@ onMounted(() => {
             :step="100"
             class="w-full"
           />
+        </el-form-item>
+        <el-form-item label="课时包课时">
+          <el-input-number
+            v-model="convertForm.total_hours"
+            :min="0"
+            :precision="0"
+            :step="10"
+            class="w-full"
+          />
+          <div class="mt-1 text-xs text-gray-400">
+            选填。<b class="text-amber-600"
+              >不填则订单不带课时包，考勤点名不会自动扣课时</b
+            >（可稍后到「报班管理」补填）
+          </div>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="convertForm.remark" type="textarea" :rows="2" />

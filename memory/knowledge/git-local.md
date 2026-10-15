@@ -226,3 +226,40 @@ git push … 2>&1 | tail -6 ; echo "EXIT=${PIPESTATUS[0]}"
 ```
 ★ 判据：**以远端 SHA 为准，不以退出码为准** ——
 `git rev-parse HEAD` 与 `git ls-remote gitee main` 两边一致才算真推上去了。
+
+## ★★ K-085 · 上传 / 推送一律**排除测试数据**（2026-10-15 用户拍板 · 永久规则）
+
+> 用户原话：「上传时必须排除测试数据，因为**上一次上传包含大量测试数据导致部署混乱**，
+> 此要求需作为**永久记忆长期遵守**。」
+
+**唯一执行点**：`.gitignore` 里「上传/推送一律排除测试数据」那一节。
+规则写在那儿，不靠"记得检查"（呼应 process.md 的「靠机制不靠记性」）。
+
+**边界（用户逐项确认过，别再自行放宽或收紧）**
+
+| | 类别 | 典型 |
+|---|---|---|
+| ✗ 排除 | 自然语言 e2e 试点工程 | `_verify_test/e2e-flow/`（自带 package.json + node_modules + 录制缓存） |
+| ✗ 排除 | 一次性排障 / 修复脚本 | `_verify_test/diag-*.mjs` · `_verify_test/fix-*.mjs` |
+| ✗ 排除 | 数据库本体与含真实姓名/电话/金额的截图 | `server/data/` · `evidence/`（早已排除，本条只是复核确认） |
+| ✗ 排除 | 题库 / 工作台的演示与测试数据 | 均落在 `server/data/` 与 `dist/`，已随之排除 |
+| ✓ 保留 | **成体系的回归套件** | `api-full-suite.mjs` · `ui-full-suite.py` · `verify-*` · `check-openapi.mjs` · `preflight.mjs` |
+
+**与既有规则的关系**
+
+- 与 **K-027**（只推 gitee）并列：K-027 管「**推去哪**」，K-085 管「**推什么**」。
+- 与 **2026-10-01 的决定有冲突面**：10-01 确认「`_verify_test/*` 脚本是项目资产、必须入库」
+  （当时是因为整目录被忽略，导致新 clone 后门禁全没了）。K-085 对其中
+  「一次性脚本」与「e2e 试点工程」开了例外。
+- ★ `.gitignore` 里对 **v29 课时对账的 5 个回归套件**（`verify-hours-v29` /
+  `verify-hours-reconcile` / `verify-029-reconcile` / `ui-hours-v29` / `ui-profile-summary`）
+  做了**临时排除**，并就地标注「待用户点头后删掉那几行即恢复入库」。
+  **下次会话若用户要求恢复，直接删那几行，别重新讨论。**
+
+**推送前的三条自查**（把 SKILL.md §4.3 的三步落到本条上）
+
+```bash
+git status --short | grep "^??"                                    # 未跟踪里有没有漏网的测试产物
+git diff --cached --name-only | grep -iE "\.env$|server/data/|\.db$|evidence/"   # 必为空
+git ls-files | grep -iE "e2e-flow|diag-|fix-"                      # 必为空
+```
