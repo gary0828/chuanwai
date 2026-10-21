@@ -1,5 +1,3 @@
-#!/bin/sh
-. "$(dirname "$0")/_/husky.sh"
 . "$(dirname "$0")/common.sh"
 
 [ -n "$CI" ] && exit 0
@@ -23,6 +21,15 @@ if [ -n "$NEW_MIGRATIONS" ]; then
     exit 1
   fi
 fi
+
+# 快速工程门禁（★ 2026-10-18 新增）：preflight 铁律 + 文档死命令自检，约 2 秒。
+# 只跑「快」的那部分；全量（记忆体检 / openapi / 指南 / vue-tsc）留给 CI 与交付前：
+#   node _verify_test/run-gates.mjs
+# 本机接线验证（不产生提交）：pnpm exec husky && git hook run pre-commit
+node _verify_test/run-gates.mjs --quick || {
+  echo "❌ 快速门禁未通过：修完上面的问题再提交（紧急绕过：git commit --no-verify，但 CI 仍会拦）"
+  exit 1
+}
 
 # Perform lint check on files in the staging area through .lintstagedrc configuration
 pnpm exec lint-staged

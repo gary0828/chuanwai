@@ -1,0 +1,77 @@
+# CI 最小工程门禁 —— ★ 2026-10-18 新增
+#
+# 背景：2026-10-18 深度测试报告（工程线 P1-06/P1-07）的结论是「质量门禁没有一条自动化链路真正生效」。
+#       本文件把**一定不能坏**的结构性检查接进 CI，其余暂时观察。
+#
+# 硬门禁（失败即红）：
+#   · preflight        —— 提交前铁律 / 过时表述 / 敏感数据（纯 node，无依赖）
+#   · memory check     —— 记忆系统结构体检：死链 / 孤儿知识 / 索引撒谎（纯 node）
+#   · check-openapi    —— 契约可解析 + $ref 完整性 + growth 端点覆盖（依赖 yaml）
+# 观察项（continue-on-error，失败只标记不卡合入）：
+#   · vue-tsc          —— 当前基线仍有历史类型错误，修复中（见 _verify_test/_tmp/reports/fix-engdocs.md）
+#   · eslint           —— 同上，基线未清零
+#   ★ 基线修平后：删掉两处 `continue-on-error: true`，观察项即自动转为硬门禁。
+#
+# 想连「文档死命令自检」也纳入硬门禁时，把下面的 --only 改成：
+#   node _verify_test/run-gates.mjs --only=preflight,memory,openapi,docs
+#
+# 注意：`pnpm install --frozen-lockfile` 要求 package.json 与 pnpm-lock.yaml 同步。
+#       本地改了依赖却忘了提交 lockfile，CI 会在安装步就失败（这是期望行为）。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: 工程门禁（Node 22 + pnpm 10）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm 10
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - name: 安装 Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+        env:
+          # 不在 CI 里装 git hooks（husky 的 prepare 脚本）
+          HUSKY: "0"
+
+      - name: 硬门禁（preflight / memory / openapi）
+        run: node _verify_test/run-gates.mjs --only=preflight,memory,openapi
+
+      # ── 观察项①：类型检查 ─────────────────────────────────────────────
+      # 基线修复中：当前有历史类型错误（vue-tsc 退出码非 0），先观察不卡合入。
+      # 修平后删除 continue-on-error，即为硬门禁。
+      - name: 类型检查（观察项 · 基线修复中）
+        continue-on-error: true
+        run: pnpm exec vue-tsc --noEmit --skipLibCheck
+
+      # ── 观察项②：ESLint ──────────────────────────────────────────────
+      # 同上：先观察不卡合入，避免 CI 从第一天起就常红（常红=没人看）。
+      - name: ESLint（观察项 · 基线修复中）
+        continue-on-error: true
+        run: pnpm exec eslint "{src,build}/**/*.{vue,js,ts,tsx}" --max-warnings 0
