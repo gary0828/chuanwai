@@ -1,6 +1,14 @@
 ---
 inclusion: fileMatch
-fileMatchPattern: ["src/**", "ai-workbench/**", "question-bank/**", ".env.*", "vite.config.ts", "build/**"]
+fileMatchPattern:
+  [
+    "src/**",
+    "ai-workbench/**",
+    "question-bank/**",
+    ".env.*",
+    "vite.config.ts",
+    "build/**"
+  ]
 ---
 
 # 前端（L2 · 主题）
@@ -10,7 +18,7 @@ fileMatchPattern: ["src/**", "ai-workbench/**", "question-bank/**", ".env.*", "v
 > 条目：K-002 · K-003 · K-025 · **K-036（凭证已吊销后必须静默登出）** · **K-080（模板里不能用 location/window）**
 >
 > ★ 2026-10-09 补 `question-bank/**` 到匹配模式 —— 题库是第三个前端（与工作台同构），
->   此前不在本文件的覆盖范围内，改动它不会命中本主题的教训（K-080 就是这么漏出来的）。
+> 此前不在本文件的覆盖范围内，改动它不会命中本主题的教训（K-080 就是这么漏出来的）。
 
 ## 凭证已被服务端吊销后：必须静默登出（K-036 · 2026-09-23）
 
@@ -26,10 +34,10 @@ fileMatchPattern: ["src/**", "ai-workbench/**", "question-bank/**", ".env.*", "v
 
 ## 两端差异（本项目的核心认知）
 
-| 端 | 产物位置 | 谁在用 |
-|---|---|---|
-| 教务端 `src/` | `/static/js/index-*.js` | admin / teacher 办公用 |
-| AI 工作台 `ai-workbench/src/` | **`/assets/` 顶层**（`/assets/index-*.js`） | 一线老师教学用 |
+| 端                            | 产物位置                                    | 谁在用                 |
+| ----------------------------- | ------------------------------------------- | ---------------------- |
+| 教务端 `src/`                 | `/static/js/index-*.js`                     | admin / teacher 办公用 |
+| AI 工作台 `ai-workbench/src/` | **`/assets/` 顶层**（`/assets/index-*.js`） | 一线老师教学用         |
 
 - 工作台挂 `/ai/`（统一入口），构建产物路径与教务端**不同** → 改 nginx 的 `/assets` 反代要格外小心（见 `deploy.md` K-008）
 - 两端**共用一套视觉语言**，但工作台有自己的构建与 base
@@ -89,9 +97,10 @@ fileMatchPattern: ["src/**", "ai-workbench/**", "question-bank/**", ".env.*", "v
 
 ```js
 // ✅ 可靠
-const lis = [...document.querySelector('.el-menu').children];
+const lis = [...document.querySelector(".el-menu").children];
 // ❌ 实测漏项：多层 .el-menu 嵌套下 `.el-menu > li` 匹配不完整
 ```
+
 （同一份页面，`.el-menu > li` 只拿到 7 个分组、`children` 拿到全部 10 个一级项 —— 差异实为选择器问题，排查花了一轮）
 
 **③ 「默认授课教师」是展示字段**：`courses.teacher` 仅作课程列表展示，
@@ -102,10 +111,12 @@ const lis = [...document.querySelector('.el-menu').children];
 **症状**：用户点「导入」选完文件后**完全没有反应** —— 无请求、无消息、无弹窗。
 
 **根因**（Element Plus 类型定义是铁证）：
+
 ```ts
 export interface UploadRawFile extends File { uid: number }   // ← 没有 raw 字段
 beforeUpload: (rawFile: UploadRawFile) => ...
 ```
+
 `raw` **只存在于 change 事件的 `UploadFile`**（`UploadFile.raw?: UploadRawFile`）。
 代码写 `reader.readAsArrayBuffer(file.raw)` → 实参是 `undefined` → **FileReader 同步抛 TypeError**；
 而 `try/catch` 只包住了 `reader.onload` 回调的**内部**，这个同步抛错**无人接管** → 彻底静默。
@@ -114,6 +125,7 @@ beforeUpload: (rawFile: UploadRawFile) => ...
 
 **正确写法**（本项目 `profile/index.vue`、`settings/index.vue` 的 `beforeUpload(file: UploadRawFile)`
 就是正确参考实现）：
+
 - 参数标 `UploadRawFile`（**别用 `any`**），函数体直接用 `file` 本身 / `file.type` / `file.size`
 - 需要真上传时，`UploadRequestOptions.file` 才是 `UploadRawFile`
 - ★ **`try/catch` 必须能覆盖"同步抛出"的那一段** —— 把 try 只写在异步回调里，等于没包
@@ -139,7 +151,7 @@ beforeUpload: (rawFile: UploadRawFile) => ...
 ```scss
 .el-table .el-table__body-wrapper td.el-table-fixed-column--right,
 .el-table .el-table__body-wrapper td.el-table-fixed-column--left {
-  background-color: var(--surface-card) !important;   /* ★ 必须 !important */
+  background-color: var(--surface-card) !important; /* ★ 必须 !important */
 }
 /* hover / striped 也要跟随，否则出现"一行两种底色"的割裂 */
 ```
@@ -176,10 +188,11 @@ beforeUpload: (rawFile: UploadRawFile) => ...
 选中值渲染在 `.el-select`（或 `.el-select__selected-item`）的**可见文本**里。
 
 **正确判据**（`_verify_test/ui-full-qbank.py` 的 `read_select`）：
+
 ```js
-const sel = hit.querySelector('.el-select');
-const txt = (sel.innerText || '').trim();     // ← 这才是选中值
-const isPlaceholder = txt === '必选' || txt.startsWith('可不选');  // 未选中时显示的是 placeholder
+const sel = hit.querySelector(".el-select");
+const txt = (sel.innerText || "").trim(); // ← 这才是选中值
+const isPlaceholder = txt === "必选" || txt.startsWith("可不选"); // 未选中时显示的是 placeholder
 ```
 
 **对照验证法**：拿一个**有默认值**的 select（如「状态」默认"草稿"）当对照 ——
@@ -187,10 +200,10 @@ const isPlaceholder = txt === '必选' || txt.startsWith('可不选');  // 未�
 "读取方式错" 与 "真的没选中"。
 
 **★ 教训（比这个 bug 本身更重要）**：
-  连续两轮把**验证工具的缺陷**归因成"产品/工具局限"并写进 SKIP，
-  还编了三条合理解释（toast 竞争、Teleport 不稳定、后端 CHECK 兜底）。
-  **「解释得通」不等于「解释得对」** —— 当时应该做的是
-  「找一个已知会成功的对照组」（如那个有默认值的 select），而不是解释为什么测不出。
+连续两轮把**验证工具的缺陷**归因成"产品/工具局限"并写进 SKIP，
+还编了三条合理解释（toast 竞争、Teleport 不稳定、后端 CHECK 兜底）。
+**「解释得通」不等于「解释得对」** —— 当时应该做的是
+「找一个已知会成功的对照组」（如那个有默认值的 select），而不是解释为什么测不出。
 
 ## ★★ K-074 · `el-dialog` 里 el-select 面板的**定位**要挑「当前可见的」
 
@@ -205,26 +218,34 @@ const isPlaceholder = txt === '必选' || txt.startsWith('可不选');  // 未�
 ## `<script setup>` 的模板里不能用 `location` / `window`（K-080 · 2026-10-09）
 
 **症状**：按钮点了**毫无反应**，也不弹任何错误 —— 控制台只有一条：
+
 ```
 TypeError: Cannot set properties of undefined (setting 'href')
 ```
 
 **根因**：把宿主对象直接写进了**模板表达式**：
+
 ```html
 <!-- ❌ 坏了 -->
 @click="() => (location.href = crmUrl())"
 ```
+
 `<script setup>` 的模板编译会给「模板里的自由标识符」加 `_ctx.` 前缀，
 而 `location` / `window` / `document` **不在** Vue 的全局白名单里
 （白名单只有 `Math` / `Date` / `JSON` / `console` / `parseInt` 之类）
 ⇒ 编译成 `_ctx.location` = `undefined` ⇒ `undefined.href = …` 抛错。
 
 **修法**：宿主对象**只出现在 script 里**，模板调函数：
+
 ```ts
-function goCrm() { window.location.href = crmUrl(); }
+function goCrm() {
+  window.location.href = crmUrl();
+}
 ```
+
 ```html
-@click="goCrm"     <!-- ✅ -->
+@click="goCrm"
+<!-- ✅ -->
 ```
 
 **★ 错因与防法**：题库是从 `ai-workbench/src/App.vue` 照抄的，那儿的写法
@@ -233,10 +254,39 @@ function goCrm() { window.location.href = crmUrl(); }
 ⇒ 跨端照抄代码时，**宿主对象的前缀要连着一起来**，别只抄右边那半句。
 
 **同类检查命令**（改模板前后都值得跑）：
+
 ```bash
 grep -rn '@click="[^"]*location\|@click="[^"]*window\|{{ *location\|{{ *window' <前端目录> --include=*.vue
 ```
+
 2026-10-09 全仓扫描结果：题库 2 处坏（`App.vue` + `views/Sso.vue`）、
 工作台与教务端均为 script 内的 `window.location`（正确）。
 
 > ★ 这一条同时印证 K-050「静默即缺陷」：**点了没反应且不报错**，比报错更难查。
+
+## ★★ K-090 · `200 + success:false` 的两种失败（静默 / 假成功）与「登录态缓存不同步」（2026-10-18 UI 实测）
+
+**背景**：`utils/http/index.ts` 的响应拦截器对 **2xx 一律 `return response.data`**（不 reject），
+业务失败必须由**每个视图自己**判断 `res.success` —— 这正是 K-050 早就写过的边界。本次实测踩到两种典型：
+
+| 形态         | 现象                                                                    | 根因                                                                      |
+| ------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **静默失败** | 待办新建返回 `200 {success:false}` → **屏幕上无任何提示**，弹窗原地不动 | `todos/index.vue:194-203` 只写 `if (okRes) {...}` 没有 else               |
+| **假成功**   | 待办「完成/删除」后端失败，仍弹「已标记完成/删除成功」，刷新后行没变    | `todos/index.vue:207-219,221-236` 用 `Promise.all(...).then()` 不检查响应 |
+
+**通用修法**（二选一，推荐前者）：①拦截器统一把 `success === false` 转成 reject（带后端 message）——一处改全站受益，
+但需先 grep 全站「依赖 200 分支/故意忽略 success」的调用点；②每个视图 `if (!res.success) { ElMessage.error(res.message); return; }`，
+并用 lint/评审兜住「`if (res.success)` 无 else」这种写法（本次全站有 49 处手写 toast，模式不统一）。
+
+**另一类同源问题（登录态缓存不同步）**：`store/modules/user.ts:29-45` 的 nickname/avatar 只从**登录时写入的
+localStorage 快照**初始化，全仓从不调用 `GET /api/auth/info`；`profile` 保存只改内存不回写快照
+⇒ 改姓名/上传头像后**刷新页面又回退旧值**（服务端其实已保存）。修法：刷新/进入应用时用 `/api/auth/info`
+回填 store 并回写快照；改资料成功后同步更新两处。
+
+**写 UI 断言的启发**：这类「绿 ≠ 对」的缺陷，必须断言**行为**（Toast 文案是否出现/弹窗是否关闭/刷新后值是否保持），
+而不是「请求发出去了」。
+
+> ✅ **2026-10-19 已修复并 UI 实证**：拦截器对 `success===false` 统一提示 + reject（支持 `skipErrorToast`）；
+> 待办新建/完成/删除均校验响应；user store 初始化/刷新时调 `/api/auth/info` 回填昵称头像并回写 localStorage；
+> 手机号加 `^1[3-9]\d{9}$` 校验；`main.ts` 站点信息不再阻塞 mount。回归：A 静默失败→有提示且弹窗不误关、
+> B 假成功→不弹成功文案、C 刷新后顶栏/快照为服务端真实资料、E 非法手机号被表单拦下。

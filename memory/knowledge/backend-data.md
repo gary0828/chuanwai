@@ -11,7 +11,7 @@ fileMatchPattern: ["server/**", "docs/04-API/**"]
 ## 技术底座
 
 - Express 4 + **`node:sqlite`**（Node 内置，零原生编译）+ JWT 双 Token + bcryptjs
-- 数据库版本 **v25**（2026-10-03；`feature-dev-flow` §4.1 写基线 v25，注：`docs/00-导航.md` §6 仍写 v21是陈旧表述）；迁移是**单向**的（新代码可能依赖新列 → 降级必须同时还原程序与数据）
+- 数据库版本 **v29**（2026-10-18 核实；此前记的 v25 已过时）；迁移是**单向**的（新代码可能依赖新列 → 降级必须同时还原程序与数据）
 - ★ **`node:sqlite` 支持 FTS5**（2026-10-07 核实）→ 题库全文检索用 FTS5 虚拟表，
   **不引向量库**（遵 K-030：<1 万条时文件/SQL 方案更准且零基础设施）
 - 迁移文件 `server/src/migrations/0NN-*.js`，**版本号连续递增，跳号会导致启动终止**
@@ -99,11 +99,11 @@ SELECT COUNT(*) FROM class_sessions WHERE status = '已调课';  -- 必须为 0
 > 把"改自己"混进去要么放不开权限、要么得给每个 handler 单独开口子；
 > 分开放后**"自助"与"管理员代管"两条线天然隔离**，teacher 也能用。
 
-| 端点 | 口径 |
-|---|---|
+| 端点                     | 口径                                                                                                                                                     |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PUT /api/auth/password` | 校验 `old_password` + 新密码 ≥8 位 + 新旧不得相同 → 更新后 **`revokeTokens(自己)` 强制重登**（与 H2 一致）；`users.js` 的 admin 重置他人密码**并存不变** |
-| `PUT /api/auth/profile` | 只允许 `name` / `phone`；**`username` 与 `role` 一律忽略**（前者登录标识、后者权限边界）→ 已验证传 `role:"admin"` 提权无效 |
-| `POST /api/auth/avatar` | 落盘 `data/assets/avatars/`，`users.avatar` **只存相对路径**（ADR-008）；文件名前缀 `avatar-{用户id}` → 清旧文件时**只删本人的** |
+| `PUT /api/auth/profile`  | 只允许 `name` / `phone`；**`username` 与 `role` 一律忽略**（前者登录标识、后者权限边界）→ 已验证传 `role:"admin"` 提权无效                               |
+| `POST /api/auth/avatar`  | 落盘 `data/assets/avatars/`，`users.avatar` **只存相对路径**（ADR-008）；文件名前缀 `avatar-{用户id}` → 清旧文件时**只删本人的**                         |
 
 - **两处硬编码容易漏**：`avatar` 在 `auth.js` 的 `buildLoginData`（登录返回）与 `GET /info`（刷新后拉取）**各写一次**，
   只改一处会表现为「登录后头像生效、刷新后失效」。改这类"身份字段"必须 `grep` 全量写入点。
@@ -150,11 +150,11 @@ SELECT COUNT(*) FROM class_sessions WHERE status = '已调课';  -- 必须为 0
 
 **本项目实测三处**（详见 `docs/08-参考/功能做精审计-2026-09-26.md`）：
 
-| 删除 | 漏检的表 | 外键行为 | 真实后果 |
-|---|---|---|---|
-| **课程** | `orders` / `teaching_assignments` | SET NULL / CASCADE | 订单 `course_id` 被置空 → **该订单的学员以后点名永不扣课时** |
-| **学期** | `teaching_assignments` / `class_sessions` | CASCADE / SET NULL | 任课关系被级联删除、课次失去学期归属 |
-| **订单** | `hour_consumptions` | CASCADE | 课消流水消失 → 课消收入凭空减少且不可追溯 |
+| 删除     | 漏检的表                                  | 外键行为           | 真实后果                                                     |
+| -------- | ----------------------------------------- | ------------------ | ------------------------------------------------------------ |
+| **课程** | `orders` / `teaching_assignments`         | SET NULL / CASCADE | 订单 `course_id` 被置空 → **该订单的学员以后点名永不扣课时** |
+| **学期** | `teaching_assignments` / `class_sessions` | CASCADE / SET NULL | 任课关系被级联删除、课次失去学期归属                         |
+| **订单** | `hour_consumptions`                       | CASCADE            | 课消流水消失 → 课消收入凭空减少且不可追溯                    |
 
 **范本**：`server/src/routes/classes.js:164-182` —— 删班前把
 学生 / 课表 / 考试 / 调课 / 补课 / 课消 **全查一遍**，命中即拒绝并说明原因。
@@ -164,9 +164,11 @@ SELECT COUNT(*) FROM class_sessions WHERE status = '已调课';  -- 必须为 0
 （`students.js:396-417` 返回 `cascade`，但 `students/index.vue:330` 用的是写死文案 → 用户盲确认）。
 
 **检查口诀**：写 `DELETE` 前先列出"谁指向我"——
+
 ```bash
 grep -n "REFERENCES <表名>" server/src/migrations/*.js   # 或查 server/database.md
 ```
+
 逐个看 `ON DELETE` 后面的行为：**CASCADE = 会删你数据；SET NULL = 会改你数据**，两者都必须拦或提示。
 
 ## 改持久化的自检
@@ -183,13 +185,14 @@ grep -n "REFERENCES <表名>" server/src/migrations/*.js   # 或查 server/datab
 
 本题实例（题库系统）：
 
-| 版 | 我抓的 | 为什么错 |
-| --- | --- | --- |
-| v1 | Excel 批量导入 | 那是手工活，参考系统的价值恰恰是**不用手工** |
-| v2 | **智能录题 / 录题效率** | 「智能录题」只是系统菜单里的**一个入口**，不是骨架 |
-| v3 | ✅ **系统本身**（六子系统 + 闭环） | 按业务链重建后才看清全貌 |
+| 版  | 我抓的                             | 为什么错                                           |
+| --- | ---------------------------------- | -------------------------------------------------- |
+| v1  | Excel 批量导入                     | 那是手工活，参考系统的价值恰恰是**不用手工**       |
+| v2  | **智能录题 / 录题效率**            | 「智能录题」只是系统菜单里的**一个入口**，不是骨架 |
+| v3  | ✅ **系统本身**（六子系统 + 闭环） | 按业务链重建后才看清全貌                           |
 
 **正确姿势**：
+
 1. **先把竞品的菜单按业务链重排**，看它到底覆盖了哪条完整链路。
    本题真骨架：`录题 → 题库管理 → 组卷 → 试卷 → 作答 → 阅卷 → 错题 → 学情 → 沉淀回题库`
 2. 区分**「手段」与「目的」**：录题效率是手段，「系统越用越准」才是目的（闭环）。
@@ -237,6 +240,7 @@ grep -n "REFERENCES <表名>" server/src/migrations/*.js   # 或查 server/datab
 **验证脚本**：`node server/scripts/test-ai-parse.mjs`（PASS 22 / FAIL 0，含「真JSON 转义不被破坏」反向用例）
 
 **推广判据**：
+
 1. 写任何「模型输出 → 结构化」的解析器，先问一句：**会不会解析成功但内容变错？**
 2. 反向验证不能省：只测「正常输入」会漏，必须专门喂「合法但语义错」的输入。
 3. 这是 **K-038（Vue 属性插值）、K-050（静默即缺陷）的同型病**：不报错，只在运行时表现为「东西不见了」。
@@ -254,6 +258,7 @@ grep -n "REFERENCES <表名>" server/src/migrations/*.js   # 或查 server/datab
 按 `/(\$\$[\s\S]*?\$\$|\$[^$\n]*\$)/g` 切片，**偶数段转义拼接、奇数段剥掉分隔符再渲染**。
 
 **配套三条**：
+
 1. `stemPreview()` 截断时**必须保留 `$`** —— 剥掉就再也渲染不出来了（会露出裸`\vec`）。
 2. 「无裸露 LaTeX」断言**只能测 `.qb-question` 范围内**，
    不能测 `document.body` —— 输入框 textarea 里本来就有 LaTeX 源码（那是对的），会误报。
@@ -311,12 +316,15 @@ POST / PUT **共用同一个函数**（避免两套清洗逻辑漂移）。
 | 无条件 `document.querySelectorAll('.el-overlay').forEach(n=>n.remove())` | 会把**紧接着打开的新对话框**也删掉 → 下一步填表时 textarea 找不到 |
 
 **正解**（`_verify_test/ui-full-qbank.py` 的 `_ensure_no_dialog`）：
+
 1. 先对**可见**的 `.el-dialog` 点它自己的「取消」按钮（JS click）；
 2. 等动画；
 3. 兜底**只移除仍有可见对话框的** overlay：
    ```js
-   const vis = [...document.querySelectorAll('.el-dialog')].filter(d => d.offsetParent !== null);
-   vis.forEach(d => (d.closest('.el-overlay') || d).remove());
+   const vis = [...document.querySelectorAll(".el-dialog")].filter(
+     d => d.offsetParent !== null
+   );
+   vis.forEach(d => (d.closest(".el-overlay") || d).remove());
    ```
 4. ★ 必须在**打开新对话框之前**调用（它是「清场」，不是「关对话框」）。
 
@@ -328,21 +336,29 @@ POST / PUT **共用同一个函数**（避免两套清洗逻辑漂移）。
 另外**非 filterable 的 select，其 `input` 是 `readonly`，不能 `type()`**。
 
 **正解**：不点选项，改用 **JS 直接点面板里的选项**（按选项文本特征定位面板，避开同名项）：
+
 ```js
-const panels = [...document.querySelectorAll('.el-select-dropdown')];
+const panels = [...document.querySelectorAll(".el-select-dropdown")];
 const hit = panels.find(p => {
-  const items = [...p.querySelectorAll('.el-select-dropdown__item')].map(n => n.innerText.trim());
-  return items.includes('自编') && items.includes('授权题库');  // ★ 用特征集，别用单项
+  const items = [...p.querySelectorAll(".el-select-dropdown__item")].map(n =>
+    n.innerText.trim()
+  );
+  return items.includes("自编") && items.includes("授权题库"); // ★ 用特征集，别用单项
 });
-const opt = [...hit.querySelectorAll('.el-select-dropdown__item')].find(n => n.innerText.trim() === '自编');
-opt.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+const opt = [...hit.querySelectorAll(".el-select-dropdown__item")].find(
+  n => n.innerText.trim() === "自编"
+);
+opt.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 ```
+
 ★ **必须用「特征集」而不是单个文本**：页面里有多个 select，选项文本会重名（如「自编」在来源与自定义里都有）。
 
 ★ **取值要按 label 精确定位**：`document.querySelector('.el-dialog .el-select input')` 拿到的是**第一个** select（可能是「状态」而不是「来源」）→ 读出来永远是「草稿」，看起来像"没选中"。正确写法：
+
 ```js
-const hit = [...document.querySelectorAll('.el-form-item')].find(el =>
-  el.querySelector('.el-form-item__label')?.innerText.trim() === '来源');
+const hit = [...document.querySelectorAll(".el-form-item")].find(
+  el => el.querySelector(".el-form-item__label")?.innerText.trim() === "来源"
+);
 ```
 
 ## ★★ K-071 · 跨语言嵌代码的转义地狱只有解法：别在一个语言里嵌另一个语言
@@ -373,21 +389,22 @@ const hit = [...document.querySelectorAll('.el-form-item')].find(el =>
 ### 三个易漏点（都是实测踩到的）
 
 **① 列表 SELECT 要返回 `course_id`**
-   加了过滤条件但忘了在 SELECT 里带上该字段 → 前端无法标记题目归属、
-   验证脚本也读不到（`undefined`）。**过滤与返回是两件事，都要做。**
+加了过滤条件但忘了在 SELECT 里带上该字段 → 前端无法标记题目归属、
+验证脚本也读不到（`undefined`）。**过滤与返回是两件事，都要做。**
 
 **② 查重有**两处独立实现**
-   `routes/qbank.js`（录入前查重）与 `routes/qbank-ocr.js`（识别后顺手查重）。
-   我只改了前者 → 物理题会被告知"与数学题重复"。
-   **横向扫描（grep 所有 `FROM questions`）才发现。**
+`routes/qbank.js`（录入前查重）与 `routes/qbank-ocr.js`（识别后顺手查重）。
+我只改了前者 → 物理题会被告知"与数学题重复"。
+**横向扫描（grep 所有 `FROM questions`）才发现。\*\*
 
 **③ 校验顺序：先入参、后依赖**
-   OCR 端点的学科校验原来在 `llm.isConfigured()` **之后** → 没配 Key 时返回 **503**，
-   把「你没选学科」这个更基础的错误盖掉，老师会去翻 AI 配置。
-   **入参错误（400）必须先于依赖检查（503）** —— 这条在 generate 端点已修过一次，
-   recognize 端点又犯（同型问题的横向遗漏）。
+OCR 端点的学科校验原来在 `llm.isConfigured()` **之后** → 没配 Key 时返回 **503**，
+把「你没选学科」这个更基础的错误盖掉，老师会去翻 AI 配置。
+**入参错误（400）必须先于依赖检查（503）** —— 这条在 generate 端点已修过一次，
+recognize 端点又犯（同型问题的横向遗漏）。
 
 ### 参数顺序陷阱
+
 `buildQuestionFilter` 里条件的**追加顺序**决定了 `?` 与 `.all(...)` 的对应关系。
 查重 L2 的学科条件插在 `stem LIKE ?` **之前** → 参数也要插在 LIKE 参数之前，
 写错会静默匹配错列（不报错，只是查得不对）。
@@ -401,11 +418,13 @@ const hit = [...document.querySelectorAll('.el-form-item')].find(el =>
 → 用户读成「这个学生没有信息」（原话）。
 
 **为什么不能"统一口径"了事**：
+
 - 卡片的「剩余学费」受 **ADR-003** 约束，只能算在读订单 —— 放宽会把已退班学员的余额算进来
 - 「课消统计」的 `total_hours`/`remain_hours` 同样只算在读，**但它还被「剩余课时分布」图消费**；
   若为让表格好看而改成全量，分布图就会把已退班学员算进去
 
 **⇒ 正确做法（两条）**：
+
 1. **保留主口径语义不动**，**增补**全量口径字段（`*_all` / `*_count`）供界面做**对照说明**；
 2. 界面上**显式写出口径**（"仅统计「在读」订单" + "含已结业/退班合计：…"），
    并在主值为 0 时给**原因小字**（"无在读订单"），而不是留一个裸 0。
@@ -418,4 +437,70 @@ const hit = [...document.querySelectorAll('.el-form-item')].find(el =>
 `class_name` 则根本没在 SQL 里 join）。加列时**必须对照接口实际返回的键名**，
 否则空白列不会报错、只会被当成"数据为空"。
 
+---
 
+## K-086 · SQL 占位符顺序 ≠ 参数数组顺序 → teacher 带过滤条件时**恒为空**（2026-10-18 动态实测）
+
+**症状**：teacher 打开学员管理选班级 → 列表空；按姓名/学号筛选、导出、请假筛选、考勤统计按班级全部为空；admin 同参数正常。
+
+**根因**：先 `const params = [...scope.params]`（权限参数在前），后 `params.push(过滤参数)`；但 SQL 拼成
+`${where}${scope.where}` —— **过滤占位符在 scope 之前**。参数整体错位 → 第一个 ? 绑到 teacherId。
+admin 的 `scope.params` 为空，所以只有 teacher 中招（极易被 admin 自测漏掉）。
+
+**实测对照**（teacher=班主任，同一隔离库）：`GET /api/students?class_id=1` admin 28 行 / teacher **0 行**；
+`/api/students/export?class_id=1` 0 vs 28；`/api/leaves?status=通过` 0 vs 11；
+`/api/attendance/statistics?class_id=1` 0 vs 28。`exams/sessions/schedules/attendance/records/trend/notifications` 正确。
+
+**位置**：`routes/students.js:47,67,73`、`:86,105`；`routes/leaves.js:31,42,51`；`routes/attendance.js:469,480,487,498`。
+
+**修法与防漏**：①所有过滤参数 push 完再拼 `[...params, ...scope.params]`，与 SQL 中 `${scope...}` 在末尾保持一致；
+②给新接口加**单测断言**：teacher 带任意过滤参数时，返回行数应等于 admin 同过滤的行数；
+③同类扫描：`grep -n "params = \[\.\.\.scope" server/src/routes/*.js`（本次 3 文件 5 处）。
+
+## K-087 · JWT「凭证类型」必须**白名单**，否则票据/网关凭证可当正式 accessToken（2026-10-18 实测提权链）
+
+**实测**：teacher 登录 → 换 `ai_agent`（只读网关凭证）→ 用它调 `/api/ai/sso/ticket` 自签 `type:"ai_sso"` 票据
+→ 把票据当 `Authorization: Bearer` 打正式接口：`GET /api/students/export` **200 并返回家长电话**、`POST /api/todos` 200 可写；
+admin 的 agent 凭证同法读 `/api/users` 200。已消耗票据 60s 内仍可重放。
+
+**根因**（两处叠加）：
+
+1. `middleware/auth.js:60-75` 只拒 `type === "refresh"`，对 `ai_sso` 等**未知类型不拒绝**；票据 payload 与 accessToken 同构（`routes/ai.js:195-206`）。
+2. `POST /api/ai/sso/ticket`（`routes/ai.js:186`）只有 `auth`，而 `ai_agent` 的路径白名单含 `/api/ai/*` → **只读凭证可无限自签票据**。
+
+**修法**：①`auth()` 白名单凭证类型：只有无 `type`（或 `type==="access"`）才当正式 token，其余一律 401；
+②`/sso/ticket` 拒绝 `ai_agent/qb_agent` 调用（或独立中间件）；③票据与 accessToken 用不同 secret 域；
+④必补回归：`ai_sso` 票据打 `/api/auth/info` 必须 401、`ai_agent` 调 `/sso/ticket` 必须 403。
+
+---
+
+## ★★ K-091 · 记账层必须「按实际发生额」记账；回补按同一考勤的净扣封顶（2026-10-19 修复）
+
+**实测撞到的三个「账错但 200」**（均在 v30 多课时改造后）：
+
+1. `hours-reconcile.charge()` 用 `MAX(0, remain-hours)` 截断余额，但 `hour_consumptions` 记**全额** →
+   订单 total=3/remain=0 时流水净扣=4、课消统计 consumed=4，四口径永久发散，`reconcile()` 只按条数判定补不回来。
+   修法：`charge` 先读 remain，只记 `min(want, remain)` 并返回实际值；`refund` 除了 `total-remain` 上限，还要按
+   `attendance_id` 的**净扣**（SUM 扣减−回补）封顶 —— 否则「扣 2 被截成 1、撤销回 2」凭空多出 1 课时。
+2. 考勤 session 模式 `findAttBySession` 只 `SELECT id` → `oldStatus` 恒 undefined：
+   正常→缺勤**不回补**，且同一批「正常」**重复提交重复扣**（实测 10→8→6）。修法：`SELECT id, status`。
+3. legacy 考勤（无 session_id）在 3 课时课次当天只扣 1（回退 DEFAULT_HOURS）：
+   修法：先按 `(学员班级, 课程, 日期)` 找当天课次取 `hours`，找不到才回退默认值。
+
+**必背判据**：任何「余额型字段 + 流水」的记账，**流水金额必须等于字段实际变化量**；
+`total - remain == Σ扣减 - Σ回补` 是唯一验收断言（本例已写进 Lead 回归 29 项）。
+
+## ★★ K-092 · 软删除是「跨模块扩散」：只改列表过滤 = 只做了 1/4（2026-10-19 实测）
+
+v30 把学员改为软删（`students.deleted_at`）后，实测仍有通道让已删学员「复活」：
+
+- **写入口未拦**：已删学员仍可 POST 订单/考勤/请假（200，产生流水），出现「已删学员 + 在读订单」；
+- **当前人数计数未跟随**：班级/考试的 `student_count`、`analytics.student_total`、`finance` 人数仍含已删；
+- **待办生成未跟随**：`detectTuitionLow` 给已删学员生成「课时将尽」待办。
+
+**扩散清单（软删任何主数据时逐项过）**：列表/详情/导出 → 点名与名单类 → 成绩/评价/成长 → 待办生成 →
+**写入口（建单/考勤/请假/补课）** → **当前人数类计数** → 统计报表（历史金额要保留、当前人数要排除）→
+唯一约束冲突提示（同 `student_no` 重建被挡时要提示「去已删除档案恢复」）。
+
+**修法**：`scope.canManageStudent` 对 teacher 加 `deleted_at IS NULL`；新增 `isStudentDeleted()` 给写入口返回
+400「档案已删除，请先恢复」；计数 SQL 统一加 `deleted_at IS NULL`；历史财务/课消按设计保留。

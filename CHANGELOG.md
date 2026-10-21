@@ -10,6 +10,40 @@
 
 ### 新增
 
+- **课次支持「一节课 = 多课时」**（v30）—— `class_sessions.hours`，默认 1，可按课次设（两节连上填 2）
+  - 新增 `PUT /api/sessions/:id/hours`；手工新增课次可带 `hours`；挪课自动继承原课次课时数
+  - 已产生课时流水的课次**禁止改课时数**（否则流水与账面会不一致）
+  - 扣减/回补原先硬编码 `±1`，现改由 `utils/hours-reconcile` 的 `charge()` / `refund()` 统一按课时数记账
+- **学员档案软删除**（v30）—— `students.deleted_at`，删除改为移入「已删除」，历史数据全部保留
+  - 新增 `POST /api/students/:id/restore`（仅 admin）；列表/导出支持 `deleted=1|all`
+  - 学员列表新增「档案状态」筛选与「档案」列，操作列按状态显示「删除 / 恢复」
+  - 点名、班级名单、成绩录入、成长档案、待办生成等**名单类**查询自动排除已删学员；财务与课消统计**照常包含**（用户拍板：历史数据全部保留）
+- **删除守卫接入 `classes`**（`scanReferences` 自动发现）—— 删班级前不再依赖硬编码的 6 张表清单
+
+### 修复
+
+- **删班级会静默清空课次 / 任课 / 课堂评价**（P0）：原实现硬编码检查 6 张表，而 `classes` 实际被 **12 张**表引用，其中 `class_sessions` / `teaching_assignments` / `class_evaluations` 是 CASCADE、`orders.class_id` 是 SET NULL。班级下学生已转走但学期课次已生成时，删除会连带清空课次（及其考勤锚点）并把订单班级静默置空，接口仍返回成功。现改为 `delete-guard` 自动发现，并逐项列出引用明细
+- **删学员的影响面清单少算 3 类数据**（P0）：`buildDeleteImpact` 硬编码 6 张表，漏了 `class_evaluations` / `kp_assessments` / `student_timeline`。改为 `scanReferences` 自动发现；同时因改为软删，这些数据已不再被删除，确认框文案同步改为「档案移入已删除，历史数据保留」
+- **转班追认历史业绩**：课消统计（`finance/stats/consumption` 的 teacher 维度）原按 `students.class_id`（学员**当前**班级）聚合，学员转班后原班历史课消被整笔算到新班。改为优先用流水上的 `class_id`（写入时班级快照），老流水无快照才回退当前班级
+- **课时扣减的「单一权威」注释与代码不符**：`hours-reconcile.js` 声称三处已收口，实际 `leaves.js` / `makeups.js` 仍各自写 SQL。现真正收口到 `charge()` / `refund()`，注释改为如实描述两层结构（对账层 / 记账层）
+- **删除考试的级联成绩不可见**：`DELETE /api/exams/:id` 现在回报 `{deletedScores}` 并写入审计详情
+- **删除员工的失败提示笼统**：由 `scanReferences("users")` 自动发现阻塞项，提示「被哪些表引用」而不只是「存在关联数据」
+
+### 变更
+
+- **收入口径命名统一**：新增 `revenue_accrual`（权责发生制：已消耗课时对应收入）与 `revenue_cash_net`（收付实现制：实收 − 退费）两个自解释字段，旧字段 `revenue_recognized` / `revenue_total` / `totalRevenue` **保留不动**（零破坏）。两个口径的数值均未改变
+- 学员名单类查询统一加 `deleted_at IS NULL`：`attendance`（点名 / 预警）、`classes`（班级名单）、`exams`（成绩名单）、`sessions`（课次点名）、`growth`（课评 / 知识点测评）、`timeline`、`todo-generator`、`agent`
+- 数据库基线 **v28 → v30**（补登记 v29「课时流水来源」）
+
+### 文档
+
+- 新增 `docs/08-参考/业务逻辑关联性审查-2026-10-18.md`（全仓只读审计：P0×2 / P1×3 / P2×3 / P3×1）
+- 新增项目级 skill `.workbuddy/skills/business-logic-audit/`（业务逻辑关联审查方法：5 维度 + 域地图 + 输出规范）
+- `server/database.md` 补登 v29 / v30 版本历史与 `class_sessions.hours`、`students.deleted_at` 字段
+- `docs/04-API/API.md` 与 `openapi.yaml` 同步 3 个新端点 + 2 处语义变更
+
+### 新增（既有）
+
 - **「使用指南」单页**（左侧菜单最末一项，`/#/guide`，admin 与 teacher 均可见）—— 面向**完全没有技术背景的校区老师**的保姆级操作说明
   - 六节内容：项目用途与适用场景 / 使用前的准备（含负责人一次性初始化 9 步顺序）/ 全部 36 个页面逐个的分步操作 / 四大业务流（招生转化、开学前排课、日常上课点名、课时与费用对账）/ 16 条按现象检索的常见问题 / 4 组关键注意事项
   - 排版参考 pure-admin 官方文档：右侧「本页目录」锚点导航（随滚动高亮）、顶部页内关键字搜索、编号步骤、三色提示框

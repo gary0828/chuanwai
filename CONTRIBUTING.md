@@ -6,12 +6,12 @@
 
 ## 1. 开始之前
 
-| 步骤 | 内容 |
-| --- | --- |
-| 1 | 读根目录 [README.md](README.md)，知道系统是什么、怎么跑起来 |
-| 2 | 读 `WORKBUDDY.md`（AI 开发的硬约束）与 [docs/03-开发指南/README.md](docs/03-开发指南/README.md) |
-| 3 | 按 [docs/03-开发指南/项目地图.md](docs/03-开发指南/项目地图.md) 定位要改的文件 |
-| 4 | 起后端并跑一次 `BASE=http://127.0.0.1:3000 node server/scripts/e2e-lifecycle.mjs`，确认基线 80/80 全绿 |
+| 步骤 | 内容                                                                                                   |
+| ---- | ------------------------------------------------------------------------------------------------------ |
+| 1    | 读根目录 [README.md](README.md)，知道系统是什么、怎么跑起来                                            |
+| 2    | 读 `WORKBUDDY.md`（AI 开发的硬约束）与 [docs/03-开发指南/README.md](docs/03-开发指南/README.md)        |
+| 3    | 按 [docs/03-开发指南/项目地图.md](docs/03-开发指南/项目地图.md) 定位要改的文件                         |
+| 4    | 起后端并跑一次 `BASE=http://127.0.0.1:3000 node server/scripts/e2e-lifecycle.mjs`，确认基线 80/80 全绿 |
 
 环境：Node.js ≥ 22.13、pnpm、Docker（部署验证）、Python 3.14（浏览器验证脚本）。
 
@@ -40,16 +40,16 @@
 
 ## 3. 改了什么，就必须同步什么
 
-| 你的改动 | 必须同步 |
-| --- | --- |
-| 新增 / 修改接口 | `docs/04-API/API.md` + `docs/04-API/openapi.yaml` |
-| 改表结构 | 新增迁移脚本 `server/src/migrations/0NN-*.js` + 更新 `server/database.md` |
-| 改环境变量 / 部署方式 | `docs/05-配置/`、`docs/06-部署/`、`server/.env.example` |
-| 改权限或可见范围 | `docs/03-开发指南/权限模型.md` + `docs/02-快速开始/账号与权限.md` |
-| 改路由 / 菜单 | 跑全页面冷启动巡检（见第 4 节） |
-| 新增约定或踩坑 | `docs/03-开发指南/` 对应文件 |
-| 发版 / 阶段完成 | `CHANGELOG.md` |
-| 三个月后会被质疑的决定 | `docs/07-架构与决策/ADR/ADR-NNN-*.md`（只追加不修改） |
+| 你的改动               | 必须同步                                                                  |
+| ---------------------- | ------------------------------------------------------------------------- |
+| 新增 / 修改接口        | `docs/04-API/API.md` + `docs/04-API/openapi.yaml`                         |
+| 改表结构               | 新增迁移脚本 `server/src/migrations/0NN-*.js` + 更新 `server/database.md` |
+| 改环境变量 / 部署方式  | `docs/05-配置/`、`docs/06-部署/`、`server/.env.example`                   |
+| 改权限或可见范围       | `docs/03-开发指南/权限模型.md` + `docs/02-快速开始/账号与权限.md`         |
+| 改路由 / 菜单          | 跑全页面冷启动巡检（见第 4 节）                                           |
+| 新增约定或踩坑         | `docs/03-开发指南/` 对应文件                                              |
+| 发版 / 阶段完成        | `CHANGELOG.md`                                                            |
+| 三个月后会被质疑的决定 | `docs/07-架构与决策/ADR/ADR-NNN-*.md`（只追加不修改）                     |
 
 文档规范与术语表见 [docs/01-文档规范.md](docs/01-文档规范.md)。
 
@@ -60,10 +60,14 @@
 **不能只跑 API 测试就认为功能可用**，涉及界面的改动必须在浏览器里走一遍。
 
 ```bash
-# 后端改动
+# ★ 一键工程门禁（提交前跑快速；改完代码 / 文档跑全量）
+node _verify_test/run-gates.mjs --quick                                # preflight + 文档死命令自检（约 2 秒）
+node _verify_test/run-gates.mjs                                        # + 记忆体检 / openapi / 指南体检 / vue-tsc
+
+# 后端改动（需后端起在 3000）
 BASE=http://127.0.0.1:3000 node server/scripts/e2e-lifecycle.mjs       # e2e 80 项
 BASE=http://127.0.0.1:3000 node server/scripts/analytics-smoke.mjs     # analytics 22 项
-BASE=http://127.0.0.1:3000 node _verify_test/probe-business-chain.mjs  # 业务链闭环 49 项
+node _verify_test/api-full-suite.mjs http://127.0.0.1:3000             # API 全量套件（权限 / 令牌 / 边界 / 对账）
 
 # 前端改动
 pnpm lint && node ./node_modules/vite/bin/vite.js build
@@ -75,6 +79,8 @@ python server/scripts/ui-p0-verify.py  http://localhost:18080 http://127.0.0.1:1
 bash server/scripts/docker-verify.sh                                   # 9 项
 ```
 
+- **提交前快速门禁**：`node _verify_test/run-gates.mjs --quick`（preflight + 文档死命令自检，约 2 秒），`.husky/pre-commit` 已接入；全量版 `node _verify_test/run-gates.mjs` 另含记忆体检 / openapi / 指南体检 / vue-tsc。
+- **CI**：`.github/workflows/ci.yml` 的硬门禁是 preflight / memory / openapi；`typecheck` 与 `eslint` 当前是**观察项**（`continue-on-error: true`），基线修平后再转硬门禁。
 - **改路由 / 菜单后必跑**全页面冷启动巡检（本项目曾长期存在「直达动态路由白屏」缺陷）。
 - **向用户交付前**必须用 Docker 完整跑一遍。
 - 浏览器验证用**生产构建产物**，不要用 vite dev server。

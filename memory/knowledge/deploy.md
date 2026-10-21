@@ -1,7 +1,15 @@
 ---
 inclusion: fileMatch
 fileMatchPattern:
-  ["docker-compose*.yml", "deploy/**", "Dockerfile*", "server/scripts/*.sh", ".env", ".env.*", ".dockerignore"]
+  [
+    "docker-compose*.yml",
+    "deploy/**",
+    "Dockerfile*",
+    "server/scripts/*.sh",
+    ".env",
+    ".env.*",
+    ".dockerignore"
+  ]
 ---
 
 # 部署与运维（L2 · 主题）
@@ -110,10 +118,10 @@ fileMatchPattern:
 
 **真实事故**（`server/scripts/verify-sessions.mjs`）：
 
-| 症状 | 根因 |
-|---|---|
+| 症状                                                                                            | 根因                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 第 5 次跑时 `C6` 之后**直接 TypeError 崩溃**（`freeSlot[0]` on null），**后半个脚本一条都没跑** | 挪课测试**硬编码 4 个候选时段**（11-30/12-01/12-02/12-03 第 8 节），而它**每跑一次就占用一个** → 跑满 4 次候选耗尽。实测这 4 条课次 `origin='挪课'`，创建于 09-23、09-24（正是历次运行时间） |
-| `C7 挪课成功` 假红：报"该课次已挪课不可重复挪课"，但 `C8` 又显示 `status=待上课` | `target = futureSessions[0]` 可能选到历次测试留下的"脏"课次（`related_session_id` 非空、状态却被恢复成待上课）→ 服务端**正确地**拒绝，红得没有意义 |
+| `C7 挪课成功` 假红：报"该课次已挪课不可重复挪课"，但 `C8` 又显示 `status=待上课`                | `target = futureSessions[0]` 可能选到历次测试留下的"脏"课次（`related_session_id` 非空、状态却被恢复成待上课）→ 服务端**正确地**拒绝，红得没有意义                                           |
 
 **处置（三条，可复用）**：
 
@@ -128,10 +136,10 @@ fileMatchPattern:
 
 > 项目里备份有**两条入口**（都保留，用途不同），但**技术实现必须一致**。
 
-| 入口 | 面向谁 | 产物 |
-|---|---|---|
+| 入口                          | 面向谁                             | 产物                              |
+| ----------------------------- | ---------------------------------- | --------------------------------- |
 | 应用内「系统管理 → 数据备份」 | 校区管理员，**零依赖、可自助恢复** | `server/data/backups/backup-*.db` |
-| `server/scripts/backup-db.sh` | 运维，停机外的灾难恢复通道 | `server/data/attendance-*.db` |
+| `server/scripts/backup-db.sh` | 运维，停机外的灾难恢复通道         | `server/data/attendance-*.db`     |
 
 - ★ **两条都必须用 `VACUUM INTO`**，**不要**用 `wal_checkpoint` + `copyFileSync`：
   后者会漏掉 `-wal` 里未落页的数据，**拷出来可能是损坏库**（`backup-db.sh` 的注释早就写明这点，
@@ -183,10 +191,10 @@ fileMatchPattern:
 bash server/scripts/docker-verify.sh     # 9 项：健康/前端/SPA fallback/反代/登录/数据/持久化
 ```
 
-
 ## ★★ K-067 · 新增后端依赖必须写进 `server/package.json`（2026-10-07 容器起不来）
 
 **症状**：本地 `node src/index.js` 一切正常，**容器里启动即崩**：
+
 ```
 Error: Cannot find module 'xlsx'
 Require stack: /app/src/routes/qbank.js
@@ -203,6 +211,7 @@ Require stack: /app/src/routes/qbank.js
 
 **判据**：往 `server/src` 加 `require('xxx')` 时，先问「`server/package.json` 里有吗」。
 **横向扫描命令**（一次查全）：
+
 ```bash
 for p in xlsx bcryptjs cors express jsonwebtoken helmet express-rate-limit; do
   C=$(grep -rl "require('$p')" server/src 2>/dev/null | wc -l)
@@ -212,6 +221,7 @@ done
 ```
 
 **正确加法**（写 lockfile，本地先验再重建镜像）：
+
 ```bash
 cd server && npm install --package-lock-only --registry=https://registry.npmmirror.com <pkg>@<ver>
 npm ci --omit=dev && node -e "require('<pkg>')"   # 本地先验
@@ -227,6 +237,7 @@ npm ci --omit=dev && node -e "require('<pkg>')"   # 本地先验
 **这是 K-053 红线（「不要用宿主机进程在容器运行时写库」）的当场复发。**
 
 **正确顺序**：
+
 ```bash
 # ★ 任何备份/迁移/重建之前：先停开发进程
 netstat -ano | grep ":3000" | grep LISTENING        # 找 PID
@@ -242,6 +253,7 @@ docker exec attendance-server wget -qO- http://127.0.0.1:3000/api/health
 ## ★★ K-075 · 本机直连 SQLite 会读到**陈旧快照**，并让容器报 `disk I/O error`
 
 **症状**（2026-10-07，给题库做数据卫生检查时踩到）：
+
 - 本机 `node -e "new DatabaseSync('server/data/attendance.db')"` 读出 **33 道题**
 - 同一个文件，通过**容器 API** 查只有 **2 道**
 - `docker exec ... require('node:sqlite')` 直读报 **`disk I/O error`**
@@ -252,6 +264,7 @@ SQLite 的 WAL 允许多读者，但**跨容器/宿主边界**时（不同 mount
 **这是 K-068 的延伸** —— 当时只知道"备份会失败"，现在知道**读也会读到错的数据**。
 
 **铁律**：**容器在跑时，查数据一律走 API，不要本机直连数据库文件。**
+
 ```bash
 # ✗ 不要（会读到不一致快照）
 node -e "...new DatabaseSync('server/data/attendance.db')..."
@@ -268,6 +281,7 @@ curl -s -H "Authorization: Bearer $T" http://127.0.0.1:18080/api/qbank/overview
 **症状**：回收站上线后，测试数据越跑越多，最多堆了 28 道。
 
 **根因有两层**：
+
 1. `batch-delete` 变成软删后**不再真删**，只调它 = 数据全进回收站（第一层，容易想到）；
 2. **单轮清理会漏**：数据在「正常列表」与「回收站」两处，
    一轮里「先查列表→软删，再查回收站→彻底删」，
@@ -276,10 +290,55 @@ curl -s -H "Authorization: Bearer $T" http://127.0.0.1:18080/api/qbank/overview
 
 **正解**（`purge_by_keyword`，三个 UI 脚本共用同一份）：
 **循环**「列表→软删，回收站→彻底删」，直到某一轮什么都没清掉为止（上限 5 轮）。
+
 ```python
 for _ in range(max_rounds):
     n = 0
     ...清列表...; ...清回收站...
     if n == 0: break
 ```
+
 **并断言最终两处都为 0**（只断言列表为 0 会漏掉回收站的堆积）。
+
+---
+
+## ★★ K-089 · 容器未设 `TZ` → `localtime` 实为 UTC；`DATA_DIR` 只重定位 DB 不覆盖 assets/backups（2026-10-18 深度测试）
+
+**两处「环境假设」在本地/容器间不一致，都会静默出错：**
+
+| #   | 事实                                                                                                                                                                      | 后果                                                                                                                                                                                                                                                       |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `server/Dockerfile`/`deploy/Dockerfile.unified`/`docker-compose.yml` 都**没有设 `TZ`**；容器默认 UTC                                                                      | 代码 122 处 `datetime('now','localtime')` + 大量 `new Date().toLocaleDateString("sv")` → 生产时间戳比本地（Asia/Shanghai）**早 8 小时**；凌晨 0–8 点建的考试/报班/考勤**默认日期落到前一天**。本机开发（UTC+8）与容器（UTC）混写同一个库时更乱             |
+| 2   | `db.js` 支持 `process.env.DATA_DIR`，但 `utils/backup.js:7-9`、头像（`auth.js:14`）、站点图片（`site-info.js:40`）、题库配图（`qbank.js:1177`）都**硬编码 `server/data`** | 用 `DATA_DIR` 起隔离/测试实例时：备份列表读的是**主数据目录**；执行「恢复」会覆盖**主库**而对当前进程无效（假恢复）；上传头像会写进**主数据目录**并清理同前缀旧文件 —— 2026-10-18 测试即因此误删主数据目录 teacher 的头像文件（后用同名占位 PNG 回填引用） |
+
+**修法**：
+
+- 时区：compose/Dockerfile 加 `TZ=Asia/Shanghai`（Node 与 SQLite `localtime` 同时生效）；长期方案是 DB 存 UTC、前端按浏览器时区渲染。
+- 数据目录：从 `db.js` 导出 `{ dataDir, dbPath }`，backup/assets 一律引用；`DATA_DIR` 支持不完整时，禁止用它做「隔离环境」，或先把它补全再用于测试。
+
+**验收断言**：容器内 `node -e "console.log(new Date().toString())"` 应为 `GMT+0800`；隔离实例 `POST /api/backups` 后检查 `<DATA_DIR>/backups` 出现文件、`server/data/backups` 无新文件。
+
+> ✅ **2026-10-19 已修复**：新增 `server/src/utils/paths.js`（唯一路径入口）—— `db.js`/`backup.js`/头像/站点图/
+> 题库配图/`/assets` 静态目录全部跟随 `DATA_DIR`；恢复前做 `integrity_check` + 版本校验；迁移前自动
+> `VACUUM INTO` 备份（保留 5 份）；`PRAGMA busy_timeout=5000`；compose/Dockerfile 已加 `TZ=Asia/Shanghai`。
+> 验收：隔离环境实测备份/恢复/上传均落 `<DATA_DIR>`，`server/data` 无新增（fix-dataops 33/33）。
+
+---
+
+## ★ K-094 · 没有 npm 修复版的 CVE：用官方 tarball 换源 + overrides，审计看 `--prod`（2026-10-19）
+
+**事实**：`xlsx@0.18.5` 两个 CVE 的 advisory `patched_versions = "<0.0.0"` → **npm 渠道永远无修复版**；
+`pnpm audit` 默认 registry（npmmirror）不支持 audit 端点，必须临时 `--registry=https://registry.npmjs.org`。
+修复前 root prod：26 high；后端含 1 critical（proxy-addr，与 `trust proxy` 同用）+1 high（xlsx）。
+
+**做法**：
+
+1. xlsx → SheetJS 官方 CDN tarball **0.20.3**（`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`），
+   直接写进 root + `server/package.json`（lock 里存 URL）；API 兼容（read/utils/write 实测通过）。
+   ⚠ 代价：Docker 构建需能访问 cdn.sheetjs.com；离线环境要自托管 tarball。
+2. 直接依赖升级 axios / js-cookie / echarts；`pnpm.overrides` 收紧 lodash/lodash-es/defu/picomatch/form-data/
+   postcss/source-map-js/@vue/server-renderer；`server/package.json` 的 `overrides` 把 proxy-addr 固定 2.0.8。
+3. 结果：`pnpm audit --prod` **high/critical 26 → 0**（剩 3 moderate / 1 low，多为构建期依赖）。
+
+**判据**：`audit --prod` 的 high/critical 必须是 0；升级后必须重跑 `vite build` + 后端接口冒烟，
+因为 override 可能改变传递依赖行为。
