@@ -15,6 +15,7 @@ import {
   refreshTokenApi,
   logoutApi
 } from "@/api/user";
+import { getMyProfile } from "@/api/attendance";
 import { useMultiTagsStoreHook } from "./multiTags";
 import {
   type DataInfo,
@@ -44,25 +45,82 @@ export const useUserStore = defineStore("pure-user", {
     loginDay: 7
   }),
   actions: {
+    /**
+     * 把内存里的用户信息回写 `user-info` 快照（localStorage）
+     *
+     * 背景（P2-2）：state 的初值只来自这份快照。改过姓名/头像后若不回写，
+     * 刷新页面就退回旧值 —— 服务端其实早存对了，只是前端没人再读一次。
+     * 保留快照里原有的 `refreshToken` / `expires`（本方法只管资料字段）。
+     */
+    syncUserInfoSnapshot() {
+      const snapshot = storageLocal().getItem<DataInfo<number>>(userKey);
+      // 未登录（无快照）时不凭空造一份
+      if (!snapshot) return;
+      storageLocal().setItem(userKey, {
+        ...snapshot,
+        avatar: this.avatar,
+        username: this.username,
+        nickname: this.nickname,
+        roles: this.roles,
+        permissions: this.permissions
+      });
+    },
+    /**
+     * 回填当前登录用户的最新资料（`GET /api/auth/info`）
+     *
+     * 调用时机：登录成功后、应用启动（刷新页面）时（见 `main.ts`）。
+     * 失败静默：401/网络错误已由全局响应拦截器统一提示，这里不重复弹、也不抛。
+     */
+    async loadUserInfo() {
+      try {
+        const res = (await getMyProfile()) as {
+          success?: boolean;
+          data?: {
+            username?: string;
+            name?: string;
+            nickname?: string;
+            avatar?: string;
+            roles?: Array<string>;
+            permissions?: Array<string>;
+          };
+        };
+        if (!res?.success || !res.data) return;
+        const { username, nickname, name, avatar, roles, permissions } =
+          res.data;
+        // 逐字段判断：接口没给的字段不要拿空值覆盖已有值
+        if (username) this.SET_USERNAME(username);
+        if (nickname || name) this.SET_NICKNAME(nickname || name);
+        if (typeof avatar === "string") this.SET_AVATAR(avatar);
+        if (Array.isArray(roles) && roles.length) this.SET_ROLES(roles);
+        if (Array.isArray(permissions)) this.SET_PERMS(permissions);
+      } catch {
+        // 静默：不阻塞启动/登录，也不与全局错误提示重复
+      }
+    },
     /** 存储头像 */
     SET_AVATAR(avatar: string) {
       this.avatar = avatar;
+      this.syncUserInfoSnapshot();
     },
     /** 存储用户名 */
     SET_USERNAME(username: string) {
       this.username = username;
+      this.syncUserInfoSnapshot();
     },
     /** 存储昵称 */
     SET_NICKNAME(nickname: string) {
       this.nickname = nickname;
+      this.syncUserInfoSnapshot();
     },
     /** 存储角色 */
     SET_ROLES(roles: Array<string>) {
       this.roles = roles;
+      this.syncUserInfoSnapshot();
     },
     /** 存储按钮级别权限 */
     SET_PERMS(permissions: Array<string>) {
       this.permissions = permissions;
+      this.syncUserInfoSnapshot();
     },
     /** 存储是否勾选了登录页的免登录 */
     SET_ISREMEMBERED(bool: boolean) {
@@ -77,7 +135,12 @@ export const useUserStore = defineStore("pure-user", {
       return new Promise<UserResult>((resolve, reject) => {
         getLogin(data)
           .then(data => {
-            if (data?.success) setToken(data.data);
+            if (data?.success) {
+              setToken(data.data);
+              // 登录响应只带登录那一刻的资料，补拉一次最新资料（P2-2）；
+              // 不 await：拿不到也不该拖慢进入系统，失败由 loadUserInfo 自己吞掉
+              void this.loadUserInfo();
+            }
             resolve(data);
           })
           .catch(error => {

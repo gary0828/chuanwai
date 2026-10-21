@@ -29,11 +29,14 @@ const METHOD_OPTIONS = [
   { label: "转账", value: "转账" },
   { label: "扫码", value: "扫码" }
 ];
+/** `el-tag` 的 type 只接受这几个字面量；用 `Record<string, string>` 会触发 TS2322 */
+type TagType = "primary" | "success" | "warning" | "danger" | "info";
+
 const METHOD_TAG = {
   现金: "success",
   转账: "primary",
   扫码: "warning"
-} as Record<string, string>;
+} as Record<string, TagType>;
 
 // 新增缴费
 const createVisible = ref(false);
@@ -117,11 +120,16 @@ function loadStudentOrders(studentId: number) {
     status: "在读",
     page: 1,
     pageSize: 50
-  }).then((res: any) => {
-    orderOptions.value = (res.success ? res.data.list : []).filter(
-      (o: any) => o.student_id === studentId
-    );
-  });
+  })
+    .then((res: any) => {
+      orderOptions.value = (res.success ? res.data.list : []).filter(
+        (o: any) => o.student_id === studentId
+      );
+    })
+    .catch(() => {
+      // 失败（含 200+success:false）时清空下拉：别把上一个学员的订单留在里面
+      orderOptions.value = [];
+    });
 }
 
 function openCreate() {

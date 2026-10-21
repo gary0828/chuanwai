@@ -42,9 +42,7 @@ function capabilities() {
   const attendanceCount = tableCount("attendances");
   const scoreCount = tableCount("exam_scores");
   const hourOrderCount = Number(
-    db
-      .prepare("SELECT COUNT(*) AS c FROM orders WHERE total_hours > 0")
-      .get().c
+    db.prepare("SELECT COUNT(*) AS c FROM orders WHERE total_hours > 0").get().c
   );
   return {
     students: studentCount > 0,
@@ -111,7 +109,7 @@ router.get("/classes/:id/overview", auth, (req, res) => {
   const studentRows = db
     .prepare(
       `SELECT s.id, s.student_no, s.name, s.gender, s.status, s.enroll_date
-       FROM students s WHERE s.class_id = ? ORDER BY s.id`
+       FROM students s WHERE s.class_id = ? AND s.deleted_at IS NULL ORDER BY s.id`
     )
     .all(classId);
 
@@ -184,7 +182,10 @@ router.get("/classes/:id/overview", auth, (req, res) => {
     const avgRate = rates.length
       ? Math.round((rates.reduce((a, b) => a + b, 0) / rates.length) * 10) / 10
       : null;
-    const trend = rates.length >= 2 ? Math.round((rates[rates.length - 1] - rates[0]) * 10) / 10 : null;
+    const trend =
+      rates.length >= 2
+        ? Math.round((rates[rates.length - 1] - rates[0]) * 10) / 10
+        : null;
     const hour = hourMap.get(id);
 
     return {
@@ -220,10 +221,14 @@ router.get("/classes/:id/overview", auth, (req, res) => {
     attendance_sessions: students.reduce((n, s) => n + s.attendance.total, 0),
     absent_total: students.reduce((n, s) => n + s.attendance.absent, 0),
     score_avg: scored.length
-      ? Math.round((scored.reduce((n, s) => n + s.avg_rate, 0) / scored.length) * 10) / 10
+      ? Math.round(
+          (scored.reduce((n, s) => n + s.avg_rate, 0) / scored.length) * 10
+        ) / 10
       : null,
     excellent_rate: scored.length
-      ? Math.round((scored.filter(s => s.avg_rate >= 90).length / scored.length) * 1000) / 10
+      ? Math.round(
+          (scored.filter(s => s.avg_rate >= 90).length / scored.length) * 1000
+        ) / 10
       : null,
     scored_students: scored.length
   };

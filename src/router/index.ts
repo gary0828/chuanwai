@@ -3,7 +3,6 @@ import { getConfig } from "@/config";
 import NProgress from "@/utils/progress";
 import { buildHierarchyTree } from "@/utils/tree";
 import remainingRouter from "./modules/remaining";
-import { useMultiTagsStoreHook } from "@/store/modules/multiTags";
 import { usePermissionStoreHook } from "@/store/modules/permission";
 import {
   isUrl,
@@ -14,11 +13,9 @@ import {
 } from "@pureadmin/utils";
 import {
   ascending,
-  getTopMenu,
   initRouter,
   isOneOfArray,
   getHistoryMode,
-  findRouteByPath,
   handleAliveRoute,
   formatTwoStageRoutes,
   formatFlatteningRoutes
@@ -232,7 +229,10 @@ router.beforeEach((to: ToRouteType, _from, next) => {
       }
     } else {
       // 刷新（动态路由已在守卫开头统一加载，此处只处理标签页与回落）
-      if (usePermissionStoreHook().wholeMenus.length === 0 && to.path !== "/login") {
+      if (
+        usePermissionStoreHook().wholeMenus.length === 0 &&
+        to.path !== "/login"
+      ) {
         // 兜底：正常情况下 ensureAsyncRoutes() 已在上方完成，这里不该再进来
         ensureAsyncRoutes().then(() => {
           if (isAllEmpty(to.name)) router.push(to.fullPath);

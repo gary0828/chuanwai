@@ -422,11 +422,32 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     delete:
       tags: [Students]
-      summary: 删除学生（存在报班/缴费/退费记录时返回 400 拒绝）
+      summary: 删除学生（v30 起为**软删**：档案移入「已删除」，历史数据全部保留）
+      description: |
+        不再级联清理考勤 / 请假 / 补课 / 课时流水 / 通知 / 成绩 / 课堂评价 / 知识点测评 / 成长档案。
+        置 `students.deleted_at` 后该学员从列表、班级名单、点名名单中隐藏，可由 admin 恢复。
+        **仍有报班/缴费/退费记录时返回 400**（履约中的订单需先处理）。
+      responses:
+        "200":
+          description: 成功（`{success:true,data:{softDeleted:true,related:[...]}}`）
+        "400":
+          description: 存在报班/缴费记录，或学员已在「已删除」中
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/students/{id}/restore:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    post:
+      tags: [Students]
+      summary: 恢复已删除的学生（仅 admin，v30）
+      description: 清空 `deleted_at`，学员重新出现在列表、班级名单与点名名单中。未删除的学员返回 400。
       responses:
         "200": { description: 成功 }
         "400":
-          description: 存在业务引用，禁止删除
+          description: 该学员未被删除，无需恢复
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -2016,6 +2037,31 @@ paths:
         "403": { description: 无权修改该课次 }
         "404": { description: 课次不存在 }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/sessions/{id}/hours:
+    put:
+      tags: [Sessions]
+      summary: 修改课次课时数（仅 admin，v30）
+      description: |
+        `hours` 须 > 0 且 ≤ 20。**已产生课时流水（`hour_consumptions.session_id`）的课次返回 400** ——
+        否则流水记的是旧课时数、账面按新值算，账实不符。要改请先撤销相关考勤。
+      security: [{bearerAuth: []}]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hours]
+              properties:
+                hours: { type: number, exclusiveMinimum: 0, maximum: 20, example: 2 }
+      responses:
+        "200": { description: "成功 → { hours }" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 课次不存在 }
+
   /api/sessions/{id}/stop:
     put:
       tags: [Sessions]

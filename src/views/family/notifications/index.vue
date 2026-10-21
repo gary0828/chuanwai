@@ -22,7 +22,10 @@ const searchForm = reactive({
 });
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 });
 
-const TYPE_TAG = { 考勤缺勤: "danger" } as Record<string, string>;
+/** `el-tag` 的 type 只接受这几个字面量；用 `Record<string, string>` 会触发 TS2322 */
+type TagType = "primary" | "success" | "warning" | "danger" | "info";
+
+const TYPE_TAG = { 考勤缺勤: "danger" } as Record<string, TagType>;
 
 function loadData() {
   loading.value = true;
@@ -178,11 +181,7 @@ onMounted(loadData);
         <!-- ★ 宽度 108：日期 "2026-09-22" 加单元格内边距刚好放得下；
              100 会导致折行（"2026-09-" / "22"，实测踩过） -->
         <el-table-column prop="date" label="关联日期" width="108" />
-        <el-table-column
-          label="通知家长"
-          min-width="95"
-          show-overflow-tooltip
-        >
+        <el-table-column label="通知家长" min-width="95" show-overflow-tooltip>
           <template #default="{ row }">{{ row.parent_name || "—" }}</template>
         </el-table-column>
         <el-table-column label="状态" width="75" align="center">

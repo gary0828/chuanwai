@@ -5,7 +5,6 @@
 // 2. 出网内容必须经 utils/redact.js 白名单过滤后再发送，且过滤在服务端做（不依赖前端自律）；
 // 3. 未配置 Key 时抛 `LLM_NOT_CONFIGURED`，由调用方决定降级，不阻塞主流程；
 // 4. 数值一律由本地指标引擎算出，模型只负责措辞，避免幻觉。
-const config = require("../config");
 const aiSettings = require("./aiSettings");
 
 /**
@@ -40,7 +39,8 @@ const PRICE_PER_MILLION = {
 function estimateCost(model, usage) {
   const p = PRICE_PER_MILLION[model] || PRICE_PER_MILLION["deepseek-flash"];
   const inCost = (Number(usage?.prompt_tokens || 0) * p.input) / 1_000_000;
-  const outCost = (Number(usage?.completion_tokens || 0) * p.output) / 1_000_000;
+  const outCost =
+    (Number(usage?.completion_tokens || 0) * p.output) / 1_000_000;
   return Math.round((inCost + outCost) * 100000) / 100000;
 }
 
@@ -81,7 +81,9 @@ async function chat(messages, options = {}) {
         stream: false,
         // 抑制思维链：实测 reasoning_effort=none 可完全关闭推理（输出 token 直降约 90%），
         // 对文案生成类任务质量无可见下降；需要多步推理时可改为 medium / high
-        ...(cfg.reasoningEffort ? { reasoning_effort: cfg.reasoningEffort } : {})
+        ...(cfg.reasoningEffort
+          ? { reasoning_effort: cfg.reasoningEffort }
+          : {})
       }),
       signal: controller.signal
     });
@@ -95,7 +97,8 @@ async function chat(messages, options = {}) {
     }
 
     if (!res.ok) {
-      const detail = json?.error?.message || raw.slice(0, 200) || `HTTP ${res.status}`;
+      const detail =
+        json?.error?.message || raw.slice(0, 200) || `HTTP ${res.status}`;
       const err = new Error(`模型调用失败：${detail}`);
       err.code = "LLM_HTTP_ERROR";
       err.status = res.status;
@@ -106,7 +109,9 @@ async function chat(messages, options = {}) {
     const content = choice.message?.content;
     if (!content || !String(content).trim()) {
       const reason = choice.finish_reason || "unknown";
-      const reasoningLen = String(choice.message?.reasoning_content || "").length;
+      const reasoningLen = String(
+        choice.message?.reasoning_content || ""
+      ).length;
       const err = new Error(
         reason === "length"
           ? `模型输出被截断（finish_reason=length）：思维链已占满全部 ${maxTokens} 输出额度。请提高 LLM_MAX_TOKENS 或精简提示词`

@@ -62,7 +62,14 @@ function hits(texts: string[]): boolean {
 
 const visibleFeatures = computed(() =>
   FEATURES.filter(f =>
-    hits([f.title, f.group, f.purpose, f.when, f.path, ...f.steps.map(s => s.text)])
+    hits([
+      f.title,
+      f.group,
+      f.purpose,
+      f.when,
+      f.path,
+      ...f.steps.map(s => s.text)
+    ])
   )
 );
 
@@ -78,7 +85,9 @@ const featureGroups = computed(() =>
   })).filter(x => x.items.length > 0)
 );
 
-const resultCount = computed(() => visibleFeatures.value.length + visibleFaqs.value.length);
+const resultCount = computed(
+  () => visibleFeatures.value.length + visibleFaqs.value.length
+);
 
 /* ── 角色标注 ──────────────────────────────────────────────────────────── */
 function roleText(roles: Role[]): string {
@@ -191,7 +200,9 @@ const CALLOUT_ICON = {
       </p>
       <p v-else class="page-hint guide-search__hint">
         也可以直接看右侧的「本页目录」跳到某一节。第一次用建议从
-        <el-button link type="primary" @click="goTo('s-prep')">使用前的准备</el-button>
+        <el-button link type="primary" @click="goTo('s-prep')"
+          >使用前的准备</el-button
+        >
         开始。
       </p>
     </div>
@@ -249,7 +260,11 @@ const CALLOUT_ICON = {
               </div>
             </li>
           </ol>
-          <div v-for="(c, i) in PREP.access.cautions" :key="`ac${i}`" class="guide-callout guide-callout--warn">
+          <div
+            v-for="(c, i) in PREP.access.cautions"
+            :key="`ac${i}`"
+            class="guide-callout guide-callout--warn"
+          >
             <WarningIcon class="guide-callout__icon" />
             <span v-html="bold(c)" />
           </div>
@@ -258,28 +273,53 @@ const CALLOUT_ICON = {
           <p class="guide-p">
             系统主要就三块地方：左边的菜单是功能入口，上边一条是搜索和各种快捷入口，中间是当前页面。先把下面这几个「按钮在哪」记住，后面就好找了。
           </p>
-          <el-table :data="PREP.interface.areas" size="small" class="guide-table">
+          <el-table
+            :data="PREP.interface.areas"
+            size="small"
+            class="guide-table"
+          >
             <el-table-column prop="name" label="位置" width="140" />
             <el-table-column prop="what" label="它是什么" min-width="240" />
             <el-table-column prop="how" label="怎么用" min-width="260" />
           </el-table>
-          <div v-for="(c, i) in PREP.interface.cautions" :key="`ic${i}`" class="guide-callout guide-callout--tip">
+          <div
+            v-for="(c, i) in PREP.interface.cautions"
+            :key="`ic${i}`"
+            class="guide-callout guide-callout--tip"
+          >
             <InfoIcon class="guide-callout__icon" />
             <span v-html="bold(c)" />
           </div>
 
           <h3 class="guide-h3">{{ PREP.bootstrap.title }}</h3>
           <p class="guide-p" v-html="bold(PREP.bootstrap.intro)" />
-          <el-table :data="PREP.bootstrap.order" size="small" class="guide-table">
-            <el-table-column prop="step" label="顺序" width="64" align="center" />
+          <el-table
+            :data="PREP.bootstrap.order"
+            size="small"
+            class="guide-table"
+          >
+            <el-table-column
+              prop="step"
+              label="顺序"
+              width="64"
+              align="center"
+            />
             <el-table-column label="要做的页面" width="180">
               <template #default="{ row }">
                 <span class="guide-table__link">{{ row.title }}</span>
               </template>
             </el-table-column>
-            <el-table-column prop="why" label="为什么要先做它" min-width="320" />
+            <el-table-column
+              prop="why"
+              label="为什么要先做它"
+              min-width="320"
+            />
           </el-table>
-          <div v-for="(c, i) in PREP.bootstrap.cautions" :key="`bc${i}`" class="guide-callout guide-callout--danger">
+          <div
+            v-for="(c, i) in PREP.bootstrap.cautions"
+            :key="`bc${i}`"
+            class="guide-callout guide-callout--danger"
+          >
             <DangerIcon class="guide-callout__icon" />
             <span v-html="bold(c)" />
           </div>
@@ -288,9 +328,17 @@ const CALLOUT_ICON = {
           <p class="guide-p">
             下面就是左侧菜单里全部分组的清单，按从上到下的顺序排。带「负责人」标记的分组，老师账号是看不到的。
           </p>
-          <el-table :data="MENU_GROUPS.filter(g => g.name !== '使用指南')" size="small" class="guide-table">
+          <el-table
+            :data="MENU_GROUPS.filter(g => g.name !== '使用指南')"
+            size="small"
+            class="guide-table"
+          >
             <el-table-column prop="name" label="菜单分组" width="130" />
-            <el-table-column prop="summary" label="里面装了什么" min-width="300" />
+            <el-table-column
+              prop="summary"
+              label="里面装了什么"
+              min-width="300"
+            />
             <el-table-column label="谁能看到" width="150">
               <template #default="{ row }">
                 <el-tag
@@ -321,7 +369,8 @@ const CALLOUT_ICON = {
             按左侧菜单的顺序，把每个页面的「它是干什么的、什么时候用、怎么一步一步做」都写在这里。
           </p>
           <p v-if="searching" class="guide-p guide-count">
-            当前搜索下，功能章节里还剩 <strong>{{ visibleFeatures.length }}</strong> 个页面。
+            当前搜索下，功能章节里还剩
+            <strong>{{ visibleFeatures.length }}</strong> 个页面。
           </p>
         </section>
 
@@ -409,7 +458,12 @@ const CALLOUT_ICON = {
           </p>
         </section>
 
-        <article v-for="fl in FLOWS" :id="fl.id" :key="fl.id" class="page-card guide-feature">
+        <article
+          v-for="fl in FLOWS"
+          :id="fl.id"
+          :key="fl.id"
+          class="page-card guide-feature"
+        >
           <header class="guide-feature__head">
             <div class="guide-feature__titleline">
               <h3 class="guide-h3 guide-h3--flat">{{ fl.title }}</h3>
@@ -442,7 +496,11 @@ const CALLOUT_ICON = {
                     type="primary"
                     size="small"
                     :icon="LinkIcon"
-                    @click="goTo(`g-${MENU_GROUPS.find(g => g.name === (FEATURES.find(f => f.path === s.link!.path)?.group))?.rank ?? 0}`)"
+                    @click="
+                      goTo(
+                        `g-${MENU_GROUPS.find(g => g.name === FEATURES.find(f => f.path === s.link!.path)?.group)?.rank ?? 0}`
+                      )
+                    "
                     >看这一页的详细操作</el-button
                   >
                 </div>
@@ -456,8 +514,13 @@ const CALLOUT_ICON = {
               :key="`fc${i}`"
               :class="['guide-callout', `guide-callout--${c.kind}`]"
             >
-              <component :is="CALLOUT_ICON[c.kind]" class="guide-callout__icon" />
-              <span><strong>{{ c.title }}：</strong>{{ c.text }}</span>
+              <component
+                :is="CALLOUT_ICON[c.kind]"
+                class="guide-callout__icon"
+              />
+              <span
+                ><strong>{{ c.title }}：</strong>{{ c.text }}</span
+              >
             </div>
           </template>
         </article>
@@ -471,7 +534,12 @@ const CALLOUT_ICON = {
           </p>
         </section>
 
-        <article v-for="(q, i) in visibleFaqs" :id="q.id" :key="q.id" class="page-card guide-faq">
+        <article
+          v-for="(q, i) in visibleFaqs"
+          :id="q.id"
+          :key="q.id"
+          class="page-card guide-faq"
+        >
           <h3 class="guide-h3 guide-h3--flat">
             <span class="guide-faq__no">现象 {{ i + 1 }}</span>
             {{ q.symptom }}
@@ -507,7 +575,11 @@ const CALLOUT_ICON = {
             {{ cg.title }}
           </h3>
           <ul class="guide-ul guide-ul--tight">
-            <li v-for="(it, i) in cg.items" :key="i" :class="{ 'guide-danger-item': cg.id === 'c-danger' }">
+            <li
+              v-for="(it, i) in cg.items"
+              :key="i"
+              :class="{ 'guide-danger-item': cg.id === 'c-danger' }"
+            >
               <span v-html="bold(it)" />
             </li>
           </ul>
@@ -558,9 +630,22 @@ const CALLOUT_ICON = {
 </template>
 
 <style lang="scss" scoped>
-/* ---------------------------------------------------------------------------
-   搜索条
-   --------------------------------------------------------------------------- */
+
+
+@media (width <= 1200px) {
+  .guide-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .guide-toc {
+    display: none;
+  }
+
+  .guide-main {
+    max-width: none;
+  }
+}
+
 .guide-search {
   margin-bottom: var(--space-4);
 }
@@ -584,22 +669,9 @@ const CALLOUT_ICON = {
   flex-direction: column;
   gap: var(--space-4);
   min-width: 0;
+
   /* 正文行宽上限：中文每行 40~50 字最好读，太宽会串行 */
   max-width: 900px;
-}
-
-@media (width <= 1200px) {
-  .guide-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .guide-toc {
-    display: none;
-  }
-
-  .guide-main {
-    max-width: none;
-  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -702,10 +774,10 @@ const CALLOUT_ICON = {
 }
 
 .guide-h3--flat {
-  margin: 0;
   display: flex;
   gap: var(--space-2);
   align-items: center;
+  margin: 0;
 }
 
 .guide-section > .guide-h3:first-of-type {
@@ -729,9 +801,9 @@ const CALLOUT_ICON = {
   padding: var(--space-2) var(--space-3);
   margin-top: var(--space-3);
   font-size: var(--text-sm);
+  color: var(--brand-700);
   background: var(--brand-50);
   border-radius: var(--radius-sm);
-  color: var(--brand-700);
 }
 
 .guide-scene {
@@ -764,8 +836,8 @@ const CALLOUT_ICON = {
    读者扫到红色就知道"这里不能反悔"（红色一旦滥用就没人看了）。 */
 .guide-danger-item {
   padding: var(--space-2) var(--space-3);
-  border-left: 3px solid var(--status-danger);
   background: color-mix(in srgb, var(--status-danger) 7%, transparent);
+  border-left: 3px solid var(--status-danger);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
@@ -893,8 +965,8 @@ const CALLOUT_ICON = {
   margin: var(--space-2) 0;
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
-  border-radius: var(--radius-sm);
   border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
 
   &:last-child {
     margin-bottom: 0;
@@ -1024,4 +1096,8 @@ const CALLOUT_ICON = {
 .guide-table :deep(.el-table__cell) {
   font-size: var(--text-sm);
 }
+
+/* ---------------------------------------------------------------------------
+   搜索条
+   --------------------------------------------------------------------------- */
 </style>

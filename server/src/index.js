@@ -3,17 +3,21 @@
 // 注意 require 顺序：config 必须最先加载并在建表/写种子数据之前完成校验，
 // 避免「配置非法却已污染数据库」的半启动状态（上线门禁 B1）。
 const config = require("./config");
-const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const seed = require("./seed");
+// 健康检查要真实探活数据库（P1-9）：seed 内部已建连，这里拿到同一实例
+const db = require("./db");
 const { scheduleAutoBackup } = require("./utils/backup");
 const { audit } = require("./utils/audit");
 const { isConstraintError, constraintMessage } = require("./utils/validate");
+// ★ 2026-10-18（P1-5 DATA_DIR 收口）：静态资源目录唯一解析入口在 utils/paths
+const { assetsDir } = require("./utils/paths");
 
-// 启动时自动建表并初始化种子数据（数据持久化在 ./data/attendance.db）
+// 启动时自动建表并初始化种子数据（数据持久化在 <DATA_DIR>/attendance.db，默认 server/data/）
 seed();
 // 启动自检：仍在使用初始默认口令的账号给出醒目告警（H9）
 seed.warnDefaultPasswords();
@@ -25,6 +29,17 @@ const PORT = config.port;
 
 // 反向代理（nginx / Docker Compose）后的真实客户端 IP，限速与审计依赖它
 app.set("trust proxy", 1);
+
+// ── 请求 ID（P1-9 可观测性；2026-10-18 新增）──────────────────────────
+// 每个请求生成唯一 id 并回写 `X-Request-Id`：前端报错、nginx 日志、后端日志
+// 可以用同一个 id 对齐（多个容器/多份日志排查时尤其重要）。零依赖
+// （crypto.randomUUID 为 Node 22+ 内置），放在最前以便访问日志/错误处理都能带上。
+app.use((req, res, next) => {
+  const id = crypto.randomUUID();
+  req.id = id;
+  res.setHeader("X-Request-Id", id);
+  next();
+});
 
 // ── 安全响应头（H7）───────────────────────────────────────────────────
 // 本服务只输出 JSON（页面由 nginx 托管），因此关闭 CSP 避免误伤，
@@ -57,15 +72,29 @@ app.use(
 app.use(express.json({ limit: config.jsonBodyLimit }));
 
 // ── 静态资源：站点上传的图片（Logo / favicon）────────────────────────
-// 见 docs/decisions/ADR-008：文件本体存磁盘 server/data/assets/，DB 只存路径。
+// 见 docs/decisions/ADR-008：文件本体存磁盘 <DATA_DIR>/assets/，DB 只存路径。
 // 只暴露 /assets 子目录，禁止越权访问 data/ 下的数据库与备份。
+// ★ 2026-10-18（P1-5）：目录改由 utils/paths 解析，跟随 DATA_DIR（隔离实例不碰生产目录）。
+// ★ 2026-10-18（P2-7 SVG 加固）：上传入口已禁止 SVG/XML，但历史版本允许过、
+//   磁盘上可能残留 .svg 文件。这里对 .svg 响应强制 `Content-Disposition: attachment`：
+//   浏览器**顶层直接打开**时只会下载、不会在本站 origin 下渲染执行内嵌脚本，
+//   从而把「残留 SVG 被直接访问」的存储型 XSS 风险降为 0（图片 <img> 子资源不受影响）。
 app.use(
   "/assets",
-  express.static(path.join(__dirname, "..", "data", "assets"), {
+  express.static(assetsDir, {
     maxAge: "1d",
     fallthrough: true,
     index: false,
-    dotfiles: "deny"
+    dotfiles: "deny",
+    setHeaders(res, filePath) {
+      if (String(filePath).toLowerCase().endsWith(".svg")) {
+        res.setHeader(
+          "Content-Disposition",
+          'attachment; filename="image.svg"'
+        );
+        res.setHeader("X-Content-Type-Options", "nosniff");
+      }
+    }
   })
 );
 
@@ -134,7 +163,8 @@ const AUDIT_MODULES = [
   { re: /^\/api\/period-times/, name: "节次时间" }
 ];
 // 路由内已自行写审计的模块前缀（保持与上面注释一致，勿随意增删）
-const SELF_AUDITED = /^\/api\/(finance|leads|exams|schedule-adjustments|makeup-classes)(\/|$)/;
+const SELF_AUDITED =
+  /^\/api\/(finance|leads|exams|schedule-adjustments|makeup-classes)(\/|$)/;
 const METHOD_NAME = { POST: "新增", PUT: "修改", DELETE: "删除" };
 app.use((req, res, next) => {
   if (
@@ -159,12 +189,15 @@ app.use((req, res, next) => {
 });
 
 // ── 访问日志（H8：不记录请求体，避免明文密码 / 家长电话落盘）──────────
+// ★ 2026-10-18（P1-9）：加 ISO 时间戳 + request-id。容器时区已由 TZ 固定为
+//   Asia/Shanghai（见 docker-compose.yml / Dockerfile），ISO 串带时区偏移，
+//   跨容器排查时不会因「本地时间 vs UTC」对不上。
 app.use((req, res, next) => {
   if (req.path.startsWith("/api/")) {
     const startedAt = Date.now();
     res.on("finish", () => {
       console.log(
-        `[req] ${req.method} ${req.path} ${res.statusCode} ${Date.now() - startedAt}ms`
+        `[req] ${new Date().toISOString()} id=${req.id} ${req.method} ${req.path} ${res.statusCode} ${Date.now() - startedAt}ms`
       );
     });
   }
@@ -172,8 +205,24 @@ app.use((req, res, next) => {
 });
 
 // 健康检查（供 Docker Compose healthcheck 探测）
-app.get("/api/health", (_req, res) => {
-  res.json({ success: true, data: { status: "ok" } });
+// ★ 2026-10-18（P1-9）：真正的探活 —— 旧实现只返回静态 {status:"ok"}，
+//   数据库文件损坏/只读时容器仍被判健康。现在执行 `SELECT 1`，失败返回 503，
+//   让 compose / 外部监控如实发现「进程活着但库不可用」。
+app.get("/api/health", (req, res) => {
+  try {
+    db.prepare("SELECT 1 AS ok").get();
+    res.json({
+      success: true,
+      data: { status: "ok", db: "ok", time: new Date().toISOString() }
+    });
+  } catch (e) {
+    console.error(`[health] 数据库探活失败 id=${req.id}:`, e.message);
+    res.status(503).json({
+      success: false,
+      message: "数据库不可用",
+      data: { status: "error", db: "error" }
+    });
+  }
 });
 
 // 业务路由
@@ -283,7 +332,9 @@ const server = app.listen(PORT, () => {
         `若希望固定指向某个地址，请显式配置为浏览器可访问的地址。`
     );
   } else {
-    console.log(`[ai-workbench] 工作台跳转地址固定为：${config.aiWorkbenchUrl}`);
+    console.log(
+      `[ai-workbench] 工作台跳转地址固定为：${config.aiWorkbenchUrl}`
+    );
   }
 });
 

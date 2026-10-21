@@ -209,10 +209,7 @@ watch(() => props.options, draw, { deep: true });
 /* 空态覆盖层：贴在画布同一位置，不额外占高度 */
 .app-chart-card__empty {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;

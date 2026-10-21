@@ -46,24 +46,40 @@ function studentScopeWhere(req) {
   };
 }
 
-/** 校验某学生是否在当前用户可管理范围内（admin 恒为 true） */
+/** 校验某学生是否在当前用户可管理范围内（admin 恒为 true）
+ *
+ *  ★ 2026-10-18（v30 软删联动，P1-1）：teacher 口径额外要求 `s.deleted_at IS NULL`。
+ *    软删的语义是「档案归档、历史保留」，不是「还能继续点名/请假/补课」——
+ *    不回填这条，已删学员仍可被写入新业务数据，形成 UI 看不见的幽灵数据。
+ *    历史查询（财务流水 / 报表 / 时间线）走的是各自的 SQL，不经过本函数，故不受影响。
+ */
 function canManageStudent(req, studentId) {
   if (req.user.role === "admin") return true;
   const row = db
     .prepare(
       `SELECT 1 FROM students s
        JOIN classes c ON s.class_id = c.id
-       WHERE s.id = ? AND ${teacherClassPredicate("c")}`
+       WHERE s.id = ? AND s.deleted_at IS NULL AND ${teacherClassPredicate("c")}`
     )
     .get(Number(studentId), req.user.id, req.user.id);
   return !!row;
+}
+
+/** 学员档案是否已软删（v30）。写入口据此给明确的 400「请先恢复」，而不是静默写入。 */
+function isStudentDeleted(studentId) {
+  const row = db
+    .prepare("SELECT deleted_at FROM students WHERE id = ?")
+    .get(Number(studentId));
+  return Boolean(row && row.deleted_at);
 }
 
 /** 校验某班级是否在当前用户可管理范围内（admin 恒为 true） */
 function canManageClass(req, classId) {
   if (req.user.role === "admin") return true;
   const row = db
-    .prepare(`SELECT 1 FROM classes c WHERE c.id = ? AND ${teacherClassPredicate("c")}`)
+    .prepare(
+      `SELECT 1 FROM classes c WHERE c.id = ? AND ${teacherClassPredicate("c")}`
+    )
     .get(Number(classId), req.user.id, req.user.id);
   return !!row;
 }
@@ -87,10 +103,15 @@ function isHeadTeacherOf(req, classId) {
 function canAccessSession(req, sessionId) {
   if (req.user.role === "admin") return true;
   const row = db
-    .prepare("SELECT class_id, substitute_teacher_id FROM class_sessions WHERE id = ?")
+    .prepare(
+      "SELECT class_id, substitute_teacher_id FROM class_sessions WHERE id = ?"
+    )
     .get(Number(sessionId));
   if (!row) return false;
-  if (row.substitute_teacher_id != null && Number(row.substitute_teacher_id) === req.user.id) {
+  if (
+    row.substitute_teacher_id != null &&
+    Number(row.substitute_teacher_id) === req.user.id
+  ) {
     return true;
   }
   return canManageClass(req, row.class_id);
@@ -103,5 +124,6 @@ module.exports = {
   canManageClass,
   isHeadTeacherOf,
   canAccessSession,
+  isStudentDeleted,
   teacherClassPredicate
 };

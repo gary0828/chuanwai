@@ -112,7 +112,10 @@ onMounted(() => {
 
 <template>
   <div class="app-page">
-    <AppPageHeader title="调课审批" description="教师提交调课申请，管理员审批" />
+    <AppPageHeader
+      title="调课审批"
+      description="教师提交调课申请，管理员审批"
+    />
     <el-card shadow="never">
       <!-- 筛选 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

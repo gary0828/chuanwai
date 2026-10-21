@@ -1,34 +1,45 @@
 // 请假管理：申请、审批
-// 数据权限：教师仅可见/管理自己班级学生的请假；管理员不限
+// 数据权限：教师仅可见/管理「班主任 OR 任课教师」班级学生的请假（G2，utils/scope.js 唯一口径）；
+//           管理员不限。列表过滤与审批权限必须用**同一口径**，否则会出现
+//           「列表里看得到、点审批却 403」的自相矛盾。
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
-const { canManageStudent } = require("../utils/scope");
+const {
+  canManageStudent,
+  studentScopeWhere,
+  isStudentDeleted
+} = require("../utils/scope");
 const { parseDate } = require("../utils/validate");
-const { SOURCE } = require("../utils/hours-reconcile");
+const { SOURCE, refund, sessionHours } = require("../utils/hours-reconcile");
+// ★ 统一分页钳制（2026-10-18 深度测试 P2-4）
+const { clampPagination } = require("../utils/pagination");
 
 const router = express.Router();
 
-/** 教师数据过滤（leaves 表别名 l；学生必须属于教师绑定班级） */
+/** 教师数据过滤（leaves 表别名 l；学生必须属于教师可管理班级=班主任 OR 任课教师）
+ *
+ *  ★ P1-4（G2）：原实现只按 classes.head_teacher_id 过滤，只任课不当班主任的老师
+ *    看不到自己任课班的请假；改用 utils/scope.js 的 studentScopeWhere 与列表/审批同源。
+ */
 function leaveScopeClause(req) {
   if (req.user.role !== "teacher") return { clause: "", params: [] };
+  const scope = studentScopeWhere(req); // where 形如 " AND s.class_id IN (...)"，2 个占位符
   return {
-    clause:
-      " AND l.student_id IN (SELECT s.id FROM students s JOIN classes c ON s.class_id = c.id WHERE c.head_teacher_id = ?)",
-    params: [req.user.id]
+    clause: ` AND l.student_id IN (SELECT s.id FROM students s WHERE 1=1${scope.where})`,
+    params: scope.params
   };
 }
 
 /** 请假列表（学生/状态过滤 + 分页；教师仅本班） */
 router.get("/", auth, (req, res) => {
-  const { student_id, status = "", page = 1, pageSize = 10 } = req.query;
-  const p = Number(page) || 1;
-  const ps = Number(pageSize) || 10;
-  const offset = (p - 1) * ps;
+  const { student_id, status = "" } = req.query;
+  const { pageSize: ps, offset } = clampPagination(req.query);
   const scope = leaveScopeClause(req);
 
+  // ★ P1-2：参数顺序必须与 SQL `${where}${scope.clause}` 一致（过滤参数在前，scope 在末尾）
   let where = "WHERE 1=1";
-  const params = [...scope.params];
+  const params = [];
   if (student_id) {
     where += " AND l.student_id = ?";
     params.push(Number(student_id));
@@ -40,7 +51,7 @@ router.get("/", auth, (req, res) => {
 
   const total = db
     .prepare(`SELECT COUNT(*) AS c FROM leaves l ${where}${scope.clause}`)
-    .get(...params).c;
+    .get(...params, ...scope.params).c;
   const list = db
     .prepare(
       `SELECT l.*, s.student_no, s.name AS student_name, c.name AS class_name, u.name AS approver_name
@@ -50,7 +61,7 @@ router.get("/", auth, (req, res) => {
        LEFT JOIN users u ON l.approved_by = u.id
        ${where}${scope.clause} ORDER BY l.id DESC LIMIT ? OFFSET ?`
     )
-    .all(...params, ps, offset);
+    .all(...params, ...scope.params, ps, offset);
 
   res.json({ success: true, data: { list, total } });
 });
@@ -83,6 +94,12 @@ router.post("/", auth, (req, res) => {
     return res
       .status(400)
       .json({ success: false, message: "开始日期不能晚于结束日期" });
+  }
+  if (isStudentDeleted(student_id)) {
+    return res.status(400).json({
+      success: false,
+      message: "该学员档案已删除，请先恢复后再提交请假"
+    });
   }
   if (!canManageStudent(req, student_id)) {
     return res
@@ -119,10 +136,8 @@ router.put(
     }
     const leave = db
       .prepare(
-        `SELECT l.id, l.status, l.student_id, l.start_date, l.end_date, l.source, c.head_teacher_id
+        `SELECT l.id, l.status, l.student_id, l.start_date, l.end_date, l.source
        FROM leaves l
-       JOIN students s ON l.student_id = s.id
-       JOIN classes c ON s.class_id = c.id
        WHERE l.id = ?`
       )
       .get(id);
@@ -131,10 +146,12 @@ router.put(
         .status(404)
         .json({ success: false, message: "请假记录不存在" });
     }
-    if (req.user.role === "teacher" && leave.head_teacher_id !== req.user.id) {
+    // ★ P1-4（G2）：审批权限与列表口径统一 —— 用 canManageStudent（班主任 OR 任课教师），
+    //   admin 恒 true。旧实现比对 classes.head_teacher_id，只任课的老师能看到列表却 403。
+    if (!canManageStudent(req, leave.student_id)) {
       return res
         .status(403)
-        .json({ success: false, message: "只能审批本班学生的请假" });
+        .json({ success: false, message: "只能审批自己负责班级学生的请假" });
     }
     if (leave.status !== "待审批") {
       return res
@@ -149,12 +166,8 @@ router.put(
     const findOrder = db.prepare(
       "SELECT id FROM orders WHERE student_id = ? AND course_id = ? AND status = '在读' AND total_hours > 0 ORDER BY remain_hours DESC, id LIMIT 1"
     );
-    const refundOrder = db.prepare(
-      "UPDATE orders SET remain_hours = MIN(total_hours, remain_hours + 1), updated_at = datetime('now','localtime') WHERE id = ?"
-    );
-    const insertCons = db.prepare(
-      "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, source, attendance_id, operator_id) VALUES (?, ?, ?, ?, ?, ?, '回补', ?, ?, ?)"
-    );
+    // ★ 2026-10-18：回补的记账动作已收口到 hours-reconcile 的 refund()，
+    //   本文件只保留"找哪一张订单"的查询（与 attendance.js 的 findRefundOrder 口径一致）。
     const getStudentClass = db.prepare(
       "SELECT class_id FROM students WHERE id = ?"
     );
@@ -185,7 +198,7 @@ router.put(
         // 2. 回写考勤：请假日期范围内已有考勤（正常/迟到/早退→请假，缺勤/请假不变）
         const affected = db
           .prepare(
-            `SELECT id, student_id, course_id, date FROM attendances
+            `SELECT id, student_id, course_id, date, session_id FROM attendances
            WHERE student_id = ? AND date BETWEEN ? AND ? AND status IN ('正常', '迟到', '早退')`
           )
           .all(leave.student_id, leave.start_date, leave.end_date);
@@ -193,22 +206,23 @@ router.put(
           "UPDATE attendances SET status = '请假', remark = CASE WHEN remark = '' OR remark IS NULL THEN '请假审批同步' ELSE remark END, updated_at = datetime('now','localtime') WHERE student_id = ? AND course_id = ? AND date = ?"
         );
         for (const a of affected) {
-          // 回补课时（原状态正常/迟到/早退已扣过 1 课时，回补 1 并落流水）
+          // 回补课时（原状态正常/迟到/早退已扣过课时，回补同额并落流水）
+          // v30：回补额 = 该考次课次的 hours（不是写死的 1）
           const order = findOrder.get(a.student_id, a.course_id);
           if (order) {
-            refundOrder.run(order.id);
             const classId = getStudentClass.get(a.student_id)?.class_id ?? null;
-            insertCons.run(
-              a.student_id,
-              order.id,
-              a.course_id,
+            refund(db, {
+              orderId: order.id,
+              studentId: a.student_id,
+              courseId: a.course_id,
               classId,
-              a.date,
-              1,
-              SOURCE.LEAVE,
-              a.id,
-              req.user.id
-            );
+              date: a.date,
+              sessionId: a.session_id ?? null,
+              hours: sessionHours(db, a.session_id),
+              source: SOURCE.LEAVE,
+              attendanceId: a.id,
+              operatorId: req.user.id
+            });
           }
           updateAtt.run(a.student_id, a.course_id, a.date);
         }

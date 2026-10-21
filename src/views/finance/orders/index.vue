@@ -36,9 +36,12 @@ const STATUS_OPTIONS = [
   { label: "结业", value: "结业" },
   { label: "退班", value: "退班" }
 ];
+/** `el-tag` 的 type 只接受这几个字面量；用 `Record<string, string>` 会触发 TS2322 */
+type TagType = "primary" | "success" | "warning" | "danger" | "info";
+
 const STATUS_TAG = { 在读: "success", 结业: "info", 退班: "danger" } as Record<
   string,
-  string
+  TagType
 >;
 
 // 新增订单弹窗

@@ -24,11 +24,14 @@ const STATUS_OPTIONS = [
   { label: "通过", value: "通过" },
   { label: "驳回", value: "驳回" }
 ];
+/** `el-tag` 的 type 只接受这几个字面量；用 `Record<string, string>` 会触发 TS2322 */
+type TagType = "primary" | "success" | "warning" | "danger" | "info";
+
 const STATUS_TAG = {
   待审批: "warning",
   通过: "success",
   驳回: "info"
-} as Record<string, string>;
+} as Record<string, TagType>;
 
 function fmtMoney(v: any) {
   return `¥${(Number(v) || 0).toFixed(2)}`;

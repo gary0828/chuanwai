@@ -153,6 +153,13 @@ fi
 say "配置每日自动备份"
 BACKUP_DIR="/var/backups/jx-system"
 mkdir -p "$BACKUP_DIR" "$APP_DIR/server/data"
+# ★ 2026-10-18 修复（深度测试 P1-9）：不再用 `tar` 直接热拷 server/data。
+#   本库是 WAL 模式：直接 tar 会漏掉 `attendance.db-wal` 里尚未 checkpoint 的页，
+#   拷出来的副本可能「比实际旧」甚至损坏（应用内 utils/backup.js 早已因此统一改用
+#   VACUUM INTO）。两套备份机制写同一件事却用不同技术 = 口径分叉。
+#   现改为先调用**应用自己的备份实现**（与应用内「系统设置 → 数据备份」同一份代码、
+#   同一 VACUUM INTO 口径），再把应用备份目录（含 assets 图片）归档到宿主机。
+#   保留策略不变：宿主机归档仍保留 14 天。
 cat > /usr/local/bin/jx-backup.sh <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -160,13 +167,24 @@ APP_DIR="__APP_DIR__"
 BACKUP_DIR="/var/backups/jx-system"
 ts="$(date +%F-%H%M)"
 mkdir -p "$BACKUP_DIR"
+
+# 1) 调应用内备份：VACUUM INTO 生成一致性快照（落到容器 DATA_DIR/backups，即宿主机 server/data/backups）
+#    失败时 node 非 0 退出，set -e 会让本次 cron 中止并写日志（不产生看似成功的旧归档）
+docker exec attendance-server \
+  node -e "const b=require('./src/utils/backup');const i=b.createBackup();console.log(JSON.stringify(i))" \
+  > "$BACKUP_DIR/app-backup-$ts.json"
+
+# 2) 再整体归档（含刚生成的备份文件与 assets 图片），供离线/跨机恢复
 tar -czf "$BACKUP_DIR/data-$ts.tar.gz" -C "$APP_DIR" server/data
+
+# 3) 保留策略不变：宿主机归档保留 14 天（应用内 backup-*.db 自身保留最近 20 份）
 find "$BACKUP_DIR" -name 'data-*.tar.gz' -mtime +14 -delete
+find "$BACKUP_DIR" -name 'app-backup-*.json' -mtime +14 -delete
 SH
 sed -i "s|__APP_DIR__|$APP_DIR|" /usr/local/bin/jx-backup.sh
 chmod +x /usr/local/bin/jx-backup.sh
 ( crontab -l 2>/dev/null | grep -v jx-backup.sh; echo "0 3 * * * /usr/local/bin/jx-backup.sh >> /var/log/jx-backup.log 2>&1" ) | crontab -
-ok "每天凌晨 3 点备份到 ${BACKUP_DIR}，保留 14 天"
+ok "每天凌晨 3 点备份到 ${BACKUP_DIR}（应用 VACUUM INTO 快照 + 归档），保留 14 天"
 
 # ---------- 7. 完成 ----------
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')" || IP=""

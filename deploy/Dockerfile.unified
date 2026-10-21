@@ -45,6 +45,13 @@ RUN pnpm exec vite build --config question-bank/vite.config.ts
 
 FROM nginx:stable-alpine AS production-stage
 
+# 时区（P1-10）：nginx 访问/错误日志按本地时间记录，Alpine 默认 UTC 且无 tzdata，
+# 与校区差 8 小时会让日志排查对不上时间。安装 tzdata 并固定 Asia/Shanghai。
+RUN apk add --no-cache tzdata \
+ && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+ && echo "Asia/Shanghai" > /etc/timezone
+ENV TZ=Asia/Shanghai
+
 COPY deploy/nginx-unified.conf /etc/nginx/conf.d/default.conf
 # 教务系统 → /usr/share/nginx/html       （URL 根路径 /）
 COPY --from=build-stage /app/dist /usr/share/nginx/html

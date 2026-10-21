@@ -1,32 +1,29 @@
 // 通知记录：考勤缺勤等联动生成的家校通知，管理端可查看/标记已读
-// 权限：admin 全量；teacher 仅本班学员（通过 students.class_id 过滤）
+// 权限：admin 全量；teacher 仅「班主任 OR 任课教师」班级的学员（G2，utils/scope.js 唯一口径）
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
+const { canManageStudent, studentScopeWhere } = require("../utils/scope");
+// ★ 统一分页钳制（2026-10-18 深度测试 P2-4）
+const { clampPagination } = require("../utils/pagination");
 
 const router = express.Router();
 
-/** 教师范围：通知按学员所属班级过滤（s 为 students 表别名） */
+/** 教师范围：通知按学员所属班级过滤（s 为 students 表别名）
+ *
+ *  ★ P1-4（G2）：原实现只按 classes.head_teacher_id 过滤 —— 只任课不当班主任的老师
+ *    看不到自己任课班的家庭通知；改用 utils/scope.js 的 studentScopeWhere 后，
+ *    与学员列表 / 请假 / 考试成绩等模块口径一致。
+ */
 function notificationScope(req) {
   if (req.user.role !== "teacher") return { where: "", params: [] };
-  return {
-    where:
-      " AND s.class_id IN (SELECT id FROM classes WHERE head_teacher_id = ?)",
-    params: [req.user.id]
-  };
+  return studentScopeWhere(req);
 }
 
 /** 通知列表（分页 + 学员关键字/类型/日期范围/已读筛选） */
 router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
-  const {
-    keyword = "",
-    type = "",
-    date_start,
-    date_end,
-    is_read,
-    page = 1,
-    pageSize = 10
-  } = req.query;
+  const { keyword = "", type = "", date_start, date_end, is_read } = req.query;
+  const { pageSize: ps, offset } = clampPagination(req.query);
   const scope = notificationScope(req);
   const conds = [];
   const params = [];
@@ -72,12 +69,17 @@ router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
     LIMIT ? OFFSET ?
   `
     )
-    .all(...allParams, Number(pageSize), (Number(page) - 1) * Number(pageSize));
+    .all(...allParams, ps, offset);
+  // ★ P3-1（2026-10-18 修复）：unreadCount 必须是「当前筛选条件下的**真正未读数**」。
+  //   旧实现对 where 做 `replace("1=1", "n.is_read = 0")`：一旦带了任何筛选条件，
+  //   where 里根本没有 "1=1" 子串 → replace 失效 → 返回的是筛选后的**全部条数**，
+  //   前端铃铛把「已读的通知」也当成未读。现在独立拼一份 unread 条件。
+  const unreadWhere = [...conds, "n.is_read = 0"].join(" AND ") + scope.where;
   const unreadCount = db
     .prepare(
-      `SELECT COUNT(*) AS c FROM notifications n JOIN students s ON s.id = n.student_id WHERE ${where.replace("1=1", "n.is_read = 0")}`
+      `SELECT COUNT(*) AS c FROM notifications n JOIN students s ON s.id = n.student_id WHERE ${unreadWhere}`
     )
-    .get(...allParams).c;
+    .get(...params, ...scope.params).c;
 
   res.json({ success: true, data: { list, total, unreadCount } });
 });
@@ -86,20 +88,13 @@ router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
 router.put("/:id/read", auth, requireRole("admin", "teacher"), (req, res) => {
   const id = Number(req.params.id);
   const row = db
-    .prepare(
-      "SELECT n.id, s.class_id FROM notifications n JOIN students s ON s.id = n.student_id WHERE n.id = ?"
-    )
+    .prepare("SELECT n.id, n.student_id FROM notifications n WHERE n.id = ?")
     .get(id);
   if (!row)
     return res.status(404).json({ success: false, message: "通知不存在" });
-  if (req.user.role === "teacher") {
-    const own = db
-      .prepare("SELECT 1 FROM classes WHERE id = ? AND head_teacher_id = ?")
-      .get(row.class_id, req.user.id);
-    if (!own)
-      return res
-        .status(403)
-        .json({ success: false, message: "无权操作该通知" });
+  // ★ P1-4（G2）：与列表同一口径（班主任 OR 任课教师，admin 恒 true）
+  if (!canManageStudent(req, row.student_id)) {
+    return res.status(403).json({ success: false, message: "无权操作该通知" });
   }
   db.prepare("UPDATE notifications SET is_read = 1 WHERE id = ?").run(id);
   res.json({ success: true, data: null });

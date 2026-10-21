@@ -62,10 +62,11 @@ const hasRefund = computed(() =>
 const revenueChart = computed(() => {
   if (!revenueList.value.length) return null;
   const periods = revenueList.value.map(i => i.period);
-  const money = (v: any) => `¥${(Number(v) || 0).toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })}`;
+  const money = (v: any) =>
+    `¥${(Number(v) || 0).toLocaleString("zh-CN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}`;
   return {
     tooltip: {
       trigger: "axis",
@@ -103,7 +104,7 @@ const revenueChart = computed(() => {
         interval: periods.length > 20 ? Math.ceil(periods.length / 20) - 1 : 0
       }
     },
-yAxis: [
+    yAxis: [
       {
         type: "value",
         name: "实收 / 净额",
@@ -330,13 +331,31 @@ const hoursDistChart = computed(() => {
   const rows = hoursDistList.value;
   if (!rows.length) return null;
   const bins = [
-    { label: "0", test: (v: number) => v <= 0, color: "var(--chart-attendance-absent)" },
-    { label: "1~5", test: (v: number) => v > 0 && v <= 5, color: "var(--chart-attendance-late)" },
-    { label: "6~10", test: (v: number) => v > 5 && v <= 10, color: "var(--chart-cat-3)" },
-    { label: "11~20", test: (v: number) => v > 10 && v <= 20, color: "var(--chart-cat-1)" },
+    {
+      label: "0",
+      test: (v: number) => v <= 0,
+      color: "var(--chart-attendance-absent)"
+    },
+    {
+      label: "1~5",
+      test: (v: number) => v > 0 && v <= 5,
+      color: "var(--chart-attendance-late)"
+    },
+    {
+      label: "6~10",
+      test: (v: number) => v > 5 && v <= 10,
+      color: "var(--chart-cat-3)"
+    },
+    {
+      label: "11~20",
+      test: (v: number) => v > 10 && v <= 20,
+      color: "var(--chart-cat-1)"
+    },
     { label: "20+", test: (v: number) => v > 20, color: "var(--chart-cat-2)" }
   ];
-  const counts = bins.map(b => rows.filter((r: any) => b.test(Number(r.remain_hours) || 0)).length);
+  const counts = bins.map(
+    b => rows.filter((r: any) => b.test(Number(r.remain_hours) || 0)).length
+  );
   const total = rows.length;
   return {
     tooltip: {
@@ -370,7 +389,12 @@ const hoursDistChart = computed(() => {
         name: "人数",
         type: "bar",
         barCategoryGap: "24%",
-        label: { show: true, position: "top", color: "var(--ink-500)", fontSize: 12 },
+        label: {
+          show: true,
+          position: "top",
+          color: "var(--ink-500)",
+          fontSize: 12
+        },
         data: bins.map((b, i) => ({
           value: counts[i],
           itemStyle: { color: b.color, borderRadius: [4, 4, 0, 0] }
@@ -695,9 +719,9 @@ onMounted(() => {
               <div class="stat-card__top">
                 <span class="stat-card__label">本月实收净额</span>
               </div>
-              <div class="metric-value num">{{
-                fmtMoney(business.overview.month_revenue)
-              }}</div>
+              <div class="metric-value num">
+                {{ fmtMoney(business.overview.month_revenue) }}
+              </div>
             </div>
             <div class="stat-card">
               <div class="stat-card__top">
@@ -767,31 +791,37 @@ onMounted(() => {
   body * {
     visibility: hidden;
   }
+
   #printRevenue,
   #printRevenue * {
     visibility: visible;
   }
+
   #printRevenue {
     position: absolute;
-    left: 0;
     top: 0;
+    left: 0;
     width: 100%;
   }
+
   #printArrears,
   #printArrears * {
     visibility: visible;
   }
+
   #printArrears {
     position: absolute;
-    left: 0;
     top: 0;
+    left: 0;
     width: 100%;
   }
+
   #printRevenueTitle,
   #printArrearsTitle {
     display: block !important;
   }
 }
+
 .print-only {
   display: none;
 }

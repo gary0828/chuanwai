@@ -108,7 +108,8 @@ function appendEvent(e) {
 }
 
 /** 兜底脱敏：金额 / 电话 / 家长相关键一律剔除（值也扫一遍手机号） */
-const BAD_KEY = /(amount|money|fee|balance|price|pay|refund|phone|mobile|tel|parent|idcard|address|email)/i;
+const BAD_KEY =
+  /(amount|money|fee|balance|price|pay|refund|phone|mobile|tel|parent|idcard|address|email)/i;
 const PHONE_RE = /\b1[3-9]\d{9}\b/g;
 
 function scrubPayload(obj, depth = 0) {
@@ -165,7 +166,8 @@ function studentTimeline(studentId, opts = {}) {
     .all(sid, from, to)
     .map(r => {
       const full = Number(r.full_score) || 0;
-      const rate = full > 0 ? Math.round((Number(r.score) / full) * 1000) / 10 : 0;
+      const rate =
+        full > 0 ? Math.round((Number(r.score) / full) * 1000) / 10 : 0;
       return {
         type: "exam_score",
         label: EVENT_LABELS.exam_score,
@@ -234,13 +236,14 @@ function studentTimeline(studentId, opts = {}) {
     for (const e of arr) {
       const key = `${e.type}|${e.date}`;
       const prev = m.get(key);
-      if (!prev || (e.summary || "").length > (prev.summary || "").length) m.set(key, e);
+      if (!prev || (e.summary || "").length > (prev.summary || "").length)
+        m.set(key, e);
     }
     return [...m.values()];
   };
 
-  const all = dedup([...attendance, ...exams, ...hours, ...extra]).sort((a, b) =>
-    a.date === b.date ? 0 : a.date < b.date ? -1 : 1
+  const all = dedup([...attendance, ...exams, ...hours, ...extra]).sort(
+    (a, b) => (a.date === b.date ? 0 : a.date < b.date ? -1 : 1)
   );
 
   return { studentId: sid, from, to, count: all.length, events: all };
@@ -276,7 +279,9 @@ function classGrowth(classId, opts = {}) {
   const to = opts.to || "9999-12-31";
 
   const students = db
-    .prepare("SELECT id, student_no, name FROM students WHERE class_id = ? ORDER BY id")
+    .prepare(
+      "SELECT id, student_no, name FROM students WHERE class_id = ? AND deleted_at IS NULL ORDER BY id"
+    )
     .all(cid);
 
   // 课堂评价按课时聚合（每课一条班级均值），形成班级成长曲线
@@ -313,9 +318,10 @@ function classGrowth(classId, opts = {}) {
       seq: Number(r.seq),
       assessed: Number(r.assessed),
       mastered: Number(r.mastered),
-      masteryRate: Number(r.assessed) > 0
-        ? Math.round((Number(r.mastered) / Number(r.assessed)) * 1000) / 10
-        : null
+      masteryRate:
+        Number(r.assessed) > 0
+          ? Math.round((Number(r.mastered) / Number(r.assessed)) * 1000) / 10
+          : null
     }));
 
   return {
@@ -343,7 +349,9 @@ function studentGrowth(studentId, opts = {}) {
   const atts = ev.filter(e => e.type === "attendance");
 
   // 出勤：正常/迟到/早退计出席，缺勤不计（请假单独统计）
-  const attended = atts.filter(a => a.payload.status !== "缺勤" && a.payload.status !== "请假").length;
+  const attended = atts.filter(
+    a => a.payload.status !== "缺勤" && a.payload.status !== "请假"
+  ).length;
   const absent = atts.filter(a => a.payload.status === "缺勤").length;
   const leave = atts.filter(a => a.payload.status === "请假").length;
 
@@ -380,37 +388,46 @@ function studentGrowth(studentId, opts = {}) {
     kpMap.get(id).levels.push({ date: k.date, level: k.payload.level });
   }
   const LEVEL_RANK = { 未掌握: 0, 部分掌握: 1, 已掌握: 2 };
-  const kpProgress = [...kpMap.values()].map(k => {
-    // 同一天可能有多条（重复提交），按日期去重取最后一条
-    const byDate = new Map();
-    for (const l of k.levels) byDate.set(l.date, l);
-    const series = [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const kpProgress = [...kpMap.values()]
+    .map(k => {
+      // 同一天可能有多条（重复提交），按日期去重取最后一条
+      const byDate = new Map();
+      for (const l of k.levels) byDate.set(l.date, l);
+      const series = [...byDate.values()].sort((a, b) =>
+        a.date < b.date ? -1 : 1
+      );
 
-    const first = series[0];
-    const last = series[series.length - 1];
-    const fromR = LEVEL_RANK[first.level] ?? 0;
-    const toR = LEVEL_RANK[last.level] ?? 0;
+      const first = series[0];
+      const last = series[series.length - 1];
+      const fromR = LEVEL_RANK[first.level] ?? 0;
+      const toR = LEVEL_RANK[last.level] ?? 0;
 
-    // 找出真正的跃迁点（用于里程碑），只记「向上」的提升
-    const jumps = [];
-    for (let i = 1; i < series.length; i++) {
-      const a = LEVEL_RANK[series[i - 1].level] ?? 0;
-      const b = LEVEL_RANK[series[i].level] ?? 0;
-      if (b > a) jumps.push({ date: series[i].date, from: series[i - 1].level, to: series[i].level });
-    }
+      // 找出真正的跃迁点（用于里程碑），只记「向上」的提升
+      const jumps = [];
+      for (let i = 1; i < series.length; i++) {
+        const a = LEVEL_RANK[series[i - 1].level] ?? 0;
+        const b = LEVEL_RANK[series[i].level] ?? 0;
+        if (b > a)
+          jumps.push({
+            date: series[i].date,
+            from: series[i - 1].level,
+            to: series[i].level
+          });
+      }
 
-    return {
-      kpId: k.kpId,
-      name: k.name,
-      from: first.level,
-      to: last.level,
-      fromDate: first.date,
-      toDate: last.date,
-      delta: toR - fromR,
-      attempts: series.length,
-      jumps
-    };
-  }).sort((a, b) => b.delta - a.delta || a.name.localeCompare(b.name));
+      return {
+        kpId: k.kpId,
+        name: k.name,
+        from: first.level,
+        to: last.level,
+        fromDate: first.date,
+        toDate: last.date,
+        delta: toR - fromR,
+        attempts: series.length,
+        jumps
+      };
+    })
+    .sort((a, b) => b.delta - a.delta || a.name.localeCompare(b.name));
 
   // 里程碑：取真实跃迁点（而非首末差值），这样才看得出「什么时候突破的」
   const milestones = [];
@@ -450,17 +467,25 @@ function studentGrowth(studentId, opts = {}) {
       attended,
       absent,
       leave,
-      rate: atts.length > 0 ? Math.round((attended / atts.length) * 1000) / 10 : null
+      rate:
+        atts.length > 0
+          ? Math.round((attended / atts.length) * 1000) / 10
+          : null
     },
     evalTrend,
-    evalDelta: firstEval && lastEval
-      ? {
-          focus: lastEval.focus - firstEval.focus,
-          participation: lastEval.participation - firstEval.participation,
-          mastery: lastEval.mastery - firstEval.mastery
-        }
-      : null,
-    examSeries: examList.map(e => ({ date: e.date, name: e.payload.examName, rate: e.payload.rate })),
+    evalDelta:
+      firstEval && lastEval
+        ? {
+            focus: lastEval.focus - firstEval.focus,
+            participation: lastEval.participation - firstEval.participation,
+            mastery: lastEval.mastery - firstEval.mastery
+          }
+        : null,
+    examSeries: examList.map(e => ({
+      date: e.date,
+      name: e.payload.examName,
+      rate: e.payload.rate
+    })),
     kpProgress,
     milestones,
     // 事件明细分类计数：让「这一步有据可查」可被界面直接展示

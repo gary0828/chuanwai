@@ -15,6 +15,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const rateLimit = require("express-rate-limit");
 const config = require("../config");
 const db = require("../db");
 const { auth, requireRole, SECRET } = require("../middleware/auth");
@@ -182,8 +183,30 @@ function isSafeHost(host) {
   return /^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$/.test(host);
 }
 
-/** 签发免登票据（需已登录） */
-router.post("/sso/ticket", auth, (req, res) => {
+/**
+ * 只允许「正式登录凭证」签发免登票据（2026-10-18 深度测试 P1-1 修复）。
+ *
+ * 为什么必须挡：ai_agent 的路径白名单包含 /api/ai/*（见 middleware/auth.js），
+ * 若不在这里再挡一层，**只读网关凭证就能为自己反复签发票据**；
+ * 而票据 payload 与 accessToken 同构，一旦被当 Bearer 使用即可越权读取全量档案
+ * （实测可用 admin 的 agent 凭证读到 /api/users）。qb_agent 的路径白名单不含
+ * /api/ai，虽已被 middleware 挡住，这里一并显式拒绝，避免将来白名单放宽时复发。
+ *
+ * 放行条件：无 type 或 type === "access"（= 教务系统真实登录换来的 accessToken）。
+ */
+function requireInteractiveAuth(req, res, next) {
+  const tokenType = req.user?.tokenType || "access";
+  if (tokenType !== "access") {
+    return res.status(403).json({
+      success: false,
+      message: "该凭证不可签发票据，请从教务系统登录后重新进入"
+    });
+  }
+  next();
+}
+
+/** 签发免登票据（需已登录 + 正式登录凭证） */
+router.post("/sso/ticket", auth, requireInteractiveAuth, (req, res) => {
   const user = db
     .prepare("SELECT id, username, role, token_version FROM users WHERE id = ?")
     .get(req.user.id);
@@ -237,9 +260,10 @@ router.post("/sso/verify", (req, res) => {
   try {
     payload = jwt.verify(ticket, SECRET);
   } catch {
-    return res
-      .status(401)
-      .json({ success: false, message: "票据无效或已过期，请返回教务系统重新进入" });
+    return res.status(401).json({
+      success: false,
+      message: "票据无效或已过期，请返回教务系统重新进入"
+    });
   }
 
   if (payload.type !== TICKET_TYPE) {
@@ -248,9 +272,10 @@ router.post("/sso/verify", (req, res) => {
 
   const jti = payload.jti;
   if (!jti || usedTickets.has(jti)) {
-    return res
-      .status(401)
-      .json({ success: false, message: "该票据已被使用，请返回教务系统重新进入" });
+    return res.status(401).json({
+      success: false,
+      message: "该票据已被使用，请返回教务系统重新进入"
+    });
   }
 
   const user = db
@@ -320,6 +345,33 @@ router.post("/sso/verify", (req, res) => {
 /* ---------------------- 服务端模型生成（可选能力） ---------------------- */
 
 /**
+ * 付费模型调用的频控（2026-10-18 深度测试 P2-8 修复）。
+ *
+ * 背景：此前全站只有「登录」「自助改密」两个 limiter（见 index.js），
+ * 而 /api/ai/generate 会按调用量**真金白银**地打模型 API —— 一个已登录凭证
+ * 即可无限触发，成本与可用性都无兜底。
+ *
+ * 维度选择：**按用户**（req.user.id），不按 IP ——
+ *   · 校区/办公室常共用一个 NAT 出口 IP，按 IP 会让同事互相挤占额度；
+ *   · 本端点前置了 auth + requireRole，调用方一定有登录身份，
+ *     按用户限才是真正的「谁用谁承担」。
+ * 额度：20 次 / 10 分钟（足够正常备课，异常刷量立即被挡）。
+ */
+const AI_RATE_WINDOW_MS = 10 * 60 * 1000;
+const AI_RATE_MAX = 20;
+const generateLimiter = rateLimit({
+  windowMs: AI_RATE_WINDOW_MS,
+  max: AI_RATE_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: req => `ai:${req.user?.id ?? req.ip ?? "anonymous"}`,
+  message: {
+    success: false,
+    message: "AI 生成请求过于频繁（每 10 分钟最多 20 次），请稍后再试"
+  }
+});
+
+/**
  * POST /api/ai/generate
  * 由**服务端**调用大模型生成文案 —— API Key 只存服务端环境变量，不下发前端。
  * 未配置模型时返回 503，工作台据此自动回退规则引擎（不阻塞教学流程）。
@@ -328,6 +380,7 @@ router.post(
   "/generate",
   auth,
   requireRole("admin", "teacher"),
+  generateLimiter,
   async (req, res, next) => {
     try {
       const { scene, payload, extra } = req.body || {};
@@ -339,14 +392,17 @@ router.post(
           .json({ success: false, message: `不支持的场景：${scene}` });
       }
       if (!payload || typeof payload !== "object") {
-        return res.status(400).json({ success: false, message: "缺少 payload" });
+        return res
+          .status(400)
+          .json({ success: false, message: "缺少 payload" });
       }
 
       if (!llm.isConfigured()) {
         return res.status(503).json({
           success: false,
           code: "LLM_NOT_CONFIGURED",
-          message: "服务端未配置模型（LLM_API_KEY 为空），请回退规则引擎或联系管理员配置"
+          message:
+            "服务端未配置模型（LLM_API_KEY 为空），请回退规则引擎或联系管理员配置"
         });
       }
 
@@ -432,10 +488,15 @@ router.put("/admin/config", auth, requireRole("admin"), (req, res, next) => {
   try {
     const patch = req.body || {};
     if (Object.prototype.toString.call(patch) !== "[object Object]") {
-      return res.status(400).json({ success: false, message: "请求体应为对象" });
+      return res
+        .status(400)
+        .json({ success: false, message: "请求体应为对象" });
     }
     const changed = aiSettings.save(patch, req.user?.username || "");
-    res.json({ success: true, data: { changed, ...aiSettings.readForDisplay() } });
+    res.json({
+      success: true,
+      data: { changed, ...aiSettings.readForDisplay() }
+    });
   } catch (err) {
     next(err);
   }
@@ -481,7 +542,9 @@ router.get("/admin/balance", auth, requireRole("admin"), async (_req, res) => {
       }
     });
   } catch (err) {
-    res.status(502).json({ success: false, message: `余额查询异常：${err.message}` });
+    res
+      .status(502)
+      .json({ success: false, message: `余额查询异常：${err.message}` });
   }
 });
 

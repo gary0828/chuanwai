@@ -30,7 +30,8 @@ const weekDays = ["周一", "周二", "周三", "周四", "周五", "周六", "�
 const periods = ref<number[]>([]);
 function loadPeriods() {
   getPeriodTimes().then((res: any) => {
-    if (res.success) periods.value = (res.data || []).map((p: any) => Number(p.period));
+    if (res.success)
+      periods.value = (res.data || []).map((p: any) => Number(p.period));
   });
 }
 

@@ -151,7 +151,11 @@ const funnelChart = computed(() => {
   const stages = allStages.filter(x => x.value > 0);
   if (stages.length < 2) return null;
 
-  const COLORS = ["var(--chart-cat-2)", "var(--chart-cat-1)", "var(--chart-cat-3)"];
+  const COLORS = [
+    "var(--chart-cat-2)",
+    "var(--chart-cat-1)",
+    "var(--chart-cat-3)"
+  ];
   return {
     tooltip: {
       trigger: "item",

@@ -70,7 +70,10 @@ function handlePrint() {
 
 <template>
   <div class="app-page">
-    <AppPageHeader title="成长档案" description="学员在校期间的成绩、出勤与课时轨迹" />
+    <AppPageHeader
+      title="成长档案"
+      description="学员在校期间的成绩、出勤与课时轨迹"
+    />
     <!-- 学员选择 -->
     <el-card shadow="never" class="mb-4">
       <div class="flex flex-wrap items-center gap-2">
@@ -154,14 +157,16 @@ function handlePrint() {
   body * {
     visibility: hidden;
   }
+
   #printGrowth,
   #printGrowth * {
     visibility: visible;
   }
+
   #printGrowth {
     position: absolute;
-    left: 0;
     top: 0;
+    left: 0;
     width: 100%;
     padding: 0;
   }

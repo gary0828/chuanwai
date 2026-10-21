@@ -73,7 +73,8 @@ async function loadAll() {
   if (res?.success) {
     all.value = res.data.list;
     for (const item of all.value) {
-      if (replyDraft[item.id] === undefined) replyDraft[item.id] = item.admin_reply || "";
+      if (replyDraft[item.id] === undefined)
+        replyDraft[item.id] = item.admin_reply || "";
     }
   }
 }
@@ -203,7 +204,10 @@ onMounted(async () => {
 
     <!-- 我的提交 / 教师视图 -->
     <div v-if="!isAdmin || tab === 'mine'">
-      <div v-if="mine.length === 0" class="py-5 text-center text-[13px] text-gray-400">
+      <div
+        v-if="mine.length === 0"
+        class="py-5 text-center text-[13px] text-gray-400"
+      >
         还没有提交过反馈
       </div>
       <div
@@ -225,7 +229,9 @@ onMounted(async () => {
           v-if="item.admin_reply"
           class="mt-2 rounded bg-blue-50 px-3 py-2 text-[13px] leading-relaxed"
         >
-          <span class="text-xs text-blue-500">管理员回复 · {{ item.handled_at }}</span>
+          <span class="text-xs text-blue-500"
+            >管理员回复 · {{ item.handled_at }}</span
+          >
           <div class="mt-1 whitespace-pre-wrap">{{ item.admin_reply }}</div>
         </div>
       </div>
@@ -247,7 +253,10 @@ onMounted(async () => {
         </el-select>
       </div>
 
-      <div v-if="all.length === 0" class="py-5 text-center text-[13px] text-gray-400">
+      <div
+        v-if="all.length === 0"
+        class="py-5 text-center text-[13px] text-gray-400"
+      >
         暂无反馈
       </div>
       <div
@@ -261,7 +270,9 @@ onMounted(async () => {
             {{ item.status }}
           </el-tag>
           <span class="text-xs text-gray-500">
-            {{ item.username }}（{{ item.user_role === "admin" ? "管理员" : "教师" }}）
+            {{ item.username }}（{{
+              item.user_role === "admin" ? "管理员" : "教师"
+            }}）
           </span>
           <span class="text-xs text-gray-400">{{ item.created_at }}</span>
           <span v-if="item.page_path" class="text-xs text-gray-400">

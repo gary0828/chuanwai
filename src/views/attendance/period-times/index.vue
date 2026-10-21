@@ -105,7 +105,9 @@ onMounted(load);
     <div class="page-card">
       <div class="page-toolbar">
         <span class="page-hint">
-          当前共 {{ rows.length }} 节；修改后仅影响此后新生成的课次，已有课次的时间不会被回写
+          当前共
+          {{ rows.length }}
+          节；修改后仅影响此后新生成的课次，已有课次的时间不会被回写
         </span>
       </div>
 

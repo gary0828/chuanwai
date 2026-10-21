@@ -1,5 +1,20 @@
 const Layout = () => import("@/layout/index.vue");
 
+/**
+ * `remaining` 路由的类型 = 全局 `RouteConfigsTable`，但 `meta` 换成带 `roles` 的 `CustomizeRouteMeta`。
+ *
+ * 为什么需要：全局 `RouteConfigsTable.meta` 只声明了 title/icon/showLink/rank，
+ * 而 `/ai-admin` 必须写 `meta.roles`（`router/index.ts` 的守卫与
+ * `filterNoPermissionTree` 都靠它做页面级鉴权）。之前直接 `satisfies` 会报
+ * TS2353「'roles' does not exist」，不改运行时行为，只补类型。
+ */
+type RemainingRoute = Omit<RouteConfigsTable, "meta" | "children"> & {
+  meta?: CustomizeRouteMeta;
+  children?: Array<
+    Omit<RouteChildrenConfigsTable, "meta"> & { meta?: CustomizeRouteMeta }
+  >;
+};
+
 export default [
   {
     path: "/login",
@@ -89,4 +104,4 @@ export default [
       }
     ]
   }
-] satisfies Array<RouteConfigsTable>;
+] satisfies Array<RemainingRoute>;

@@ -28,10 +28,7 @@ defineProps({
         <!-- 统计口径、状态徽标等放在标题右侧，让"这页有多少东西"一眼可见 -->
         <slot name="meta" />
       </div>
-      <p
-        v-if="description || $slots.description"
-        class="app-page-header__desc"
-      >
+      <p v-if="description || $slots.description" class="app-page-header__desc">
         <slot name="description">{{ description }}</slot>
       </p>
     </div>
@@ -44,6 +41,15 @@ defineProps({
 </template>
 
 <style lang="scss" scoped>
+
+
+/* 窄屏：操作区独占一行，避免与标题挤在一起 */
+@media (width <= 640px) {
+  .app-page-header__actions {
+    width: 100%;
+  }
+}
+
 .app-page-header {
   display: flex;
   flex-wrap: wrap;
@@ -85,12 +91,5 @@ defineProps({
   flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
-}
-
-/* 窄屏：操作区独占一行，避免与标题挤在一起 */
-@media (width <= 640px) {
-  .app-page-header__actions {
-    width: 100%;
-  }
 }
 </style>

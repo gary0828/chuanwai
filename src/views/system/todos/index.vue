@@ -73,14 +73,19 @@ function loadData() {
         pagination.total = res.data.total;
       }
     })
+    .catch(() => {
+      // 失败文案由全局响应拦截器统一提示（含 200+success:false）
+    })
     .finally(() => (loading.value = false));
 }
 
 function loadUsers() {
   if (!isAdmin.value || users.value.length) return;
-  getUserList({ page: 1, pageSize: 100 }).then((res: any) => {
-    if (res.success) users.value = res.data?.list ?? res.data ?? [];
-  });
+  getUserList({ page: 1, pageSize: 100 })
+    .then((res: any) => {
+      if (res.success) users.value = res.data?.list ?? res.data ?? [];
+    })
+    .catch(() => {});
 }
 
 /**
@@ -191,16 +196,22 @@ function handleSubmit() {
         ? Promise.all(ids.map(id => updateTodo(id, payload)))
         : updateTodo(form.id, payload)
       : createTodo(payload);
-    api.then((res: any) => {
-      const okRes = Array.isArray(res)
-        ? res.every((r: any) => r?.success)
-        : res?.success;
-      if (okRes) {
-        ElMessage.success(form.id ? "修改成功" : "新建成功");
-        dialogVisible.value = false;
-        loadData();
-      }
-    });
+    api
+      .then((res: any) => {
+        const okRes = Array.isArray(res)
+          ? res.every((r: any) => r?.success)
+          : res?.success;
+        // ★ 只有确认成功才弹成功文案并关窗：
+        //   200+success:false 也已被响应拦截器转成 reject，走下面的 catch
+        if (okRes) {
+          ElMessage.success(form.id ? "修改成功" : "新建成功");
+          dialogVisible.value = false;
+          loadData();
+        }
+      })
+      .catch(() => {
+        // 失败文案由全局响应拦截器统一提示；弹窗保持打开，用户可直接重试
+      });
   });
 }
 
@@ -209,13 +220,19 @@ function handleToggleStatus(row: any) {
   const target = done ? "已完成" : "待办";
   const ids: number[] = row.groupIds?.length ? row.groupIds : [row.id];
   // ★ 同源多条一并处理 —— 它们本是同一个事件的两个收件人
-  Promise.all(ids.map(id => updateTodo(id, { status: target }))).then(() => {
-    ElMessage.success(
-      (done ? "已标记完成" : "已退回待办") +
-        (ids.length > 1 ? `（同源 ${ids.length} 条一并处理）` : "")
-    );
-    loadData();
-  });
+  Promise.all(ids.map(id => updateTodo(id, { status: target })))
+    .then(res => {
+      // 逐条校验：任一条没成功就整体不算成功（否则又是「假成功」）
+      if (!res.every((r: any) => r?.success)) return;
+      ElMessage.success(
+        (done ? "已标记完成" : "已退回待办") +
+          (ids.length > 1 ? `（同源 ${ids.length} 条一并处理）` : "")
+      );
+      loadData();
+    })
+    .catch(() => {
+      // 失败由全局拦截器提示，且绝不弹「已标记完成」
+    });
 }
 
 function handleDelete(row: any) {
@@ -226,13 +243,16 @@ function handleDelete(row: any) {
     confirmButtonText: "删除",
     cancelButtonText: "取消"
   })
-    .then(() => {
-      Promise.all(ids.map(id => deleteTodo(id))).then(() => {
-        ElMessage.success("删除成功");
-        loadData();
-      });
+    .then(() => Promise.all(ids.map(id => deleteTodo(id))))
+    .then((res: any[]) => {
+      // 逐条校验：任一条失败就整体不算成功
+      if (!res.every(r => r?.success)) return;
+      ElMessage.success("删除成功");
+      loadData();
     })
-    .catch(() => {});
+    .catch(() => {
+      // 取消确认框 / 删除失败都在这里：都不弹「删除成功」
+    });
 }
 
 const priorityType = (p: string) =>

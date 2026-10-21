@@ -35,6 +35,43 @@ type PendingRequest = {
   reject: (error: unknown) => void;
 };
 
+/** 业务失败响应体：HTTP 2xx，但 body 明确写了 `success: false` */
+type BizFailureBody = { success: false; message?: string };
+
+/**
+ * 判断是否为「HTTP 200 + success:false」的业务失败（K-050 红线）
+ *
+ * 后端正常失败都带 4xx/5xx，但网关改写、代理兜底、旧接口等仍可能 200 返回失败。
+ * 这里必须按失败处理 —— 否则视图层 `if (res.success) {}` 会**静默跳过**
+ * （用户看到的是"点了没反应"），而不校验 success 的写操作更会**假成功**。
+ *
+ * 只认「对象 + success 严格等于 false」，避免误伤 `responseType: "blob"`
+ * 的导出接口（Blob 对象没有 success 字段）与非 JSON 响应。
+ */
+const isBizFailure = (data: unknown): data is BizFailureBody =>
+  typeof data === "object" &&
+  data !== null &&
+  (data as { success?: unknown }).success === false;
+
+/** 业务失败错误：与 axios 错误同形（视图层仍可用 err.message / err.response 读取），并打上 `isBizFailure` 便于区分 */
+export type BizFailureError = Error & {
+  name: "BusinessError";
+  response?: PureHttpResponse;
+  isBizFailure: true;
+};
+
+/** 把业务失败包装成 Error（不伪装成 AxiosError：headers 类型不一致，且没有 axios 的 isAxiosError 语义） */
+function createBizFailureError(
+  message: string,
+  response: PureHttpResponse
+): BizFailureError {
+  const error = new Error(message) as BizFailureError;
+  error.name = "BusinessError";
+  error.response = response;
+  error.isBizFailure = true;
+  return error;
+}
+
 class PureHttp {
   constructor() {
     this.httpInterceptorsRequest();
@@ -174,6 +211,16 @@ class PureHttp {
           PureHttp.initConfig.beforeResponseCallback(response);
           return response.data;
         }
+
+        // ★ P1-6 / K-050：2xx 不等于业务成功。
+        // 统一提示后端 message 并 reject，让调用方的 catch 生效，
+        // 从根上消灭「静默失败」与「假成功」两种误导。
+        if (isBizFailure(response.data)) {
+          const readable = response.data.message || "操作失败，请稍后重试";
+          ElMessage.error(readable);
+          return Promise.reject(createBizFailureError(readable, response));
+        }
+
         return response.data;
       },
       (error: PureHttpError) => {
@@ -183,7 +230,14 @@ class PureHttp {
         if ($error.isCancelRequest) return Promise.reject($error);
 
         const status = $error?.response?.status;
-        const backendMessage = $error?.response?.data?.message;
+        // `AxiosError["response"]["data"]` 是 unknown：只有后端 message 是字符串时才采用
+        const backendData = $error?.response?.data as
+          | { message?: unknown }
+          | undefined;
+        const backendMessage =
+          typeof backendData?.message === "string"
+            ? backendData.message
+            : undefined;
 
         if (status === 401) {
           // 凭证失效 / 已被吊销（登出、改密、改角色）→ 统一清理并跳登录

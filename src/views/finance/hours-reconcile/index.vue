@@ -142,8 +142,7 @@ onMounted(query);
         <el-button :disabled="applying" @click="query">刷新</el-button>
         <div class="flex-1" />
         <span class="text-xs text-gray-500">
-          可自动补扣 {{ fixableCount }} 条 ·
-          需人工处理 {{ blockedCount }} 条
+          可自动补扣 {{ fixableCount }} 条 · 需人工处理 {{ blockedCount }} 条
         </span>
       </div>
 

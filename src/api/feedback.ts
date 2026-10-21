@@ -78,5 +78,7 @@ export const updateFeedback = (
   id: number,
   data: { status?: string; admin_reply?: string }
 ) => {
-  return http.request<{ success: boolean }>("put", `/api/feedback/${id}`, { data });
+  return http.request<{ success: boolean }>("put", `/api/feedback/${id}`, {
+    data
+  });
 };

@@ -45,7 +45,13 @@ function signTokens(user) {
     { expiresIn: "7d" }
   );
   const refreshToken = jwt.sign(
-    { id: user.id, username: user.username, role: user.role, tv, type: "refresh" },
+    {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      tv,
+      type: "refresh"
+    },
     SECRET,
     { expiresIn: "30d" }
   );
@@ -56,20 +62,40 @@ function signTokens(user) {
   };
 }
 
-/** 校验 Authorization: Bearer <token>，并确认凭证未被吊销 */
+/** 校验 Authorization: Bearer <token>，并确认凭证未被吊销
+ *
+ *  ★ 2026-10-18（深度测试 P1-1）：凭证类型必须来自白名单（无 type / access /
+ *    ai_agent / qb_agent），其余一律 401 —— 见下方 KNOWN_TYPES 注释。
+ */
 function auth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   if (!token) {
-    return res.status(401).json({ success: false, message: "未登录或登录已过期" });
+    return res
+      .status(401)
+      .json({ success: false, message: "未登录或登录已过期" });
   }
   let payload;
   try {
     payload = jwt.verify(token, SECRET);
-  } catch (err) {
-    return res.status(401).json({ success: false, message: "未登录或登录已过期" });
+  } catch {
+    return res
+      .status(401)
+      .json({ success: false, message: "未登录或登录已过期" });
   }
-  if (payload.type === "refresh") {
+  // ── 凭证类型白名单（2026-10-18 深度测试 P1-1 修复）────────────────────
+  // 正式 accessToken = **无 type** 或 type==="access"；另有且仅另有两种**受限网关凭证**
+  // （ai_agent / qb_agent，路径白名单见下方），它们只在被允许的前缀内可用。
+  // 除此之外的一切 type 一律 401 —— 尤其 `ai_sso` 免登票据：
+  // 它由 routes/ai.js 签发，payload 带 id/username/role/tv，与 accessToken **同构**；
+  // 旧实现只显式拒绝 refresh，导致票据可直接当 Bearer 全权调用教务接口
+  // （只读网关凭证 → 自签票据 → 12h admin 全权，完整提权链已实测复现）。
+  const KNOWN_TYPES = new Set(["access", "ai_agent", "qb_agent"]);
+  if (
+    payload.type !== undefined &&
+    payload.type !== null &&
+    !KNOWN_TYPES.has(payload.type)
+  ) {
     return res.status(401).json({ success: false, message: "无效的访问凭证" });
   }
   // AI 教学工作台凭证（type=ai_agent）：默认只允许访问 agent / ai 接口。
@@ -101,7 +127,8 @@ function auth(req, res, next) {
     // 指派给别人 / 改负责人只有 admin 能做。这与 /api/growth 的处理方式一致。
     const TODOS_OK = /^\/api\/todos(\/|$)/.test(path);
     // 管理动作：即使在 /api/growth 内也不放行（改全局成长阈值）
-    const ADMIN_ONLY = path === "/api/growth/thresholds" && req.method !== "GET";
+    const ADMIN_ONLY =
+      path === "/api/growth/thresholds" && req.method !== "GET";
     if ((!READ_ONLY_OK && !GROWTH_OK && !TODOS_OK) || ADMIN_ONLY) {
       return res.status(403).json({
         success: false,
@@ -145,7 +172,10 @@ function auth(req, res, next) {
   req.user = {
     id: payload.id,
     username: payload.username,
-    role: payload.role
+    role: payload.role,
+    // 凭证类型（"access" / "ai_agent" / "qb_agent"）：供路由做「只有正式登录凭证才能
+    // 做某动作」的判定（如 POST /api/ai/sso/ticket 禁止网关凭证自签票据）。
+    tokenType: payload.type || "access"
   };
   next();
 }
@@ -154,7 +184,9 @@ function auth(req, res, next) {
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.user || !roles.includes(req.user.role)) {
-      return res.status(403).json({ success: false, message: "无权限执行该操作" });
+      return res
+        .status(403)
+        .json({ success: false, message: "无权限执行该操作" });
     }
     next();
   };

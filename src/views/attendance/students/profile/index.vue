@@ -28,7 +28,9 @@ const attStats = computed<Record<string, number>>(
   () => profile.value?.attendance_stats || {}
 );
 const attendances = computed<any[]>(() => profile.value?.attendances || []);
-const pendingDeduct = computed(() => Number(profile.value?.pending_deduct_count || 0));
+const pendingDeduct = computed(() =>
+  Number(profile.value?.pending_deduct_count || 0)
+);
 const attTotal = computed(() =>
   Object.values(attStats.value).reduce((s, v) => s + Number(v || 0), 0)
 );
@@ -235,7 +237,9 @@ onMounted(() => {
             <div class="text-sm text-gray-500">剩余课时</div>
             <div
               class="mt-1 text-2xl font-bold"
-              :class="n(summary.remain_hours) <= 5 ? 'text-red-500' : 'text-blue-600'"
+              :class="
+                n(summary.remain_hours) <= 5 ? 'text-red-500' : 'text-blue-600'
+              "
             >
               {{ n(summary.remain_hours) }}
             </div>
@@ -319,7 +323,9 @@ onMounted(() => {
                 <template #default="{ row }">
                   <span
                     :class="
-                      n(row.remain_hours) <= 5 ? 'font-semibold text-red-500' : ''
+                      n(row.remain_hours) <= 5
+                        ? 'font-semibold text-red-500'
+                        : ''
                     "
                     >{{ n(row.remain_hours) }}</span
                   >
@@ -387,7 +393,9 @@ onMounted(() => {
           <el-tab-pane label="考勤统计" name="att">
             <template v-if="attTotal > 0">
               <div class="mb-2 flex flex-wrap items-center gap-3">
-                <div class="text-sm text-gray-500">累计考勤 {{ attTotal }} 次</div>
+                <div class="text-sm text-gray-500">
+                  累计考勤 {{ attTotal }} 次
+                </div>
                 <el-tag
                   v-for="(v, k) in attStats"
                   :key="k"
@@ -437,9 +445,11 @@ onMounted(() => {
                 </el-table-column>
                 <el-table-column label="课时扣减" width="110" align="center">
                   <template #default="{ row }">
-                    <el-tag size="small" :type="deductTagType(row.deduct_state)">{{
-                      row.deduct_state
-                    }}</el-tag>
+                    <el-tag
+                      size="small"
+                      :type="deductTagType(row.deduct_state)"
+                      >{{ row.deduct_state }}</el-tag
+                    >
                   </template>
                 </el-table-column>
                 <template #empty>

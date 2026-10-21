@@ -40,6 +40,12 @@ services:
     restart: unless-stopped
     environment:
       - PORT=3000
+      # 时区（P1-10）：容器默认 UTC，会让日志时间、备份文件名（按本地时间生成）
+      # 与校区实际时间差 8 小时，排查故障时对不上。固定为 Asia/Shanghai。
+      - TZ=Asia/Shanghai
+      # 数据根目录：与下方卷挂载保持同一路径；后端所有数据/备份/图片路径
+      # 都由 server/src/utils/paths.js 从这里解析（唯一入口，不再硬编码）
+      - DATA_DIR=/app/data
       # JWT 签名密钥（必需）。缺失时后端会直接拒绝启动，不再回退到源码默认值。
       # 生成：openssl rand -hex 32
       # 注入方式（任选其一）：
@@ -71,6 +77,13 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+    # 日志轮转（P1-9）：默认 json-file 无上限，长期运行会吃满磁盘导致整机故障。
+    # 单文件 10MB × 最多 3 份 = 单容器上限 30MB。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # 不对外暴露 3000：只允许 nginx 经内部网络访问，公网扫不到后端
     expose:
       - "3000"
@@ -83,6 +96,9 @@ services:
       dockerfile: deploy/Dockerfile.unified
     container_name: attendance-unified
     restart: unless-stopped
+    environment:
+      # 时区（P1-10）：nginx 访问/错误日志的本地时间需与校区一致
+      - TZ=Asia/Shanghai
     depends_on:
       server:
         condition: service_healthy
@@ -90,3 +106,9 @@ services:
       # 对外唯一入口，端口取 .env 的 WEB_PORT（缺省 80）。
       # 无域名请设 18080 等高位端口（见文件头说明）。
       - "${WEB_PORT:-80}:80"
+    # 日志轮转（P1-9）：与 server 保持一致，防 nginx 日志无限增长
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

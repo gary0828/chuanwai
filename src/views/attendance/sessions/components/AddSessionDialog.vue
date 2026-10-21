@@ -49,7 +49,9 @@ const form = ref({
   room_id: null as number | null,
   session_date: "",
   period: null as number | null,
-  origin: "补课"
+  origin: "补课",
+  // v30：一节课算几课时（默认 1；两节连上填 2）
+  hours: 1
 });
 
 const rules = {
@@ -71,7 +73,8 @@ watch(
       room_id: null,
       session_date: props.presetDate || "",
       period: props.presetPeriod ?? null,
-      origin: "补课"
+      origin: "补课",
+      hours: 1
     };
     const jobs: Promise<any>[] = [
       getAllClasses().then((res: any) => {
@@ -104,7 +107,8 @@ async function submit() {
       room_id: form.value.room_id || undefined,
       session_date: form.value.session_date,
       period: form.value.period,
-      origin: form.value.origin
+      origin: form.value.origin,
+      hours: form.value.hours
     });
     if (res.success) {
       ElMessage.success("课次已添加，周课表已刷新");
@@ -168,7 +172,11 @@ async function submit() {
       </el-form-item>
 
       <el-form-item label="节次" prop="period">
-        <el-select v-model="form.period" placeholder="请选择节次" class="!w-full">
+        <el-select
+          v-model="form.period"
+          placeholder="请选择节次"
+          class="!w-full"
+        >
           <el-option
             v-for="p in periodOptions || []"
             :key="p.period"
@@ -214,6 +222,18 @@ async function submit() {
             :value="r.id"
           />
         </el-select>
+      </el-form-item>
+
+      <el-form-item label="课时数">
+        <el-input-number
+          v-model="form.hours"
+          :min="0.5"
+          :max="20"
+          :step="0.5"
+          :precision="1"
+          class="!w-40"
+        />
+        <span class="ml-2 text-xs text-gray-500">一节课扣几个课时</span>
       </el-form-item>
 
       <el-form-item label="来源">

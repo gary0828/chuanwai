@@ -40,9 +40,17 @@ export const backfillSessions = (data?: object) => {
   return http.request("post", "/api/sessions/backfill", { data: data || {} });
 };
 
-/** 手工新增课次（加课 / 补课；admin）→ { id } */
+/** 手工新增课次（加课 / 补课；admin）→ { id }
+ *  data 可带 hours（一节课几课时，默认 1；v30） */
 export const createSession = (data: object) => {
   return http.request("post", "/api/sessions", { data });
+};
+
+/** 修改课次课时数（admin；已产生课时流水的课次会被后端拒绝）→ { hours } */
+export const updateSessionHours = (id: number, hours: number) => {
+  return http.request("put", `/api/sessions/${id}/hours`, {
+    data: { hours }
+  });
 };
 
 /** 停课（待上课 → 已停课） */

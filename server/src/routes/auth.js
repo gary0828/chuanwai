@@ -5,13 +5,25 @@ const path = require("path");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../db");
-const { auth, signTokens, revokeTokens, SECRET } = require("../middleware/auth");
+const {
+  auth,
+  signTokens,
+  revokeTokens,
+  SECRET
+} = require("../middleware/auth");
 const { audit } = require("../utils/audit");
 // 上传判型与落盘走公共实现，与「站点 Logo」共用同一份（防止两处漂移）
 const { MAX_UPLOAD_BYTES, saveImage } = require("../utils/image");
 
 // 头像落盘目录（ADR-008：DB 只存相对路径，文件本体在 data/assets 下，随 data/ 一起备份）
-const AVATAR_DIR = path.join(__dirname, "..", "..", "data", "assets", "avatars");
+const AVATAR_DIR = path.join(
+  __dirname,
+  "..",
+  "..",
+  "data",
+  "assets",
+  "avatars"
+);
 
 const router = express.Router();
 
@@ -254,7 +266,12 @@ const ROUTES = {
     },
     {
       path: "/system",
-      meta: { title: "系统管理", icon: "ep:setting", rank: 8, roles: ["admin"] },
+      meta: {
+        title: "系统管理",
+        icon: "ep:setting",
+        rank: 8,
+        roles: ["admin"]
+      },
       children: [
         {
           // 员工账号：与其它管理类工具同属「系统管理」，2026-09-26 由顶层独立项移入
@@ -485,6 +502,15 @@ router.post("/login", (req, res) => {
       .status(400)
       .json({ success: false, message: "不支持的登录方式" });
   }
+  // ★ P2-5（2026-10-18 深度测试修复）：先做**类型**校验，再碰 DB / bcrypt。
+  //   此前 body 值被直接绑定/传入底层（`db.prepare().get({$ne:null})`、
+  //   `bcrypt.compareSync(["x"], hash)`），会抛驱动异常 → 500，并把
+  //   `Unknown named parameter '$ne'` / `Illegal arguments: object, string`
+  //   这类内部错误串原样回给调用方（信息泄露 + 把参数错误当服务故障）。
+  //   非字符串一律按「账号或密码错误」处理，且不透传任何底层 message。
+  if (typeof username !== "string" || typeof password !== "string") {
+    return res.status(400).json({ success: false, message: "账号或密码错误" });
+  }
   if (!username || !password) {
     return res
       .status(400)
@@ -595,7 +621,9 @@ router.put("/profile", auth, (req, res) => {
     return res.status(400).json({ success: false, message: "姓名不能为空" });
   }
   if (newName.length > 50) {
-    return res.status(400).json({ success: false, message: "姓名过长（上限 50 字）" });
+    return res
+      .status(400)
+      .json({ success: false, message: "姓名过长（上限 50 字）" });
   }
   const hasPhone = phone !== undefined && phone !== null;
   let newPhone = null;
@@ -603,7 +631,9 @@ router.put("/profile", auth, (req, res) => {
     // 手机号允许传空串清空；非空时校验 11 位大陆手机号
     newPhone = String(phone).trim();
     if (newPhone && !/^1[3-9]\d{9}$/.test(newPhone)) {
-      return res.status(400).json({ success: false, message: "手机号格式不正确" });
+      return res
+        .status(400)
+        .json({ success: false, message: "手机号格式不正确" });
     }
   }
   try {
@@ -614,7 +644,10 @@ router.put("/profile", auth, (req, res) => {
         req.user.id
       );
     } else {
-      db.prepare("UPDATE users SET name = ? WHERE id = ?").run(newName, req.user.id);
+      db.prepare("UPDATE users SET name = ? WHERE id = ?").run(
+        newName,
+        req.user.id
+      );
     }
   } catch (err) {
     if (String(err.message).includes("UNIQUE")) {

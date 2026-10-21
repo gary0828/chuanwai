@@ -7,6 +7,8 @@ import { useEcharts } from "@/plugins/echarts";
 import { createApp, type Directive } from "vue";
 import { useElementPlus } from "@/plugins/elementPlus";
 import { injectResponsiveStorage } from "@/utils/responsive";
+import { getToken } from "@/utils/auth";
+import { useUserStoreHook } from "@/store/modules/user";
 
 import Table from "@pureadmin/table";
 
@@ -56,20 +58,26 @@ app.use(VueTippy);
 
 getPlatformConfig(app).then(async config => {
   setupStore(app);
-  // 站点信息（机构名称 / Logo / 页脚）在挂载前拉取一次：
-  // 登录页就要显示，所以不能等到进入主界面再请求。
-  // 失败静默降级为内置默认值，不阻塞启动。
+  app.use(router);
+  await router.isReady();
+  injectResponsiveStorage(app, config);
+  app.use(MotionPlugin).use(useElementPlus).use(Table).use(useEcharts);
+  app.mount("#app");
+
+  // ---- 以下都是**挂载后**的异步补数据，一律不阻塞首屏（P2-13）----
+  // 站点信息（机构名称 / Logo / 页脚）：登录页就要显示，但不能串在 mount 前面 ——
+  // axios 超时是 10s，站点接口慢/不可达时整站会白屏 10s。
+  // 先挂载，再异步拉取并补标题与图标；失败静默降级为内置默认值（各处已有回退）。
   const { useSiteStoreHook } = await import("@/store/modules/site");
-  await useSiteStoreHook()
+  useSiteStoreHook()
     .fetch()
     .then(() => {
       useSiteStoreHook().applyDocumentTitle();
       useSiteStoreHook().applyFavicon();
     })
     .catch(() => {});
-  app.use(router);
-  await router.isReady();
-  injectResponsiveStorage(app, config);
-  app.use(MotionPlugin).use(useElementPlus).use(Table).use(useEcharts);
-  app.mount("#app");
+
+  // 已登录（刷新页面 / 多标签页打开）时补拉一次用户资料（P2-2）：
+  // localStorage 快照可能落后于服务端（改过姓名/头像），失败由 store 内部静默。
+  if (getToken()?.accessToken) useUserStoreHook().loadUserInfo();
 });

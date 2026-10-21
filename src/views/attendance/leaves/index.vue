@@ -149,7 +149,10 @@ onMounted(() => {
 
 <template>
   <div class="app-page">
-    <AppPageHeader title="请假管理" description="登记请假与销假，回补相应课时" />
+    <AppPageHeader
+      title="请假管理"
+      description="登记请假与销假，回补相应课时"
+    />
     <el-card shadow="never">
       <!-- 搜索 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

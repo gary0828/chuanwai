@@ -21,14 +21,25 @@ const path = require("path");
 const XLSX = require("xlsx");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
-const { isBlank, parseText, parseNumber, isConstraintError, constraintMessage } =
-  require("../utils/validate");
+const {
+  isBlank,
+  parseText,
+  parseNumber,
+  isConstraintError,
+  constraintMessage
+} = require("../utils/validate");
 const dedupe = require("../utils/qbank-dedupe");
 // 配图上传的判型与落盘走**公共实现**（与「员工头像」「站点 Logo」共用同一份）。
 // ★ 不自写一套 —— utils/image.js 的注释已固化这条原则：
 //   「判型与落盘逻辑如果各写一份，将来改允许的格式或大小必然只改一处、另一处漂移」
 //   （与 413 事故同源：三份 nginx 只改了一份）。
 const { MAX_UPLOAD_BYTES, saveImage } = require("../utils/image");
+// ★ 2026-10-18（P1-5 DATA_DIR 收口）：配图目录跟随 DATA_DIR（唯一解析入口在 utils/paths），
+//   否则隔离/测试实例上传的配图会写进生产数据目录、删除时也可能误删生产文件。
+const {
+  assetsDir: DATA_ASSETS_DIR,
+  questionAssetsDir
+} = require("../utils/paths");
 
 // ── 校验取值包装（2026-10-07 加）────────────────────────────────────
 // ★为什么需要这两个：utils/validate.js 的 parseText / parseNumber 返回的是
@@ -52,13 +63,20 @@ const { audit } = require("../utils/audit");
 
 const router = express.Router();
 
-const QUESTION_TYPES = ["单选题", "多选题", "填空题", "判断题", "解答题", "简答题"];
+const QUESTION_TYPES = [
+  "单选题",
+  "多选题",
+  "填空题",
+  "判断题",
+  "解答题",
+  "简答题"
+];
 const SOURCES = ["自编", "AI 原创", "教材", "授权题库"];
 const STATUSES = ["草稿", "待审", "已启用", "已归档"];
 
 /** 转义 LIKE 通配符 —— 否则用户搜「100%」会变成匹配任意（实测 FTS5 弃用后走 LIKE） */
 function escapeLike(s) {
-  return String(s ?? "").replace(/[%_]/g, (m) => `\\${m}`);
+  return String(s ?? "").replace(/[%_]/g, m => `\\${m}`);
 }
 
 /**
@@ -77,13 +95,17 @@ function normalizeOptions(stored, incoming, type) {
   } else {
     // 未传 → 用库里的存量值解析（**必须能容忍已损坏的历史数据**）
     try {
-      const parsed = typeof stored === "string" ? JSON.parse(stored || "[]") : stored;
+      const parsed =
+        typeof stored === "string" ? JSON.parse(stored || "[]") : stored;
       list = Array.isArray(parsed) ? parsed : [];
     } catch {
       list = [];
     }
   }
-  const cleaned = list.map((o) => String(o ?? "").trim()).filter(Boolean).slice(0, 12);
+  const cleaned = list
+    .map(o => String(o ?? "").trim())
+    .filter(Boolean)
+    .slice(0, 12);
   if ((type === "单选题" || type === "多选题") && cleaned.length < 2) {
     throw new Error("选择题至少需要 2 个选项");
   }
@@ -105,7 +127,10 @@ function rawProbe(stem, len = 8) {
   if (raw.length < 3) return "";
   let cut = Math.min(len, raw.length);
   // 回退到最后一个「实义字符」上（跳过空白与标点），保证探针不以标点收尾
-  while (cut > 1 && /[\s，。；：？！（）【】、,.;:?!()\[\]"'""''~—\-]/.test(raw[cut - 1])) {
+  while (
+    cut > 1 &&
+    /[\s，。；：？！（）【】、,.;:?!()\[\]"'""''~—\-]/.test(raw[cut - 1])
+  ) {
     cut -= 1;
   }
   return raw.slice(0, cut);
@@ -167,19 +192,27 @@ function computeQualityScore({ analysis, kpIds, solveMethod }) {
  */
 function filterExistingKpIds(ids) {
   const nums = [
-    ...new Set((Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))
+    ...new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map(Number)
+        .filter(n => Number.isInteger(n) && n > 0)
+    )
   ];
   if (!nums.length) return [];
   const rows = db
-    .prepare(`SELECT id FROM knowledge_points WHERE id IN (${nums.map(() => "?").join(",")})`)
+    .prepare(
+      `SELECT id FROM knowledge_points WHERE id IN (${nums.map(() => "?").join(",")})`
+    )
     .all(...nums);
-  const exists = new Set(rows.map((r) => r.id));
-  return nums.filter((id) => exists.has(id));
+  const exists = new Set(rows.map(r => r.id));
+  return nums.filter(id => exists.has(id));
 }
 
 /** 读取一行题目（含 created_by，用于权限判定） */
 function loadQuestion(id) {
-  return db.prepare("SELECT * FROM questions WHERE id = ? AND deleted_at IS NULL").get(Number(id));
+  return db
+    .prepare("SELECT * FROM questions WHERE id = ? AND deleted_at IS NULL")
+    .get(Number(id));
 }
 
 /**
@@ -190,19 +223,31 @@ router.get("/overview", auth, (req, res) => {
   // ★ 全部计数按学科过滤 —— 否则切到「初中物理」会看到数学的题量
   const cf = courseFilter(req.query);
   const total = Number(
-    db.prepare(`SELECT COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql}`).get(...cf.params).c
+    db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql}`
+      )
+      .get(...cf.params).c
   );
   const byStatus = db
-    .prepare(`SELECT status, COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} GROUP BY status`)
+    .prepare(
+      `SELECT status, COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} GROUP BY status`
+    )
     .all(...cf.params);
   const byType = db
-    .prepare(`SELECT type, COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} GROUP BY type ORDER BY c DESC`)
+    .prepare(
+      `SELECT type, COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} GROUP BY type ORDER BY c DESC`
+    )
     .all(...cf.params);
   const bySource = db
-    .prepare(`SELECT source, COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} GROUP BY source ORDER BY c DESC`)
+    .prepare(
+      `SELECT source, COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} GROUP BY source ORDER BY c DESC`
+    )
     .all(...cf.params);
   const byDifficulty = db
-    .prepare(`SELECT difficulty, COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} GROUP BY difficulty ORDER BY difficulty`)
+    .prepare(
+      `SELECT difficulty, COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} GROUP BY difficulty ORDER BY difficulty`
+    )
     .all(...cf.params);
   const withKp = Number(
     db
@@ -212,9 +257,11 @@ router.get("/overview", auth, (req, res) => {
       .get(...cf.params).c
   );
   const aiAssisted = Number(
-    db.prepare(
-      `SELECT COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} AND parse_status != 'manual'`
-    ).get(...cf.params).c
+    db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM questions WHERE deleted_at IS NULL${cf.sql} AND parse_status != 'manual'`
+      )
+      .get(...cf.params).c
   );
   res.json({
     success: true,
@@ -269,8 +316,17 @@ function courseFilter(query) {
  */
 function buildQuestionFilter(query = {}) {
   const {
-    keyword, type, difficulty, source, status,
-    kp_id, chapter_id, include_sub_folders, solve_method, exam_year, custom_tag,
+    keyword,
+    type,
+    difficulty,
+    source,
+    status,
+    kp_id,
+    chapter_id,
+    include_sub_folders,
+    solve_method,
+    exam_year,
+    custom_tag,
     course_id
   } = query;
 
@@ -284,21 +340,44 @@ function buildQuestionFilter(query = {}) {
     conds.push("(q.stem LIKE ? ESCAPE '\\' OR q.analysis LIKE ? ESCAPE '\\')");
     params.push(like, like);
   }
-  if (!isBlank(type)) { conds.push("q.type = ?"); params.push(String(type)); }
-  if (!isBlank(difficulty)) { conds.push("q.difficulty = ?"); params.push(Number(difficulty)); }
-  if (!isBlank(source)) { conds.push("q.source = ?"); params.push(String(source)); }
-  if (!isBlank(status)) { conds.push("q.status = ?"); params.push(String(status)); }
-  if (!isBlank(exam_year)) { conds.push("q.exam_year = ?"); params.push(Number(exam_year)); }
-  if (!isBlank(solve_method)) { conds.push("q.solve_method = ?"); params.push(String(solve_method)); }
+  if (!isBlank(type)) {
+    conds.push("q.type = ?");
+    params.push(String(type));
+  }
+  if (!isBlank(difficulty)) {
+    conds.push("q.difficulty = ?");
+    params.push(Number(difficulty));
+  }
+  if (!isBlank(source)) {
+    conds.push("q.source = ?");
+    params.push(String(source));
+  }
+  if (!isBlank(status)) {
+    conds.push("q.status = ?");
+    params.push(String(status));
+  }
+  if (!isBlank(exam_year)) {
+    conds.push("q.exam_year = ?");
+    params.push(Number(exam_year));
+  }
+  if (!isBlank(solve_method)) {
+    conds.push("q.solve_method = ?");
+    params.push(String(solve_method));
+  }
   // 知识点筛选：kp_ids 是 JSON 数组，用 json_each 反查（v26 迁移注释已说明选型理由）
   if (!isBlank(kp_id)) {
-    conds.push("EXISTS (SELECT 1 FROM json_each(q.kp_ids) WHERE json_each.value = ?)");
+    conds.push(
+      "EXISTS (SELECT 1 FROM json_each(q.kp_ids) WHERE json_each.value = ?)"
+    );
     params.push(Number(kp_id));
   }
   // 章节筛选：include_sub_folders=1 时把子树一并纳入
   // （参考系统有同名参数 includeSubFolders —— 树形筛选必须支持，否则筛「三角函数」查不到下级）
   if (!isBlank(chapter_id)) {
-    if (String(include_sub_folders) === "1" || String(include_sub_folders) === "true") {
+    if (
+      String(include_sub_folders) === "1" ||
+      String(include_sub_folders) === "true"
+    ) {
       conds.push(
         `q.chapter_id IN (
            WITH RECURSIVE sub(id) AS (
@@ -314,7 +393,9 @@ function buildQuestionFilter(query = {}) {
     params.push(Number(chapter_id));
   }
   if (!isBlank(custom_tag)) {
-    conds.push("EXISTS (SELECT 1 FROM json_each(q.custom_tags) WHERE json_each.value = ?)");
+    conds.push(
+      "EXISTS (SELECT 1 FROM json_each(q.custom_tags) WHERE json_each.value = ?)"
+    );
     params.push(String(custom_tag));
   }
 
@@ -334,11 +415,11 @@ function buildQuestionFilter(query = {}) {
 
 /** 列表排序白名单（**不接受**用户传任意列名，防注入） */
 const QUESTION_SORTS = {
-  updated: "q.updated_at DESC, q.id DESC",   // 默认：刚录的/刚改的在最上面
+  updated: "q.updated_at DESC, q.id DESC", // 默认：刚录的/刚改的在最上面
   created: "q.created_at DESC, q.id DESC",
   difficulty_asc: "q.difficulty ASC, q.id DESC",
   difficulty_desc: "q.difficulty DESC, q.id DESC",
-  quality_asc: "COALESCE(q.quality_score, 0) ASC, q.id DESC",   // 先看"填得不全"的
+  quality_asc: "COALESCE(q.quality_score, 0) ASC, q.id DESC", // 先看"填得不全"的
   quality_desc: "COALESCE(q.quality_score, 0) DESC, q.id DESC",
   type: "q.type ASC, q.id DESC",
   year_desc: "q.exam_year DESC, q.id DESC"
@@ -353,10 +434,13 @@ router.get("/questions", auth, (req, res) => {
   //   「列表筛了、导出不认」这类静默不一致（见 buildQuestionFilter 注释）。
   const { where, params } = buildQuestionFilter(req.query);
 
-  const orderBy = QUESTION_SORTS[String(req.query?.sort)] || QUESTION_SORTS.updated;
+  const orderBy =
+    QUESTION_SORTS[String(req.query?.sort)] || QUESTION_SORTS.updated;
 
   const total = Number(
-    db.prepare(`SELECT COUNT(*) AS c FROM questions q WHERE ${where}`).get(...params).c
+    db
+      .prepare(`SELECT COUNT(*) AS c FROM questions q WHERE ${where}`)
+      .get(...params).c
   );
 
   // 分页
@@ -385,7 +469,10 @@ router.get("/questions", auth, (req, res) => {
     )
     .all(...params, size, offset);
 
-  res.json({ success: true, data: { list, total, page: pageNo, pageSize: size } });
+  res.json({
+    success: true,
+    data: { list, total, page: pageNo, pageSize: size }
+  });
 });
 
 // ────────────────────────────────────────────────────────────────
@@ -436,11 +523,16 @@ router.get("/questions/template.xlsx", auth, (_req, res) => {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "题目导入模板");
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  res.setHeader("Content-Disposition", "attachment; filename*=UTF-8''question-import-template.xlsx");
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.setHeader(
+    "Content-Disposition",
+    "attachment; filename*=UTF-8''question-import-template.xlsx"
+  );
   res.end(buf);
 });
-
 
 /**
  * Excel 导出（**按当前筛选条件**导出全部，不只当前页）。
@@ -461,33 +553,69 @@ router.get("/questions/export", auth, (req, res) => {
     .all(...params);
 
   const kpRows = db.prepare("SELECT id, code FROM knowledge_points").all();
-  const kpNameById = new Map(kpRows.map((r) => [r.id, r.code]));
+  const kpNameById = new Map(kpRows.map(r => [r.id, r.code]));
   const chapterById = new Map(
-    db.prepare("SELECT id, name FROM question_chapters").all().map((r) => [r.id, r.name])
+    db
+      .prepare("SELECT id, name FROM question_chapters")
+      .all()
+      .map(r => [r.id, r.name])
   );
   // id → 学科名（导出列里显示中文名，不是 id）
   const courseById = new Map(
-    db.prepare("SELECT id, name FROM courses").all().map((r) => [r.id, r.name])
+    db
+      .prepare("SELECT id, name FROM courses")
+      .all()
+      .map(r => [r.id, r.name])
   );
 
   const aoa = [
     // ★ 加「学科」列（迁移 028）：管理员不传 course_id 导出时会跨学科，
     //   没有这一列就分不清哪道题属于哪科。
-    ["学科","题型","题干","选项A","选项B","选项C","选项D","答案","解析","难度","知识点编码","章节名","解题方法","来源","年份","地区","标签","录入人","状态"]
+    [
+      "学科",
+      "题型",
+      "题干",
+      "选项A",
+      "选项B",
+      "选项C",
+      "选项D",
+      "答案",
+      "解析",
+      "难度",
+      "知识点编码",
+      "章节名",
+      "解题方法",
+      "来源",
+      "年份",
+      "地区",
+      "标签",
+      "录入人",
+      "状态"
+    ]
   ];
   for (const q of rows) {
-    const opts = typeof q.options === "string" ? JSON.parse(q.options || "[]") : q.options || [];
-    const kpIds = typeof q.kp_ids === "string" ? JSON.parse(q.kp_ids || "[]") : [];
-    const tags = typeof q.custom_tags === "string" ? JSON.parse(q.custom_tags || "[]") : [];
+    const opts =
+      typeof q.options === "string"
+        ? JSON.parse(q.options || "[]")
+        : q.options || [];
+    const kpIds =
+      typeof q.kp_ids === "string" ? JSON.parse(q.kp_ids || "[]") : [];
+    const tags =
+      typeof q.custom_tags === "string"
+        ? JSON.parse(q.custom_tags || "[]")
+        : [];
     aoa.push([
       courseById.get(q.course_id) ?? "（未归属）",
       q.type,
       q.stem,
-      opts[0] || "", opts[1] || "", opts[2] || "", opts[3] || "",
+      opts[0] || "",
+      opts[1] || "",
+      opts[2] || "",
+      opts[3] || "",
       q.answer,
       q.analysis,
       q.difficulty,
-      kpIds.map((id) => kpNameById.get(id) ?? id).join(","),
+      kpIds.map(id => kpNameById.get(id) ?? id).join(","),
       chapterById.get(q.chapter_id) ?? "",
       q.solve_method,
       q.source,
@@ -503,11 +631,14 @@ router.get("/questions/export", auth, (req, res) => {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "题库");
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
   // ★ 文件名带时间戳（2026-10-07）：原来写死 questions.xlsx，
   //   一天内多次导出会互相覆盖，且从文件名看不出是什么时候导的。
   const stamp = new Date()
-    .toLocaleString("sv-SE", { hour12: false })   // sv-SE 恰好是 YYYY-MM-DD HH:mm:ss
+    .toLocaleString("sv-SE", { hour12: false }) // sv-SE 恰好是 YYYY-MM-DD HH:mm:ss
     .replace(/[-: ]/g, "")
     .slice(0, 14);
   res.setHeader(
@@ -544,7 +675,9 @@ router.get("/questions/recycle", auth, (req, res) => {
   const pageNo = Math.max(Number(req.query?.page) || 1, 1);
 
   const total = Number(
-    db.prepare(`SELECT COUNT(*) AS c FROM questions q WHERE ${where}`).get(...params).c
+    db
+      .prepare(`SELECT COUNT(*) AS c FROM questions q WHERE ${where}`)
+      .get(...params).c
   );
   const list = db
     .prepare(
@@ -562,7 +695,10 @@ router.get("/questions/recycle", auth, (req, res) => {
     )
     .all(...params, size, (pageNo - 1) * size);
 
-  res.json({ success: true, data: { list, total, page: pageNo, pageSize: size } });
+  res.json({
+    success: true,
+    data: { list, total, page: pageNo, pageSize: size }
+  });
 });
 
 /**
@@ -576,11 +712,9 @@ function purgeQuestionFiles(figurePath) {
   if (!figurePath) return;
   try {
     const fs = require("fs");
-    const path = require("path");
-    // ★ 两层 `..`：本文件在 `<root>/server/src/routes/`，要到 `<root>/server/data/`
-    //   （一层 .. 会落到 `<root>/server/src/data/` —— 一期这里就写错了，
-    //    因为当时没测过配图所以没暴露。对齐 auth.js / site-info.js 的写法。）
-    const assetsDir = path.join(__dirname, "..", "..", "data", "assets");
+    // ★ 2026-10-18：目录改由 utils/paths 解析（跟随 DATA_DIR，见文件头 require 注释）。
+    //   两层 `..` 的旧写法在此删除 —— 硬编码 `server/data` 会让隔离实例误删生产配图。
+    const assetsDir = DATA_ASSETS_DIR;
 
     // ★★ 必须同时剥掉 `/assets/` 前缀（2026-10-07 实测踩到）：
     //   `figure_path` 存的是**对外 URL 路径** `/assets/questions/xxx.png`，
@@ -590,8 +724,8 @@ function purgeQuestionFiles(figurePath) {
     //   这类 bug 不报错、只表现为"磁盘越来越多"，很难发现。
     const rel = String(figurePath)
       .replace(/^\/+/, "")
-      .replace(/^assets\//, "");          // 剥掉对外前缀
-    if (!rel || rel.includes("..")) return;  // 防路径穿越
+      .replace(/^assets\//, ""); // 剥掉对外前缀
+    if (!rel || rel.includes("..")) return; // 防路径穿越
 
     const abs = path.join(assetsDir, rel);
     // 路径越界防护：只允许删 assets 目录内的文件
@@ -606,7 +740,10 @@ function purgeQuestionFiles(figurePath) {
 /** 单题详情 */
 router.get("/questions/:id", auth, (req, res) => {
   const row = loadQuestion(req.params.id);
-  if (!row) return res.status(404).json({ success: false, message: "题目不存在或已被删除" });
+  if (!row)
+    return res
+      .status(404)
+      .json({ success: false, message: "题目不存在或已被删除" });
   res.json({ success: true, data: row });
 });
 
@@ -639,9 +776,15 @@ router.get("/facets", auth, (req, res) => {
 
   const chapters = hasCourse
     ? db
-        .prepare("SELECT id, parent_id, name FROM question_chapters WHERE course_id = ? ORDER BY sort, id")
+        .prepare(
+          "SELECT id, parent_id, name FROM question_chapters WHERE course_id = ? ORDER BY sort, id"
+        )
         .all(cid)
-    : db.prepare("SELECT id, parent_id, name FROM question_chapters ORDER BY sort, id").all();
+    : db
+        .prepare(
+          "SELECT id, parent_id, name FROM question_chapters ORDER BY sort, id"
+        )
+        .all();
 
   // 题库里**实际用过**的解题方法与标签（而不是预先枚举一批空选项给用户看）
   const cf = courseFilter(req.query);
@@ -667,7 +810,10 @@ router.get("/facets", auth, (req, res) => {
     )
     .all(...cf.params);
 
-  res.json({ success: true, data: { knowledge, chapters, methods, tags, years } });
+  res.json({
+    success: true,
+    data: { knowledge, chapters, methods, tags, years }
+  });
 });
 
 /**
@@ -699,167 +845,250 @@ router.get("/subjects", auth, (req, res) => {
  *              kp_ids / chapter_id / solve_method / source(必填) / custom_tags /
  *              exam_year / region / status
  */
-router.post("/questions", auth, requireRole("admin", "teacher"), (req, res, next) => {
-  try {
-    const stemRes = text(req.body?.stem, { field: "题干", max: 4000, required: true });
-    if (stemRes instanceof Error) return res.status(400).json({ success: false, message: stemRes.message });
-    const stem = stemRes;
-    const type = QUESTION_TYPES.includes(req.body?.type) ? req.body.type : "单选题";
-    const source = String(req.body?.source || "").trim();
-
-    // ★ 学科必填（迁移 028）：题目必须归属某个学科，否则切到任何学科都看不到它
-    //   （成了"幽灵题"）。刻意**不给默认值** —— 默认数学会让物理题静默记成数学题。
-    const courseIdRaw = Number(req.body?.course_id);
-    if (!Number.isInteger(courseIdRaw) || courseIdRaw <= 0) {
-      return res.status(400).json({ success: false, message: "请选择所属学科" });
-    }
-    const courseRow = db.prepare("SELECT id FROM courses WHERE id = ?").get(courseIdRaw);
-    if (!courseRow) {
-      return res.status(400).json({ success: false, message: "所选学科不存在，请刷新后重试" });
-    }
-    const courseId = courseIdRaw;
-    if (!SOURCES.includes(source)) {
-      return res
-        .status(400)
-        .json({ success: false, message: `请选择题目来源（${SOURCES.join(" / ")}）` });
-    }
-    const diffRes = num(req.body?.difficulty ?? 3, { field: "难度", min: 1, max: 5, integer: true });
-    if (diffRes instanceof Error) return res.status(400).json({ success: false, message: diffRes.message });
-    const difficulty = diffRes;
-
-    // 选项：走与 PUT 同一个 normalizeOptions，避免两套清洗逻辑漂移
-    let options;
+router.post(
+  "/questions",
+  auth,
+  requireRole("admin", "teacher"),
+  (req, res, next) => {
     try {
-      options = normalizeOptions("[]", req.body?.options, type);
-    } catch (optErr) {
-      return res.status(400).json({ success: false, message: optErr.message });
-    }
-    // 非选择题不存选项（统一存"[]"，避免脏数据混进导出文件）
-    if (type !== "单选题" && type !== "多选题") options = [];
+      const stemRes = text(req.body?.stem, {
+        field: "题干",
+        max: 4000,
+        required: true
+      });
+      if (stemRes instanceof Error)
+        return res
+          .status(400)
+          .json({ success: false, message: stemRes.message });
+      const stem = stemRes;
+      const type = QUESTION_TYPES.includes(req.body?.type)
+        ? req.body.type
+        : "单选题";
+      const source = String(req.body?.source || "").trim();
 
-    // 知识点多值：只保留正整数，去重
-    const kpIds = filterExistingKpIds(req.body?.kp_ids);
-    // 自定义标签：字符串数组，同样清洗
-    const customTags = Array.isArray(req.body?.custom_tags)
-      ? [...new Set(req.body.custom_tags.map((t) => String(t ?? "").trim()).filter(Boolean))].slice(0, 20)
-      : [];
+      // ★ 学科必填（迁移 028）：题目必须归属某个学科，否则切到任何学科都看不到它
+      //   （成了"幽灵题"）。刻意**不给默认值** —— 默认数学会让物理题静默记成数学题。
+      const courseIdRaw = Number(req.body?.course_id);
+      if (!Number.isInteger(courseIdRaw) || courseIdRaw <= 0) {
+        return res
+          .status(400)
+          .json({ success: false, message: "请选择所属学科" });
+      }
+      const courseRow = db
+        .prepare("SELECT id FROM courses WHERE id = ?")
+        .get(courseIdRaw);
+      if (!courseRow) {
+        return res
+          .status(400)
+          .json({ success: false, message: "所选学科不存在，请刷新后重试" });
+      }
+      const courseId = courseIdRaw;
+      if (!SOURCES.includes(source)) {
+        return res.status(400).json({
+          success: false,
+          message: `请选择题目来源（${SOURCES.join(" / ")}）`
+        });
+      }
+      const diffRes = num(req.body?.difficulty ?? 3, {
+        field: "难度",
+        min: 1,
+        max: 5,
+        integer: true
+      });
+      if (diffRes instanceof Error)
+        return res
+          .status(400)
+          .json({ success: false, message: diffRes.message });
+      const difficulty = diffRes;
 
-    const status = STATUSES.includes(req.body?.status) ? req.body.status : "草稿";
-    const hash = dedupe.contentHash(stem);
+      // 选项：走与 PUT 同一个 normalizeOptions，避免两套清洗逻辑漂移
+      let options;
+      try {
+        options = normalizeOptions("[]", req.body?.options, type);
+      } catch (optErr) {
+        return res
+          .status(400)
+          .json({ success: false, message: optErr.message });
+      }
+      // 非选择题不存选项（统一存"[]"，避免脏数据混进导出文件）
+      if (type !== "单选题" && type !== "多选题") options = [];
 
-    const info = db
-      .prepare(
-        `INSERT INTO questions
+      // 知识点多值：只保留正整数，去重
+      const kpIds = filterExistingKpIds(req.body?.kp_ids);
+      // 自定义标签：字符串数组，同样清洗
+      const customTags = Array.isArray(req.body?.custom_tags)
+        ? [
+            ...new Set(
+              req.body.custom_tags
+                .map(t => String(t ?? "").trim())
+                .filter(Boolean)
+            )
+          ].slice(0, 20)
+        : [];
+
+      const status = STATUSES.includes(req.body?.status)
+        ? req.body.status
+        : "草稿";
+      const hash = dedupe.contentHash(stem);
+
+      const info = db
+        .prepare(
+          `INSERT INTO questions
            (type, stem, options, answer, analysis, difficulty, kp_ids, chapter_id,
             solve_method, source, content_hash, custom_tags, exam_year, region, status,
             created_by, parse_status, quality_score, figure_path, course_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        type,
-        stem,
-        JSON.stringify(options),
-        text(req.body?.answer, { field: "答案", max: 2000 }),
-        text(req.body?.analysis, { field: "解析", max: 4000 }),
-        difficulty,
-        JSON.stringify(kpIds),
-        isBlank(req.body?.chapter_id) ? null : Number(req.body.chapter_id),
-        text(req.body?.solve_method, { field: "解题方法", max: 100 }),
-        source,
-        hash,
-        JSON.stringify(customTags),
-        isBlank(req.body?.exam_year) ? null : Number(req.body.exam_year),
-        text(req.body?.region, { field: "地区", max: 50 }),
-        status,
-        req.user.id,
-        // 手工录入的题parse_status 恒为 manual；AI 录入的题由 OCR 端点写入
-        String(req.body?.parse_status || "manual").startsWith("manual") ? "manual" : "confirmed",
-        // 质量分（录入完整度）。★ 用 req.body 原值算，与上面那几列同源，避免"存进去的和算分用的不一致"
-        computeQualityScore({
-          analysis: req.body?.analysis,
-          kpIds,
-          solveMethod: req.body?.solve_method
-        }),
-        // 配图：前端先传图拿到路径，随建题一起提交（可空）
-        String(req.body?.figure_path || "").trim().slice(0, 300),
-        courseId
-      );
+        )
+        .run(
+          type,
+          stem,
+          JSON.stringify(options),
+          text(req.body?.answer, { field: "答案", max: 2000 }),
+          text(req.body?.analysis, { field: "解析", max: 4000 }),
+          difficulty,
+          JSON.stringify(kpIds),
+          isBlank(req.body?.chapter_id) ? null : Number(req.body.chapter_id),
+          text(req.body?.solve_method, { field: "解题方法", max: 100 }),
+          source,
+          hash,
+          JSON.stringify(customTags),
+          isBlank(req.body?.exam_year) ? null : Number(req.body.exam_year),
+          text(req.body?.region, { field: "地区", max: 50 }),
+          status,
+          req.user.id,
+          // 手工录入的题parse_status 恒为 manual；AI 录入的题由 OCR 端点写入
+          String(req.body?.parse_status || "manual").startsWith("manual")
+            ? "manual"
+            : "confirmed",
+          // 质量分（录入完整度）。★ 用 req.body 原值算，与上面那几列同源，避免"存进去的和算分用的不一致"
+          computeQualityScore({
+            analysis: req.body?.analysis,
+            kpIds,
+            solveMethod: req.body?.solve_method
+          }),
+          // 配图：前端先传图拿到路径，随建题一起提交（可空）
+          String(req.body?.figure_path || "")
+            .trim()
+            .slice(0, 300),
+          courseId
+        );
 
-    audit(req.user, "新增题目", `题目#${info.lastInsertRowid} ${stem.slice(0, 30)}`);
-    res.json({ success: true, data: { id: Number(info.lastInsertRowid), content_hash: hash } });
-  } catch (err) {
-    if (isConstraintError(err)) {
-      return res.status(400).json({ success: false, message: constraintMessage(err) });
+      audit(
+        req.user,
+        "新增题目",
+        `题目#${info.lastInsertRowid} ${stem.slice(0, 30)}`
+      );
+      res.json({
+        success: true,
+        data: { id: Number(info.lastInsertRowid), content_hash: hash }
+      });
+    } catch (err) {
+      if (isConstraintError(err)) {
+        return res
+          .status(400)
+          .json({ success: false, message: constraintMessage(err) });
+      }
+      next(err);
     }
-    next(err);
   }
-});
+);
 
 /** 修改题目（teacher 仅限自己录入的） */
-router.put("/questions/:id", auth, requireRole("admin", "teacher"), (req, res, next) => {
-  try {
-    const row = loadQuestion(req.params.id);
-    const allowed = canMutate(req, row);
-    if (!allowed.ok) return res.status(allowed.status).json({ success: false, message: allowed.reason });
-
-    const stemRes = isBlank(req.body?.stem) ? row.stem : text(req.body.stem, { field: "题干", max: 4000, required: true });
-    if (stemRes instanceof Error) return res.status(400).json({ success: false, message: stemRes.message });
-    const stem = stemRes;
-    const source = SOURCES.includes(req.body?.source) ? req.body.source : row.source;
-
-    // 学科：未传沿用原值；传了则校验存在（**允许改** —— 录错学科应当有救，
-    // 否则只能删了重录，而删题会连配图一起进回收站流程）
-    let courseNext = row.course_id;
-    if (req.body?.course_id !== undefined) {
-      const cid = Number(req.body.course_id);
-      if (!Number.isInteger(cid) || cid <= 0) {
-        return res.status(400).json({ success: false, message: "请选择所属学科" });
-      }
-      if (!db.prepare("SELECT id FROM courses WHERE id = ?").get(cid)) {
-        return res.status(400).json({ success: false, message: "所选学科不存在" });
-      }
-      courseNext = cid;
-    }
-
-    //★★ options 的规范化：DB 里存的是 **JSON 字符串**，而 req.body 里是**数组**。
-    //   必须先统一成数组、再校验、最后一次性 stringify 回写。
-    //
-    //   踩过的坑（2026-10-07，P0 级数据损坏）：
-    //     row.options 从 DB 读出来是字符串 '["甲","乙"]'，我直接 `JSON.stringify()` 写回
-    //     → 变成 '"[\\"甲\\",\\"乙\\"]"'（**双重编码**）。
-    //     后果：**每 PUT 一次就多包一层**，改两次后解析出来是['"甲"','"乙"']，
-    //     选项文本被污染成带引号的残缺内容，且**不可逆**。
-    //     触发链路：改难度 → options 被二次编码 → 下次改选项数 <2 → 400「至少2个选项」，
-    //     而老师只是改了个难度，**报错信息完全指不到真因**。
-    // ★ 生效题型必须在 options 规范化**之前**定下来（normalizeOptions 依赖它判断
-    //   「选择题至少 2 项」），且下面的 UPDATE 还要用同一个值。
-    const type = QUESTION_TYPES.includes(req.body?.type) ? req.body.type : row.type;
-
-    let options;
+router.put(
+  "/questions/:id",
+  auth,
+  requireRole("admin", "teacher"),
+  (req, res, next) => {
     try {
-      options = normalizeOptions(row.options, req.body?.options, type);
-    } catch (optErr) {
-      return res.status(400).json({ success: false, message: optErr.message });
-    }
+      const row = loadQuestion(req.params.id);
+      const allowed = canMutate(req, row);
+      if (!allowed.ok)
+        return res
+          .status(allowed.status)
+          .json({ success: false, message: allowed.reason });
 
-    const kpIds = req.body?.kp_ids === undefined
-      ? JSON.parse(row.kp_ids || "[]")
-      : filterExistingKpIds(req.body.kp_ids);
-    const customTags = Array.isArray(req.body?.custom_tags)
-      ? [...new Set(req.body.custom_tags.map((t) => String(t ?? "").trim()).filter(Boolean))].slice(0, 20)
-      : JSON.parse(row.custom_tags || "[]");
+      const stemRes = isBlank(req.body?.stem)
+        ? row.stem
+        : text(req.body.stem, { field: "题干", max: 4000, required: true });
+      if (stemRes instanceof Error)
+        return res
+          .status(400)
+          .json({ success: false, message: stemRes.message });
+      const stem = stemRes;
+      const source = SOURCES.includes(req.body?.source)
+        ? req.body.source
+        : row.source;
 
-    // 配图：算出新的值（未传则沿用），并在"确实换了图"时清理旧文件
-    const figureNext = isBlank(req.body?.figure_path)
-      ? row.figure_path
-      : text(req.body.figure_path, { field: "配图路径", max: 300 });
-    if (figureNext instanceof Error) {
-      return res.status(400).json({ success: false, message: figureNext.message });
-    }
-    replaceFigure(row.figure_path, figureNext);
+      // 学科：未传沿用原值；传了则校验存在（**允许改** —— 录错学科应当有救，
+      // 否则只能删了重录，而删题会连配图一起进回收站流程）
+      let courseNext = row.course_id;
+      if (req.body?.course_id !== undefined) {
+        const cid = Number(req.body.course_id);
+        if (!Number.isInteger(cid) || cid <= 0) {
+          return res
+            .status(400)
+            .json({ success: false, message: "请选择所属学科" });
+        }
+        if (!db.prepare("SELECT id FROM courses WHERE id = ?").get(cid)) {
+          return res
+            .status(400)
+            .json({ success: false, message: "所选学科不存在" });
+        }
+        courseNext = cid;
+      }
 
-    db.prepare(
-      `UPDATE questions SET
+      //★★ options 的规范化：DB 里存的是 **JSON 字符串**，而 req.body 里是**数组**。
+      //   必须先统一成数组、再校验、最后一次性 stringify 回写。
+      //
+      //   踩过的坑（2026-10-07，P0 级数据损坏）：
+      //     row.options 从 DB 读出来是字符串 '["甲","乙"]'，我直接 `JSON.stringify()` 写回
+      //     → 变成 '"[\\"甲\\",\\"乙\\"]"'（**双重编码**）。
+      //     后果：**每 PUT 一次就多包一层**，改两次后解析出来是['"甲"','"乙"']，
+      //     选项文本被污染成带引号的残缺内容，且**不可逆**。
+      //     触发链路：改难度 → options 被二次编码 → 下次改选项数 <2 → 400「至少2个选项」，
+      //     而老师只是改了个难度，**报错信息完全指不到真因**。
+      // ★ 生效题型必须在 options 规范化**之前**定下来（normalizeOptions 依赖它判断
+      //   「选择题至少 2 项」），且下面的 UPDATE 还要用同一个值。
+      const type = QUESTION_TYPES.includes(req.body?.type)
+        ? req.body.type
+        : row.type;
+
+      let options;
+      try {
+        options = normalizeOptions(row.options, req.body?.options, type);
+      } catch (optErr) {
+        return res
+          .status(400)
+          .json({ success: false, message: optErr.message });
+      }
+
+      const kpIds =
+        req.body?.kp_ids === undefined
+          ? JSON.parse(row.kp_ids || "[]")
+          : filterExistingKpIds(req.body.kp_ids);
+      const customTags = Array.isArray(req.body?.custom_tags)
+        ? [
+            ...new Set(
+              req.body.custom_tags
+                .map(t => String(t ?? "").trim())
+                .filter(Boolean)
+            )
+          ].slice(0, 20)
+        : JSON.parse(row.custom_tags || "[]");
+
+      // 配图：算出新的值（未传则沿用），并在"确实换了图"时清理旧文件
+      const figureNext = isBlank(req.body?.figure_path)
+        ? row.figure_path
+        : text(req.body.figure_path, { field: "配图路径", max: 300 });
+      if (figureNext instanceof Error) {
+        return res
+          .status(400)
+          .json({ success: false, message: figureNext.message });
+      }
+      replaceFigure(row.figure_path, figureNext);
+
+      db.prepare(
+        `UPDATE questions SET
          type = ?, stem = ?, options = ?, answer = ?, analysis = ?, difficulty = ?,
          kp_ids = ?, chapter_id = ?, solve_method = ?, source = ?, content_hash = ?,
          custom_tags = ?, exam_year = ?, region = ?, status = ?,
@@ -867,45 +1096,74 @@ router.put("/questions/:id", auth, requireRole("admin", "teacher"), (req, res, n
          quality_score = ?,
          updated_at = datetime('now','localtime'), updated_by = ?
        WHERE id = ?`
-    ).run(
-      type,
-      stem,
-      JSON.stringify(options),
-      isBlank(req.body?.answer) ? row.answer : text(req.body.answer, { field: "答案", max: 2000 }),
-      isBlank(req.body?.analysis) ? row.analysis : text(req.body.analysis, { field: "解析", max: 4000 }),
-      num(req.body?.difficulty ?? row.difficulty, { field: "难度", min: 1, max: 5, integer: true }),
-      JSON.stringify(kpIds),
-      req.body?.chapter_id === undefined ? row.chapter_id : isBlank(req.body.chapter_id) ? null : Number(req.body.chapter_id),
-      req.body?.solve_method === undefined ? row.solve_method : text(req.body.solve_method, { field: "解题方法", max: 100 }),
-      source,
-      dedupe.contentHash(stem),
-      JSON.stringify(customTags),
-      req.body?.exam_year === undefined ? row.exam_year : isBlank(req.body.exam_year) ? null : Number(req.body.exam_year),
-      req.body?.region === undefined ? row.region : text(req.body.region, { field: "地区", max: 50 }),
-      STATUSES.includes(req.body?.status) ? req.body.status : row.status,
-      // 配图：未传沿用旧值；换了图则顺手删掉旧文件（不删会留下孤儿文件）
-      figureNext,
-      courseNext,
-      // ★ 质量分要用**生效后**的值算（PUT 是部分更新：未传的字段沿用 row 的值）
-      //   —— 用 req.body 原值算会把"没改解析"误判成"没有解析"，分数凭空掉一档。
-      computeQualityScore({
-        analysis: isBlank(req.body?.analysis) ? row.analysis : req.body.analysis,
-        kpIds,
-        solveMethod: req.body?.solve_method === undefined ? row.solve_method : req.body.solve_method
-      }),
-      req.user.id,
-      row.id
-    );
+      ).run(
+        type,
+        stem,
+        JSON.stringify(options),
+        isBlank(req.body?.answer)
+          ? row.answer
+          : text(req.body.answer, { field: "答案", max: 2000 }),
+        isBlank(req.body?.analysis)
+          ? row.analysis
+          : text(req.body.analysis, { field: "解析", max: 4000 }),
+        num(req.body?.difficulty ?? row.difficulty, {
+          field: "难度",
+          min: 1,
+          max: 5,
+          integer: true
+        }),
+        JSON.stringify(kpIds),
+        req.body?.chapter_id === undefined
+          ? row.chapter_id
+          : isBlank(req.body.chapter_id)
+            ? null
+            : Number(req.body.chapter_id),
+        req.body?.solve_method === undefined
+          ? row.solve_method
+          : text(req.body.solve_method, { field: "解题方法", max: 100 }),
+        source,
+        dedupe.contentHash(stem),
+        JSON.stringify(customTags),
+        req.body?.exam_year === undefined
+          ? row.exam_year
+          : isBlank(req.body.exam_year)
+            ? null
+            : Number(req.body.exam_year),
+        req.body?.region === undefined
+          ? row.region
+          : text(req.body.region, { field: "地区", max: 50 }),
+        STATUSES.includes(req.body?.status) ? req.body.status : row.status,
+        // 配图：未传沿用旧值；换了图则顺手删掉旧文件（不删会留下孤儿文件）
+        figureNext,
+        courseNext,
+        // ★ 质量分要用**生效后**的值算（PUT 是部分更新：未传的字段沿用 row 的值）
+        //   —— 用 req.body 原值算会把"没改解析"误判成"没有解析"，分数凭空掉一档。
+        computeQualityScore({
+          analysis: isBlank(req.body?.analysis)
+            ? row.analysis
+            : req.body.analysis,
+          kpIds,
+          solveMethod:
+            req.body?.solve_method === undefined
+              ? row.solve_method
+              : req.body.solve_method
+        }),
+        req.user.id,
+        row.id
+      );
 
-    audit(req.user, "修改题目", `题目#${row.id}`);
-    res.json({ success: true, data: { id: row.id } });
-  } catch (err) {
-    if (isConstraintError(err)) {
-      return res.status(400).json({ success: false, message: constraintMessage(err) });
+      audit(req.user, "修改题目", `题目#${row.id}`);
+      res.json({ success: true, data: { id: row.id } });
+    } catch (err) {
+      if (isConstraintError(err)) {
+        return res
+          .status(400)
+          .json({ success: false, message: constraintMessage(err) });
+      }
+      next(err);
     }
-    next(err);
   }
-});
+);
 
 /**
  * 删除题目 → **软删**（进回收站，teacher 仅限自己录入的）。
@@ -915,43 +1173,78 @@ router.put("/questions/:id", auth, requireRole("admin", "teacher"), (req, res, n
  *      文件清理由「彻底删除」负责（见 purgeQuestionFiles）。
  *      早期版本在硬删时顺手删文件，若照搬到这里，恢复回来的题会缺图。
  */
-router.delete("/questions/:id", auth, requireRole("admin", "teacher"), (req, res) => {
-  const row = loadQuestion(req.params.id);
-  const allowed = canMutate(req, row);
-  if (!allowed.ok) return res.status(allowed.status).json({ success: false, message: allowed.reason });
+router.delete(
+  "/questions/:id",
+  auth,
+  requireRole("admin", "teacher"),
+  (req, res) => {
+    const row = loadQuestion(req.params.id);
+    const allowed = canMutate(req, row);
+    if (!allowed.ok)
+      return res
+        .status(allowed.status)
+        .json({ success: false, message: allowed.reason });
 
-  db.prepare(
-    "UPDATE questions SET deleted_at = datetime('now','localtime'), deleted_by = ? WHERE id = ?"
-  ).run(req.user.id, row.id);
-  audit(req.user, "删除题目（进回收站）", `题目#${row.id}`);
-  res.json({
-    success: true,
-    data: { id: row.id, recycle: true, message: "已移入回收站，可在「回收站」里恢复" }
-  });
-});
-
-/** 批量删除（只删自己有权的；teacher 传别人的 id 会被跳过并如实回报数量） */
-router.post("/questions/batch-delete", auth, requireRole("admin", "teacher"), (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
-  if (!ids.length) return res.status(400).json({ success: false, message: "请先选择要删除的题目" });
-
-  let deleted = 0;
-  let skipped = 0;
-  for (const id of ids) {
-    const row = loadQuestion(id);
-    if (!row) { skipped += 1; continue; }
-    if (!canMutate(req, row).ok) { skipped += 1; continue; }
     db.prepare(
       "UPDATE questions SET deleted_at = datetime('now','localtime'), deleted_by = ? WHERE id = ?"
-    ).run(req.user.id, id);
-    deleted += 1;
+    ).run(req.user.id, row.id);
+    audit(req.user, "删除题目（进回收站）", `题目#${row.id}`);
+    res.json({
+      success: true,
+      data: {
+        id: row.id,
+        recycle: true,
+        message: "已移入回收站，可在「回收站」里恢复"
+      }
+    });
   }
-  // ★ 如实回报（K-050 静默即缺陷）：不能说「全部成功」却悄悄跳过别人的题
-  res.json({
-    success: true,
-    data: { deleted, skipped, message: skipped > 0 ? `已移入回收站 ${deleted} 道，${skipped} 道因无权限或不存在被跳过` : `已移入回收站 ${deleted} 道题目，可在「回收站」恢复` }
-  });
-});
+);
+
+/** 批量删除（只删自己有权的；teacher 传别人的 id 会被跳过并如实回报数量） */
+router.post(
+  "/questions/batch-delete",
+  auth,
+  requireRole("admin", "teacher"),
+  (req, res) => {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(Number).filter(Number.isInteger)
+      : [];
+    if (!ids.length)
+      return res
+        .status(400)
+        .json({ success: false, message: "请先选择要删除的题目" });
+
+    let deleted = 0;
+    let skipped = 0;
+    for (const id of ids) {
+      const row = loadQuestion(id);
+      if (!row) {
+        skipped += 1;
+        continue;
+      }
+      if (!canMutate(req, row).ok) {
+        skipped += 1;
+        continue;
+      }
+      db.prepare(
+        "UPDATE questions SET deleted_at = datetime('now','localtime'), deleted_by = ? WHERE id = ?"
+      ).run(req.user.id, id);
+      deleted += 1;
+    }
+    // ★ 如实回报（K-050 静默即缺陷）：不能说「全部成功」却悄悄跳过别人的题
+    res.json({
+      success: true,
+      data: {
+        deleted,
+        skipped,
+        message:
+          skipped > 0
+            ? `已移入回收站 ${deleted} 道，${skipped} 道因无权限或不存在被跳过`
+            : `已移入回收站 ${deleted} 道题目，可在「回收站」恢复`
+      }
+    });
+  }
+);
 
 /**
  * 查重：录入前先问一下。
@@ -963,9 +1256,14 @@ router.post("/questions/batch-delete", auth, requireRole("admin", "teacher"), (r
  *   · aiHint  —— 占位：二期接入 L3 AI 语义判重时返回（见 qbank-dedupe 注释）
  */
 router.post("/questions/check-duplicate", auth, (req, res) => {
-  const stemRes = text(req.body?.stem, { field: "题干", max: 4000, required: true });
-    if (stemRes instanceof Error) return res.status(400).json({ success: false, message: stemRes.message });
-    const stem = stemRes;
+  const stemRes = text(req.body?.stem, {
+    field: "题干",
+    max: 4000,
+    required: true
+  });
+  if (stemRes instanceof Error)
+    return res.status(400).json({ success: false, message: stemRes.message });
+  const stem = stemRes;
   const excludeId = Number(req.body?.excludeId) || 0;
 
   // ★★ 查重**限定在同一学科内**（迁移 028）：
@@ -1005,16 +1303,28 @@ router.post("/questions/check-duplicate", auth, (req, res) => {
       // ★ 参数顺序必须与 SQL 里的 `?` 一一对应：
       //   SQL 是 `id != ? AND content_hash != ? ...${dupCourseClause} AND stem LIKE ?`
       //   → 学科参数要插在 LIKE 参数**之前**，写错会静默匹配错列。
-      .all(excludeId, dedupe.contentHash(stem), ...dupCourseParams, `%${escapeLike(probe)}%`);
+      .all(
+        excludeId,
+        dedupe.contentHash(stem),
+        ...dupCourseParams,
+        `%${escapeLike(probe)}%`
+      );
   }
 
   const similar = candidates
-    .map((c) => ({ id: c.id, stem: c.stem, similarity: dedupe.similarity(stem, c.stem) }))
-    .filter((c) => c.similarity >= dedupe.DEFAULT_THRESHOLD)
+    .map(c => ({
+      id: c.id,
+      stem: c.stem,
+      similarity: dedupe.similarity(stem, c.stem)
+    }))
+    .filter(c => c.similarity >= dedupe.DEFAULT_THRESHOLD)
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, 10);
 
-  res.json({ success: true, data: { exact, similar, checked: candidates.length } });
+  res.json({
+    success: true,
+    data: { exact, similar, checked: candidates.length }
+  });
 });
 
 /**
@@ -1026,130 +1336,175 @@ router.post("/questions/check-duplicate", auth, (req, res) => {
  *
  * ★ 版权口径：来源为空的行**拒绝导入**（与手录入库同规则，CHECK 也会拦）。
  */
-router.post("/questions/import", auth, requireRole("admin", "teacher"), (req, res, next) => {
-  // ★ 导入的学科从**请求**取（前端传当前学科），不从 Excel 行里读 ——
-  //   老师是在"某个学科下"导入的，让他每行都填学科既啰嗦又易错；
-  //   而模板里放学科列还会让跨学科导入变得含糊。
-  const importCourseId = Number(req.body?.course_id);
-  if (!Number.isInteger(importCourseId) || importCourseId <= 0) {
-    return res.status(400).json({ success: false, message: "请选择导入到哪个学科" });
-  }
-  if (!db.prepare("SELECT id FROM courses WHERE id = ?").get(importCourseId)) {
-    return res.status(400).json({ success: false, message: "所选学科不存在" });
-  }
-  try {
-    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-    if (!rows.length) return res.status(400).json({ success: false, message: "没有可导入的数据" });
-    if (rows.length > 500) {
-      return res.status(400).json({ success: false, message: "单次最多导入 500 道题，请分批导入" });
+router.post(
+  "/questions/import",
+  auth,
+  requireRole("admin", "teacher"),
+  (req, res, next) => {
+    // ★ 导入的学科从**请求**取（前端传当前学科），不从 Excel 行里读 ——
+    //   老师是在"某个学科下"导入的，让他每行都填学科既啰嗦又易错；
+    //   而模板里放学科列还会让跨学科导入变得含糊。
+    const importCourseId = Number(req.body?.course_id);
+    if (!Number.isInteger(importCourseId) || importCourseId <= 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "请选择导入到哪个学科" });
     }
-
-    // 知识点 code → id 映射（Excel 里填 code 比填 id 对老师友好）
-    const kpRows = db.prepare("SELECT id, code FROM knowledge_points").all();
-    const kpByCode = new Map(kpRows.map((r) => [String(r.code).toLowerCase(), r.id]));
-    const kpByName = new Map(kpRows.map((r) => [String(r.code), r.id]));
-    // 章节按名字匹配，找不到就留空（不静默建章 —— 建章是管理动作）
-    const chapterRows = db.prepare("SELECT id, name FROM question_chapters").all();
-    const chapterByName = new Map(chapterRows.map((r) => [String(r.name).trim(), r.id]));
-
-    const errors = [];
-    let imported = 0;
-
-    for (let i = 0; i < rows.length; i += 1) {
-      const r = rows[i] || {};
-      const rowNo = i + 2; // 表头占第 1 行，报错行号按 Excel 计
-
-      const stem = String(r.stem ?? "").trim();
-      if (!stem) {
-        errors.push({ row: rowNo, message: "题干为空" });
-        continue;
-      }
-      const type = QUESTION_TYPES.includes(String(r.type)) ? String(r.type) : "";
-      if (!type) {
-        errors.push({ row: rowNo, message: `题型必须是：${QUESTION_TYPES.join("/")}（当前「${r.type ?? ""}」）` });
-        continue;
-      }
-      const source = String(r.source ?? "").trim();
-      if (!SOURCES.includes(source)) {
-        errors.push({ row: rowNo, message: `来源必须是：${SOURCES.join("/")}（当前「${source}」）` });
-        continue;
+    if (
+      !db.prepare("SELECT id FROM courses WHERE id = ?").get(importCourseId)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "所选学科不存在" });
+    }
+    try {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      if (!rows.length)
+        return res
+          .status(400)
+          .json({ success: false, message: "没有可导入的数据" });
+      if (rows.length > 500) {
+        return res.status(400).json({
+          success: false,
+          message: "单次最多导入 500 道题，请分批导入"
+        });
       }
 
-      const options = [r.optionA, r.optionB, r.optionC, r.optionD]
-        .map((o) => String(o ?? "").trim())
-        .filter(Boolean);
+      // 知识点 code → id 映射（Excel 里填 code 比填 id 对老师友好）
+      const kpRows = db.prepare("SELECT id, code FROM knowledge_points").all();
+      const kpByCode = new Map(
+        kpRows.map(r => [String(r.code).toLowerCase(), r.id])
+      );
+      const kpByName = new Map(kpRows.map(r => [String(r.code), r.id]));
+      // 章节按名字匹配，找不到就留空（不静默建章 —— 建章是管理动作）
+      const chapterRows = db
+        .prepare("SELECT id, name FROM question_chapters")
+        .all();
+      const chapterByName = new Map(
+        chapterRows.map(r => [String(r.name).trim(), r.id])
+      );
 
-      const difficultyRaw = Number(r.difficulty);
-      const difficulty = Number.isInteger(difficultyRaw) && difficultyRaw >= 1 && difficultyRaw <= 5
-        ? difficultyRaw
-        : 3;
+      const errors = [];
+      let imported = 0;
 
-      // 知识点：支持 code 或 name，逗号/顿号分隔
-      const kpIds = String(r.kp_code ?? "")
-        .split(/[,，、]/)
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean)
-        .map((s) => kpByCode.get(s) ?? kpByName.get(s) ?? null)
-        .filter(Number.isInteger);
+      for (let i = 0; i < rows.length; i += 1) {
+        const r = rows[i] || {};
+        const rowNo = i + 2; // 表头占第 1 行，报错行号按 Excel 计
 
-      const chapterId = chapterByName.get(String(r.chapter ?? "").trim()) ?? null;
-      const customTags = String(r.custom_tags ?? "")
-        .split(/[,，、]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
+        const stem = String(r.stem ?? "").trim();
+        if (!stem) {
+          errors.push({ row: rowNo, message: "题干为空" });
+          continue;
+        }
+        const type = QUESTION_TYPES.includes(String(r.type))
+          ? String(r.type)
+          : "";
+        if (!type) {
+          errors.push({
+            row: rowNo,
+            message: `题型必须是：${QUESTION_TYPES.join("/")}（当前「${r.type ?? ""}」）`
+          });
+          continue;
+        }
+        const source = String(r.source ?? "").trim();
+        if (!SOURCES.includes(source)) {
+          errors.push({
+            row: rowNo,
+            message: `来源必须是：${SOURCES.join("/")}（当前「${source}」）`
+          });
+          continue;
+        }
 
-      try {
-        db.prepare(
-          `INSERT INTO questions
+        const options = [r.optionA, r.optionB, r.optionC, r.optionD]
+          .map(o => String(o ?? "").trim())
+          .filter(Boolean);
+
+        const difficultyRaw = Number(r.difficulty);
+        const difficulty =
+          Number.isInteger(difficultyRaw) &&
+          difficultyRaw >= 1 &&
+          difficultyRaw <= 5
+            ? difficultyRaw
+            : 3;
+
+        // 知识点：支持 code 或 name，逗号/顿号分隔
+        const kpIds = String(r.kp_code ?? "")
+          .split(/[,，、]/)
+          .map(s => s.trim().toLowerCase())
+          .filter(Boolean)
+          .map(s => kpByCode.get(s) ?? kpByName.get(s) ?? null)
+          .filter(Number.isInteger);
+
+        const chapterId =
+          chapterByName.get(String(r.chapter ?? "").trim()) ?? null;
+        const customTags = String(r.custom_tags ?? "")
+          .split(/[,，、]/)
+          .map(s => s.trim())
+          .filter(Boolean);
+
+        try {
+          db.prepare(
+            `INSERT INTO questions
              (type, stem, options, answer, analysis, difficulty, kp_ids, chapter_id,
               solve_method, source, content_hash, custom_tags, exam_year, region,
               status, created_by, parse_status, quality_score, course_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '草稿', ?, 'manual', ?, ?)`
-        ).run(
-          type,
-          stem,
-          JSON.stringify(type === "单选题" || type === "多选题" ? options : []),
-          String(r.answer ?? "").trim(),
-          String(r.analysis ?? "").trim(),
-          difficulty,
-          JSON.stringify(kpIds),
-          chapterId,
-          String(r.solve_method ?? "").trim(),
-          source,
-          dedupe.contentHash(stem),
-          JSON.stringify(customTags),
-          Number(r.year) || null,
-          String(r.region ?? "").trim(),
-          req.user.id,
-          computeQualityScore({
-            analysis: r.analysis,
-            kpIds,
-            solveMethod: r.solve_method
-          }),
-          importCourseId
-        );
-        imported += 1;
-      } catch (err) {
-        errors.push({ row: rowNo, message: isConstraintError(err) ? constraintMessage(err) : err.message });
+          ).run(
+            type,
+            stem,
+            JSON.stringify(
+              type === "单选题" || type === "多选题" ? options : []
+            ),
+            String(r.answer ?? "").trim(),
+            String(r.analysis ?? "").trim(),
+            difficulty,
+            JSON.stringify(kpIds),
+            chapterId,
+            String(r.solve_method ?? "").trim(),
+            source,
+            dedupe.contentHash(stem),
+            JSON.stringify(customTags),
+            Number(r.year) || null,
+            String(r.region ?? "").trim(),
+            req.user.id,
+            computeQualityScore({
+              analysis: r.analysis,
+              kpIds,
+              solveMethod: r.solve_method
+            }),
+            importCourseId
+          );
+          imported += 1;
+        } catch (err) {
+          errors.push({
+            row: rowNo,
+            message: isConstraintError(err)
+              ? constraintMessage(err)
+              : err.message
+          });
+        }
       }
+
+      audit(
+        req.user,
+        "导入题目",
+        `Excel 导入：成功 ${imported} / 共 ${rows.length}`
+      );
+      // ★ 部分成功也返回 200 —— HTTP 200 +业务结果，页面据此逐条提示
+      res.json({
+        success: true,
+        data: {
+          total: rows.length,
+          imported,
+          failed: errors.length,
+          errors: errors.slice(0, 50)
+        }
+      });
+    } catch (err) {
+      next(err);
     }
-
-    audit(req.user, "导入题目", `Excel 导入：成功 ${imported} / 共 ${rows.length}`);
-    // ★ 部分成功也返回 200 —— HTTP 200 +业务结果，页面据此逐条提示
-    res.json({
-      success: true,
-      data: {
-        total: rows.length,
-        imported,
-        failed: errors.length,
-        errors: errors.slice(0, 50)
-      }
-    });
-  } catch (err) {
-    next(err);
   }
-});
-
+);
 
 /**
  * 上传题目配图（题干插图）。
@@ -1171,18 +1526,23 @@ router.post(
   "/questions/figure",
   auth,
   requireRole("admin", "teacher"),
-  express.raw({ type: ["image/*", "application/octet-stream"], limit: MAX_UPLOAD_BYTES + 1024 }),
+  express.raw({
+    type: ["image/*", "application/octet-stream"],
+    limit: MAX_UPLOAD_BYTES + 1024
+  }),
   (req, res) => {
-    // ★ 同样两层 `..`（见 purgeQuestionFiles 的注释）
-    const dir = path.join(__dirname, "..", "..", "data", "assets", "questions");
+    // ★ 2026-10-18（P1-5）：目录跟随 DATA_DIR（utils/paths），不再硬编码 `server/data/assets/questions`
+    const dir = questionAssetsDir;
     const saved = saveImage({
       dir,
       prefix: "fig",
       buf: req.body,
-      cleanup: false   // ★ 见上方说明：配图多文件共存，绝不能开
+      cleanup: false // ★ 见上方说明：配图多文件共存，绝不能开
     });
     if (!saved.ok) {
-      return res.status(saved.status).json({ success: false, message: saved.message });
+      return res
+        .status(saved.status)
+        .json({ success: false, message: saved.message });
     }
     audit(req.user, "上传题目配图", saved.filename);
     res.json({
@@ -1207,8 +1567,8 @@ router.post(
 function replaceFigure(oldPath, newPath) {
   const oldP = String(oldPath || "").trim();
   const newP = String(newPath || "").trim();
-  if (!oldP || oldP === newP) return;          // 没换图 → 不动
-  if (!oldP.startsWith("/assets/questions/")) return;  // 不是本系统传的图 → 不碰
+  if (!oldP || oldP === newP) return; // 没换图 → 不动
+  if (!oldP.startsWith("/assets/questions/")) return; // 不是本系统传的图 → 不碰
   purgeQuestionFiles(oldP);
 }
 
@@ -1218,35 +1578,54 @@ function replaceFigure(oldPath, newPath) {
  * ★ 权限口径与删除完全对称：能用 `canMutate` 改的题才能恢复。
  *   不对称会出怪事 —— 比如「删不了别人的题，却能把别人删的题恢复回来」。
  */
-router.post("/questions/restore", auth, requireRole("admin", "teacher"), (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
-  if (!ids.length) return res.status(400).json({ success: false, message: "请先选择要恢复的题目" });
+router.post(
+  "/questions/restore",
+  auth,
+  requireRole("admin", "teacher"),
+  (req, res) => {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(Number).filter(Number.isInteger)
+      : [];
+    if (!ids.length)
+      return res
+        .status(400)
+        .json({ success: false, message: "请先选择要恢复的题目" });
 
-  let restored = 0;
-  let skipped = 0;
-  for (const id of ids) {
-    // ★ 这里**不能**用 loadQuestion —— 它带 `deleted_at IS NULL`，
-    //   正好把「要恢复的那道题」排除掉了，永远恢复不了。
-    const row = db.prepare("SELECT * FROM questions WHERE id = ?").get(Number(id));
-    if (!row || !row.deleted_at) { skipped += 1; continue; }   // 不存在 或 本来就没删
-    if (!canMutate(req, row).ok) { skipped += 1; continue; }
-    db.prepare(
-      "UPDATE questions SET deleted_at = NULL, deleted_by = NULL, updated_by = ? WHERE id = ?"
-    ).run(req.user.id, id);
-    restored += 1;
-  }
-  audit(req.user, "恢复题目", `恢复 ${restored} 道`);
-  res.json({
-    success: true,
-    data: {
-      restored,
-      skipped,
-      message: skipped > 0
-        ? `已恢复 ${restored} 道，${skipped} 道因无权限或不在回收站被跳过`
-        : `已恢复 ${restored} 道题目`
+    let restored = 0;
+    let skipped = 0;
+    for (const id of ids) {
+      // ★ 这里**不能**用 loadQuestion —— 它带 `deleted_at IS NULL`，
+      //   正好把「要恢复的那道题」排除掉了，永远恢复不了。
+      const row = db
+        .prepare("SELECT * FROM questions WHERE id = ?")
+        .get(Number(id));
+      if (!row || !row.deleted_at) {
+        skipped += 1;
+        continue;
+      } // 不存在 或 本来就没删
+      if (!canMutate(req, row).ok) {
+        skipped += 1;
+        continue;
+      }
+      db.prepare(
+        "UPDATE questions SET deleted_at = NULL, deleted_by = NULL, updated_by = ? WHERE id = ?"
+      ).run(req.user.id, id);
+      restored += 1;
     }
-  });
-});
+    audit(req.user, "恢复题目", `恢复 ${restored} 道`);
+    res.json({
+      success: true,
+      data: {
+        restored,
+        skipped,
+        message:
+          skipped > 0
+            ? `已恢复 ${restored} 道，${skipped} 道因无权限或不在回收站被跳过`
+            : `已恢复 ${restored} 道题目`
+      }
+    });
+  }
+);
 
 /**
  * 彻底删除（不可恢复）—— 物理删除 + 清理配图文件。
@@ -1255,75 +1634,122 @@ router.post("/questions/restore", auth, requireRole("admin", "teacher"), (req, r
  * ★ 清空回收站是高风险操作，因此：① 限 admin ② 要求**显式**传 all:true，
  *   不能靠 ids 为空隐式触发（否则前端一个空数组就抹掉整个回收站）。
  */
-router.post("/questions/purge", auth, requireRole("admin", "teacher"), (req, res) => {
-  const purgeAll = req.body?.all === true;
+router.post(
+  "/questions/purge",
+  auth,
+  requireRole("admin", "teacher"),
+  (req, res) => {
+    const purgeAll = req.body?.all === true;
 
-  if (purgeAll) {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ success: false, message: "只有管理员可以清空回收站" });
+    if (purgeAll) {
+      if (req.user.role !== "admin") {
+        return res
+          .status(403)
+          .json({ success: false, message: "只有管理员可以清空回收站" });
+      }
+      const rows = db
+        .prepare(
+          "SELECT id, figure_path FROM questions WHERE deleted_at IS NOT NULL"
+        )
+        .all();
+      for (const r of rows) purgeQuestionFiles(r.figure_path);
+      db.prepare("DELETE FROM questions WHERE deleted_at IS NOT NULL").run();
+      audit(req.user, "清空回收站", `彻底删除 ${rows.length} 道`);
+      return res.json({
+        success: true,
+        data: {
+          purged: rows.length,
+          message: `已彻底删除 ${rows.length} 道题目，不可恢复`
+        }
+      });
     }
-    const rows = db.prepare("SELECT id, figure_path FROM questions WHERE deleted_at IS NOT NULL").all();
-    for (const r of rows) purgeQuestionFiles(r.figure_path);
-    db.prepare("DELETE FROM questions WHERE deleted_at IS NOT NULL").run();
-    audit(req.user, "清空回收站", `彻底删除 ${rows.length} 道`);
-    return res.json({
+
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(Number).filter(Number.isInteger)
+      : [];
+    if (!ids.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "请先选择要彻底删除的题目" });
+    }
+
+    let purged = 0;
+    let skipped = 0;
+    for (const id of ids) {
+      const row = db
+        .prepare("SELECT * FROM questions WHERE id = ?")
+        .get(Number(id));
+      // ★ 只允许对**已在回收站**的题彻底删除 —— 否则直接调 purge 就能
+      //   一步干掉正常题目，绕过了软删这层保护。
+      if (!row || !row.deleted_at) {
+        skipped += 1;
+        continue;
+      }
+      if (!canMutate(req, row).ok) {
+        skipped += 1;
+        continue;
+      }
+      purgeQuestionFiles(row.figure_path);
+      db.prepare("DELETE FROM questions WHERE id = ?").run(id);
+      purged += 1;
+    }
+    audit(req.user, "彻底删除题目", `删除 ${purged} 道`);
+    res.json({
       success: true,
-      data: { purged: rows.length, message: `已彻底删除 ${rows.length} 道题目，不可恢复` }
+      data: {
+        purged,
+        skipped,
+        message:
+          skipped > 0
+            ? `已彻底删除 ${purged} 道，${skipped} 道因无权限或不在回收站被跳过`
+            : `已彻底删除 ${purged} 道题目，不可恢复`
+      }
     });
   }
-
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
-  if (!ids.length) {
-    return res.status(400).json({ success: false, message: "请先选择要彻底删除的题目" });
-  }
-
-  let purged = 0;
-  let skipped = 0;
-  for (const id of ids) {
-    const row = db.prepare("SELECT * FROM questions WHERE id = ?").get(Number(id));
-    // ★ 只允许对**已在回收站**的题彻底删除 —— 否则直接调 purge 就能
-    //   一步干掉正常题目，绕过了软删这层保护。
-    if (!row || !row.deleted_at) { skipped += 1; continue; }
-    if (!canMutate(req, row).ok) { skipped += 1; continue; }
-    purgeQuestionFiles(row.figure_path);
-    db.prepare("DELETE FROM questions WHERE id = ?").run(id);
-    purged += 1;
-  }
-  audit(req.user, "彻底删除题目", `删除 ${purged} 道`);
-  res.json({
-    success: true,
-    data: {
-      purged,
-      skipped,
-      message: skipped > 0
-        ? `已彻底删除 ${purged} 道，${skipped} 道因无权限或不在回收站被跳过`
-        : `已彻底删除 ${purged} 道题目，不可恢复`
-    }
-  });
-});
-
+);
 
 /** 批量修改状态（启用/归档等）—— 同样按权限过滤 */
-router.post("/questions/batch-status", auth, requireRole("admin", "teacher"), (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
-  const status = String(req.body?.status || "");
-  if (!ids.length) return res.status(400).json({ success: false, message: "请先选择题目" });
-  if (!STATUSES.includes(status)) {
-    return res.status(400).json({ success: false, message: `状态必须是：${STATUSES.join("/")}` });
+router.post(
+  "/questions/batch-status",
+  auth,
+  requireRole("admin", "teacher"),
+  (req, res) => {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(Number).filter(Number.isInteger)
+      : [];
+    const status = String(req.body?.status || "");
+    if (!ids.length)
+      return res.status(400).json({ success: false, message: "请先选择题目" });
+    if (!STATUSES.includes(status)) {
+      return res
+        .status(400)
+        .json({ success: false, message: `状态必须是：${STATUSES.join("/")}` });
+    }
+    let updated = 0;
+    let skipped = 0;
+    for (const id of ids) {
+      const row = loadQuestion(id);
+      if (!row || !canMutate(req, row).ok) {
+        skipped += 1;
+        continue;
+      }
+      db.prepare(
+        "UPDATE questions SET status = ?, updated_at = datetime('now','localtime'), updated_by = ? WHERE id = ?"
+      ).run(status, req.user.id, id);
+      updated += 1;
+    }
+    res.json({
+      success: true,
+      data: {
+        updated,
+        skipped,
+        message:
+          skipped > 0
+            ? `已更新 ${updated} 道，${skipped} 道被跳过`
+            : `已更新 ${updated} 道`
+      }
+    });
   }
-  let updated = 0;
-  let skipped = 0;
-  for (const id of ids) {
-    const row = loadQuestion(id);
-    if (!row || !canMutate(req, row).ok) { skipped += 1; continue; }
-    db.prepare("UPDATE questions SET status = ?, updated_at = datetime('now','localtime'), updated_by = ? WHERE id = ?")
-      .run(status, req.user.id, id);
-    updated += 1;
-  }
-  res.json({
-    success: true,
-    data: { updated, skipped, message: skipped > 0 ? `已更新 ${updated} 道，${skipped} 道被跳过` : `已更新 ${updated} 道` }
-  });
-});
+);
 
 module.exports = router;

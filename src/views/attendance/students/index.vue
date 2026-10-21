@@ -12,6 +12,7 @@ import {
   updateStudent,
   deleteStudent,
   getStudentDeleteImpact,
+  restoreStudent,
   createClass,
   getUserList
 } from "@/api/attendance";
@@ -25,7 +26,13 @@ const loading = ref(false);
 const dataList = ref<any[]>([]);
 const classOptions = ref<any[]>([]);
 const teacherOptions = ref<any[]>([]);
-const searchForm = reactive({ class_id: "", name: "", student_no: "" });
+const searchForm = reactive({
+  class_id: "",
+  name: "",
+  student_no: "",
+  // v30 软删："" = 只看在读档案（默认）｜"1" = 只看已删除｜"all" = 全部
+  deleted: ""
+});
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 });
 
 const statusTag: Record<string, string> = {
@@ -55,7 +62,20 @@ const form = reactive({
 const rules = {
   student_no: [{ required: true, message: "请输入学号", trigger: "blur" }],
   name: [{ required: true, message: "请输入姓名", trigger: "blur" }],
-  class_id: [{ required: true, message: "请选择班级", trigger: "change" }]
+  class_id: [{ required: true, message: "请选择班级", trigger: "change" }],
+  // P2-3：此前手机号完全没校验，`abc123` 也能入库；
+  // 允许留空（家长/学员可能只留一个联系方式），填了就必须是 11 位手机号
+  phone: [
+    {
+      validator: (_r: any, value: string, callback: (e?: Error) => void) => {
+        if (!value) return callback();
+        if (!/^1[3-9]\d{9}$/.test(value))
+          callback(new Error("手机号格式不正确"));
+        else callback();
+      },
+      trigger: "blur"
+    }
+  ]
 };
 const genderOptions = ["男", "女"];
 const studentStatusOptions = ["在读", "休学", "退学"];
@@ -341,7 +361,12 @@ function handleSearch() {
 }
 
 function handleReset() {
-  Object.assign(searchForm, { class_id: "", name: "", student_no: "" });
+  Object.assign(searchForm, {
+    class_id: "",
+    name: "",
+    student_no: "",
+    deleted: ""
+  });
   handleSearch();
 }
 
@@ -417,6 +442,10 @@ function handleSubmit() {
  * ★ 2026-09-26 改造：先调「删除影响预览」，把**具体会连带清理多少条**摆进确认框。
  *   原先确认框是一句写死的文案，用户只能盲确认；而后端其实早就算好了条数，
  *   只是放在了 DELETE 的响应里（删完才返回）—— 属于「代价不可见」。
+ *
+ * ★ 2026-10-18（v30）：删除已改为**软删**，所以文案必须跟着改 ——
+ *   还写「将同时清理 XXX 条」会吓到用户，实际一条都不会删。
+ *   现在改为「档案移入已删除，历史数据全部保留，可恢复」，条数只作为「关联情况」展示。
  */
 function handleDelete(row: any) {
   getStudentDeleteImpact(row.id).then((res: any) => {
@@ -438,23 +467,46 @@ function handleDelete(row: any) {
       ([label, count]) => `${label} ${count} 条`
     );
     const detail = items.length
-      ? `（将同时清理：${items.join("、")}）`
-      : "（无关联历史记录）";
+      ? `\n该学员有 ${items.join("、")}，这些记录都会保留。`
+      : "\n该学员暂无关联历史记录。";
     ElMessageBox.confirm(
-      `确定删除学生「${row.name}（${row.student_no}）」吗？${detail}此操作不可撤销。`,
+      `删除「${row.name}（${row.student_no}）」后，档案将移入「已删除」并从列表隐藏。` +
+        `${detail}\n历史数据不会丢失，管理员可随时恢复。`,
       "删除确认",
-      { type: "warning", confirmButtonText: "确认删除", cancelButtonText: "取消" }
+      {
+        type: "warning",
+        confirmButtonText: "移入已删除",
+        cancelButtonText: "取消"
+      }
     )
       .then(() => {
         deleteStudent(row.id).then((res: any) => {
           if (res.success) {
-            ElMessage.success("删除成功");
+            ElMessage.success("已移入「已删除」，可随时恢复");
             loadData();
           }
         });
       })
       .catch(() => {});
   });
+}
+
+/** 恢复已删除的学员（v30，仅 admin；后端会再校验一次角色） */
+function handleRestore(row: any) {
+  ElMessageBox.confirm(
+    `恢复「${row.name}（${row.student_no}）」？恢复后会重新出现在学员列表、班级名单与点名名单中。`,
+    "恢复确认",
+    { type: "info", confirmButtonText: "恢复", cancelButtonText: "取消" }
+  )
+    .then(() => {
+      restoreStudent(row.id).then((res: any) => {
+        if (res.success) {
+          ElMessage.success("已恢复");
+          loadData();
+        }
+      });
+    })
+    .catch(() => {});
 }
 
 onMounted(() => {
@@ -488,6 +540,17 @@ function openProfile(row: any) {
             :label="item.name"
             :value="item.id"
           />
+        </el-select>
+        <el-select
+          v-model="searchForm.deleted"
+          placeholder="档案状态"
+          clearable
+          class="!w-32"
+          @change="handleSearch"
+        >
+          <el-option label="在读档案" value="" />
+          <el-option label="已删除" value="1" />
+          <el-option label="全部" value="all" />
         </el-select>
         <el-input
           v-model="searchForm.name"
@@ -561,15 +624,35 @@ function openProfile(row: any) {
             </el-tag>
           </template>
         </el-table-column>
+        <!-- v30 软删：档案是否已移入「已删除」 -->
+        <el-table-column label="档案" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.deleted_at" type="info" size="small"
+              >已删除</el-tag
+            >
+            <span v-else class="text-gray-400">正常</span>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="190" align="center" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link @click="openProfile(row)"
               >档案</el-button
             >
-            <el-button type="primary" link @click="openEdit(row)"
+            <el-button
+              v-if="!row.deleted_at"
+              type="primary"
+              link
+              @click="openEdit(row)"
               >编辑</el-button
             >
-            <el-button type="danger" link @click="handleDelete(row)"
+            <el-button
+              v-if="row.deleted_at"
+              type="success"
+              link
+              @click="handleRestore(row)"
+              >恢复</el-button
+            >
+            <el-button v-else type="danger" link @click="handleDelete(row)"
               >删除</el-button
             >
           </template>
@@ -627,7 +710,7 @@ function openProfile(row: any) {
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="手机号">
+        <el-form-item label="手机号" prop="phone">
           <el-input v-model="form.phone" placeholder="学生手机号（选填）" />
         </el-form-item>
         <el-form-item label="邮箱">

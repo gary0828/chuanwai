@@ -40,7 +40,10 @@ onMounted(loadData);
 
 <template>
   <div class="app-page">
-    <AppPageHeader title="经营报表" description="营收、招生与课消的经营口径汇总" />
+    <AppPageHeader
+      title="经营报表"
+      description="营收、招生与课消的经营口径汇总"
+    />
     <div class="mb-4 flex items-center gap-2">
       <span class="text-sm text-gray-500"
         >机构经营总览：招生转化 / 营收 / 续班 / 在读</span
@@ -235,14 +238,16 @@ onMounted(loadData);
   body * {
     visibility: hidden;
   }
+
   #printBusiness,
   #printBusiness * {
     visibility: visible;
   }
+
   #printBusiness {
     position: absolute;
-    left: 0;
     top: 0;
+    left: 0;
     width: 100%;
   }
 }

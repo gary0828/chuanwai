@@ -1,24 +1,30 @@
 // 考试与成绩：考试管理 / 成绩录入（upsert + 家长通知）/ 成绩单排名
-// 权限：admin 全量；teacher 仅本班（classes.head_teacher_id 绑定）
+// 权限：admin 全量；teacher 仅「班主任 OR 任课教师」的班级（G2，utils/scope.js 唯一口径）
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
-const { canManageClass } = require("../utils/scope");
+const { canManageClass, teacherClassPredicate } = require("../utils/scope");
 const { audit } = require("../utils/audit");
 const { parseDate, parseNumber } = require("../utils/validate");
 const { calcGrade } = require("../utils/grade");
+// ★ 统一分页钳制（2026-10-18 深度测试 P2-4）
+const { clampPagination } = require("../utils/pagination");
 
 const router = express.Router();
 
 const EXAM_TYPES = ["单元测", "期中", "期末"];
 
-/** 教师范围：考试仅本班（e 为 exams 表别名） */
+/** 教师范围：考试仅自己「班主任 OR 任课教师」的班级（e 为 exams 表别名）
+ *
+ *  ★ P1-4（G2）：原实现只按 classes.head_teacher_id 过滤 —— 只任课不当班主任的老师
+ *    能在 canManageExam（已用 canManageClass）里读成绩详情，却在列表里看不到考试，
+ *    同一文件内两套口径自相矛盾。现统一走 teacherClassPredicate。
+ */
 function examScope(req) {
   if (req.user.role !== "teacher") return { where: "", params: [] };
   return {
-    where:
-      " AND e.class_id IN (SELECT id FROM classes WHERE head_teacher_id = ?)",
-    params: [req.user.id]
+    where: ` AND e.class_id IN (SELECT c.id FROM classes c WHERE ${teacherClassPredicate("c")})`,
+    params: [req.user.id, req.user.id]
   };
 }
 
@@ -31,12 +37,12 @@ function canManageExam(req, examId) {
   return !!exam && canManageClass(req, exam.class_id);
 }
 
-
 // ==================== 考试管理 ====================
 
 /** 考试列表（分页 + 课程/班级/考试名筛选；教师仅本班） */
 router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
-  const { course_id, class_id, keyword, page = 1, pageSize = 10 } = req.query;
+  const { course_id, class_id, keyword } = req.query;
+  const { pageSize: ps, offset } = clampPagination(req.query);
   const scope = examScope(req);
   const conds = [];
   const params = [];
@@ -64,7 +70,7 @@ router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
     SELECT e.id, e.name, e.course_id, e.class_id, e.exam_date, e.type, e.full_score, e.remark,
            e.created_by, e.created_at,
            cu.name AS course_name, c.name AS class_name,
-           (SELECT COUNT(*) FROM students s WHERE s.class_id = e.class_id AND s.status = '在读') AS student_count,
+           (SELECT COUNT(*) FROM students s WHERE s.class_id = e.class_id AND s.status = '在读' AND s.deleted_at IS NULL) AS student_count,
            (SELECT COUNT(*) FROM exam_scores es WHERE es.exam_id = e.id) AS scored_count
     FROM exams e
     LEFT JOIN courses cu ON cu.id = e.course_id
@@ -74,7 +80,7 @@ router.get("/", auth, requireRole("admin", "teacher"), (req, res) => {
     LIMIT ? OFFSET ?
   `
     )
-    .all(...allParams, Number(pageSize), (Number(page) - 1) * Number(pageSize));
+    .all(...allParams, ps, offset);
 
   res.json({ success: true, data: { list, total } });
 });
@@ -99,11 +105,18 @@ router.post("/", auth, requireRole("admin", "teacher"), (req, res) => {
   let examDate = new Date().toLocaleDateString("sv");
   if (exam_date !== undefined && exam_date !== null && exam_date !== "") {
     const dRes = parseDate(exam_date, { field: "考试日期" });
-    if (!dRes.ok) return res.status(400).json({ success: false, message: dRes.message });
+    if (!dRes.ok)
+      return res.status(400).json({ success: false, message: dRes.message });
     examDate = dRes.value;
   }
-  const fsRes = parseNumber(full_score, { field: "满分", min: 1, max: 1000, required: false });
-  if (!fsRes.ok) return res.status(400).json({ success: false, message: fsRes.message });
+  const fsRes = parseNumber(full_score, {
+    field: "满分",
+    min: 1,
+    max: 1000,
+    required: false
+  });
+  if (!fsRes.ok)
+    return res.status(400).json({ success: false, message: fsRes.message });
   const fullScore = fsRes.value === null ? 100 : fsRes.value;
   const info = db
     .prepare(
@@ -149,11 +162,13 @@ router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   // 考试日期 / 满分：提供时必须合法（空值保留原值）
   if (exam_date !== undefined && exam_date !== null && exam_date !== "") {
     const dRes = parseDate(exam_date, { field: "考试日期" });
-    if (!dRes.ok) return res.status(400).json({ success: false, message: dRes.message });
+    if (!dRes.ok)
+      return res.status(400).json({ success: false, message: dRes.message });
   }
   if (full_score !== undefined && full_score !== null && full_score !== "") {
     const fsRes = parseNumber(full_score, { field: "满分", min: 1, max: 1000 });
-    if (!fsRes.ok) return res.status(400).json({ success: false, message: fsRes.message });
+    if (!fsRes.ok)
+      return res.status(400).json({ success: false, message: fsRes.message });
   }
   const info = db
     .prepare(
@@ -185,17 +200,23 @@ router.put("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   res.json({ success: true, data: null });
 });
 
-/** 删除考试（成绩由外键级联删除；教师须本班） */
+/** 删除考试（成绩由外键级联删除；教师须本班）
+ *
+ *  ★ 2026-10-18：级联删除成绩是**有意为之**（考试没了成绩没有意义），
+ *    但必须把"删了几条"回报给前端 —— 静默删除历史成绩正是 K-050 要防的形态。 */
 router.delete("/:id", auth, requireRole("admin", "teacher"), (req, res) => {
   const id = Number(req.params.id);
   if (!canManageExam(req, id)) {
     return res.status(403).json({ success: false, message: "无权操作该考试" });
   }
+  const scoreCount = db
+    .prepare("SELECT COUNT(*) AS c FROM exam_scores WHERE exam_id = ?")
+    .get(id).c;
   const info = db.prepare("DELETE FROM exams WHERE id = ?").run(id);
   if (info.changes === 0)
     return res.status(404).json({ success: false, message: "考试不存在" });
-  audit(req.user, "删除考试", `考试#${id}`);
-  res.json({ success: true, data: null });
+  audit(req.user, "删除考试", `考试#${id}（连带删除成绩 ${scoreCount} 条）`);
+  res.json({ success: true, data: { deletedScores: scoreCount } });
 });
 
 // ==================== 成绩录入 ====================
@@ -226,7 +247,7 @@ router.get("/:id/scores", auth, requireRole("admin", "teacher"), (req, res) => {
            es.score, es.id AS score_id, es.remark
     FROM students s
     LEFT JOIN exam_scores es ON es.student_id = s.id AND es.exam_id = ?
-    WHERE s.class_id = ?
+    WHERE s.class_id = ? AND s.deleted_at IS NULL
     ORDER BY s.student_no
   `
     )

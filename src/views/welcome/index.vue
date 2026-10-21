@@ -212,10 +212,7 @@ onUnmounted(() => {
 
 <template>
   <div v-loading="loading" class="app-page">
-    <AppPageHeader
-      title="工作台"
-      description="今天的到课情况与近 7 日出勤走势"
-    >
+    <AppPageHeader title="工作台" description="今天的到课情况与近 7 日出勤走势">
       <el-button :icon="RefreshIcon" @click="loadData">刷新</el-button>
     </AppPageHeader>
 
@@ -288,7 +285,11 @@ onUnmounted(() => {
     <FeedbackPanel />
 
     <!-- 公告详情 -->
-    <el-dialog v-model="noticeVisible" :title="noticeDetail.title" width="520px">
+    <el-dialog
+      v-model="noticeVisible"
+      :title="noticeDetail.title"
+      width="520px"
+    >
       <p class="page-hint mb-2">发布时间：{{ noticeDetail.created_at }}</p>
       <div class="whitespace-pre-wrap text-sm leading-relaxed">
         {{ noticeDetail.content }}
@@ -332,9 +333,9 @@ onUnmounted(() => {
   align-items: center;
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--text-sm);
   color: var(--ink-700);
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

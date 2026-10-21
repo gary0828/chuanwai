@@ -4,40 +4,42 @@
 //   1. GET  /api/site-info        —— 免登录公开接口（登录页要用），**字段白名单**，绝不返回内部参数
 //   2. GET  /api/site-info/admin  —— 登录后可读全部 site.* 键（供设置页回填）
 //   3. PUT  /api/site-info        —— 仅 admin，只允许写 SITE_KEYS 白名单
-//   4. POST /api/site-info/upload —— 仅 admin，图片落盘 server/data/assets/site/，DB 只存路径
+//   4. POST /api/site-info/upload —— 仅 admin，图片落盘 <DATA_DIR>/assets/site/，DB 只存路径
 //
 // 说明：数据复用既有 settings 表（key/value），无需新建表、无需迁移。
 const express = require("express");
-const path = require("path");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
 const { audit } = require("../utils/audit");
 // 上传判型与落盘走公共实现，与「员工头像」共用同一份（防止两处漂移）
 const { MAX_UPLOAD_BYTES, saveImage } = require("../utils/image");
+// ★ 2026-10-18（P1-5 DATA_DIR 收口）：上传目录必须跟随 DATA_DIR（唯一解析入口在 utils/paths）
+const { siteAssetsDir } = require("../utils/paths");
 
 const router = express.Router();
 
 // ── 站点信息字段白名单（键名 → 默认值）────────────────────────────────
 // 备案类字段默认空串，前端「空值不渲染」，将来商业化填值即自动出现。
 const SITE_DEFAULTS = {
-  "site.name": "",          // 系统简称（侧边栏 / 登录页）
-  "site.title": "",         // 浏览器标签页完整标题
-  "site.orgName": "",       // 版权主体：机构全称
-  "site.sinceYear": "",     // 起始年份 → 渲染 © 2020-2026
-  "site.slogan": "",        // 登录页副标题
-  "site.contact": "",       // 联系电话
-  "site.address": "",       // 地址
-  "site.icp": "",           // ICP 备案号（当前不需要，留空即不显示）
-  "site.policeNo": "",      // 公安备案号（同上）
+  "site.name": "", // 系统简称（侧边栏 / 登录页）
+  "site.title": "", // 浏览器标签页完整标题
+  "site.orgName": "", // 版权主体：机构全称
+  "site.sinceYear": "", // 起始年份 → 渲染 © 2020-2026
+  "site.slogan": "", // 登录页副标题
+  "site.contact": "", // 联系电话
+  "site.address": "", // 地址
+  "site.icp": "", // ICP 备案号（当前不需要，留空即不显示）
+  "site.policeNo": "", // 公安备案号（同上）
   "site.copyrightExtra": "", // 页脚补充说明（一行自由文本）
-  "site.logo": "",          // Logo 图片 URL（相对路径）
-  "site.favicon": ""        // 标签页小图标 URL
+  "site.logo": "", // Logo 图片 URL（相对路径）
+  "site.favicon": "" // 标签页小图标 URL
 };
 
 const SITE_KEYS = Object.keys(SITE_DEFAULTS);
 
 // ── 上传配置 ──────────────────────────────────────────────────────────
-const ASSETS_DIR = path.join(__dirname, "..", "..", "data", "assets", "site");
+// ★ 跟随 DATA_DIR（隔离/测试实例不会把 Logo 写进生产数据目录，也不会误删主目录旧图）
+const ASSETS_DIR = siteAssetsDir;
 
 /** 读取全部站点信息（内部用，返回含默认值） */
 function readSiteInfo() {
@@ -60,7 +62,8 @@ router.get("/", (_req, res) => {
   const all = readSiteInfo();
   const data = {};
   for (const k of SITE_KEYS) {
-    if (all[k] !== "" && all[k] !== null && all[k] !== undefined) data[k] = all[k];
+    if (all[k] !== "" && all[k] !== null && all[k] !== undefined)
+      data[k] = all[k];
   }
   res.json({ success: true, data });
 });
@@ -73,15 +76,21 @@ router.get("/admin", auth, (_req, res) => {
 // ── 3. 保存：仅 admin，只写 site.* 白名单键 ───────────────────────────
 router.put("/", auth, requireRole("admin"), (req, res) => {
   const body = req.body || {};
-  const keys = SITE_KEYS.filter(k => Object.prototype.hasOwnProperty.call(body, k));
+  const keys = SITE_KEYS.filter(k =>
+    Object.prototype.hasOwnProperty.call(body, k)
+  );
   if (keys.length === 0) {
-    return res.status(400).json({ success: false, message: "没有可更新的站点信息" });
+    return res
+      .status(400)
+      .json({ success: false, message: "没有可更新的站点信息" });
   }
   // 长度上限，防超长文本撑爆配置
   for (const k of keys) {
     const v = String(body[k] ?? "");
     if (v.length > 500) {
-      return res.status(400).json({ success: false, message: `${k} 内容过长（上限 500 字）` });
+      return res
+        .status(400)
+        .json({ success: false, message: `${k} 内容过长（上限 500 字）` });
     }
   }
   db.exec("BEGIN");
@@ -107,25 +116,36 @@ router.post(
   "/upload",
   auth,
   requireRole("admin"),
-  express.raw({ type: ["image/*", "application/octet-stream"], limit: MAX_UPLOAD_BYTES + 1024 }),
+  express.raw({
+    type: ["image/*", "application/octet-stream"],
+    limit: MAX_UPLOAD_BYTES + 1024
+  }),
   (req, res) => {
     const kind = String(req.query.kind || "logo");
     if (!["logo", "favicon"].includes(kind)) {
-      return res.status(400).json({ success: false, message: "不支持的上传类型" });
+      return res
+        .status(400)
+        .json({ success: false, message: "不支持的上传类型" });
     }
     const buf = req.body;
     if (!buf || !Buffer.isBuffer(buf) || buf.length === 0) {
-      return res.status(400).json({ success: false, message: "未收到文件内容" });
+      return res
+        .status(400)
+        .json({ success: false, message: "未收到文件内容" });
     }
     if (buf.length > MAX_UPLOAD_BYTES) {
       // 注：正常路径下 express.raw 已按同一上限拦截并抛 413（见 index.js 统一错误处理），
       // 这里是双保险，防止将来有人调大 express.raw 的 limit 却忘了同步此处。
-      return res.status(413).json({ success: false, message: "文件过大，上限 2MB" });
+      return res
+        .status(413)
+        .json({ success: false, message: "文件过大，上限 2MB" });
     }
     // 魔数嗅探 + 落盘 + 清理同 kind 旧文件（公共实现）
     const saved = saveImage({ dir: ASSETS_DIR, prefix: kind, buf });
     if (!saved.ok) {
-      return res.status(saved.status).json({ success: false, message: saved.message });
+      return res
+        .status(saved.status)
+        .json({ success: false, message: saved.message });
     }
     const filename = saved.filename;
 

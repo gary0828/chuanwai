@@ -51,7 +51,10 @@ function setting(key) {
 
 /** 全部 admin 用户 id（全局类事件的收件人） */
 function adminIds() {
-  return db.prepare("SELECT id FROM users WHERE role = 'admin'").all().map(r => r.id);
+  return db
+    .prepare("SELECT id FROM users WHERE role = 'admin'")
+    .all()
+    .map(r => r.id);
 }
 
 /** 班级类事件的收件人：该班班主任 + 全部 admin（去重） */
@@ -75,7 +78,7 @@ function detectTuitionLow() {
       `SELECT o.student_id, s.name AS student_name, SUM(o.remain_hours) AS remain
        FROM orders o
        JOIN students s ON s.id = o.student_id
-       WHERE s.status = '在读' AND o.status = '在读'
+       WHERE s.status = '在读' AND s.deleted_at IS NULL AND o.status = '在读'
        GROUP BY o.student_id
        HAVING SUM(o.remain_hours) <= ?`
     )
@@ -151,7 +154,7 @@ function detectAbsentStreak() {
       .prepare(
         `SELECT s.id, s.name, c.name AS class_name, c.head_teacher_id
          FROM students s JOIN classes c ON c.id = s.class_id
-         WHERE s.status = '在读'`
+         WHERE s.status = '在读' AND s.deleted_at IS NULL`
       )
       .all()
       .map(r => [r.id, r])
@@ -267,7 +270,15 @@ function persist(candidates) {
       for (const ownerId of c.ownerIds) {
         const exist = find.get(c.source_type, c.source_ref_id, ownerId);
         if (!exist) {
-          insert.run(c.title, c.content, ownerId, c.source_type, c.source_ref_id, c.priority, c.dueDate || null);
+          insert.run(
+            c.title,
+            c.content,
+            ownerId,
+            c.source_type,
+            c.source_ref_id,
+            c.priority,
+            c.dueDate || null
+          );
           created++;
         } else if (exist.status === "已完成") {
           // 条件又出现了（如学员续费后又用尽）→ 重开同一条，不新增
@@ -298,7 +309,13 @@ let lastRunAt = 0;
 function generateTodos({ force = false } = {}) {
   const now = Date.now();
   if (!force && now - lastRunAt < MIN_INTERVAL_MS) {
-    return { created: 0, reopened: 0, skipped: 0, candidates: 0, throttled: true };
+    return {
+      created: 0,
+      reopened: 0,
+      skipped: 0,
+      candidates: 0,
+      throttled: true
+    };
   }
   lastRunAt = now;
 

@@ -97,6 +97,9 @@ function loadProfile() {
         syncPreview();
       }
     })
+    .catch(() => {
+      // 失败文案由全局响应拦截器统一提示
+    })
     .finally(() => (loading.value = false));
 }
 

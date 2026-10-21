@@ -27,21 +27,24 @@
 | v12  | 排课优化           | 新增 `schedule_adjustments`（调课申请表：原/目标时段快照、审批状态、通过后事务内同步 `schedules` 原时段释放/新时段占用）与 `makeup_classes`（补课登记表：关联缺勤/请假原始日期，标记完成联动扣减课时包并写 `hour_consumptions` 流水，撤销回补，幂等由状态机保证）两表                                                                                                                                                                                                          |
 | v13  | 统一用户与联动     | `students` 增 `user_id`（唯一索引，账号↔档案一对一）；存量学生自动补建 student 账号（username=学号，占位密码 123456，学生暂不可登录）；`leaves` 增 `source`（手动/考勤同步），考勤↔请假双向联动（考勤标记请假自动生成待审批同步单，审批通过回写考勤+回补课时+通知家长；驳回回滚考勤为缺勤；改回其他状态撤销同步单及通知）；`notifications.type` CHECK 扩展 '请假审批通过'；清理 `settings.term_id` 僵尸键；删除保护增强（订单有缴费/退费禁删、班级/课程/课表/线索/学生保护） |
 | v14  | 员工端 CRM 定调    | **系统定位调整为纯员工端 CRM**：学生/家长不登录、无账号。`users.role` CHECK 收紧为 `('admin','teacher')`（重建表，清理历史 student/parent 账号数据）；`students` 删除 `user_id` 列及索引（账号关联废弃）；删除 `parent_children` 表（绑定关系回填为 `students.parent_name/parent_phone`）；`notifications` 重建：删除 `target_user_id`，新增 `parent_name` 快照列（通知仅内部留痕）；删除家长管理路由与页面，家长信息统一存于学生档案；线索转化不再建 student/parent 账号      |
-| v15  | JWT 凭证可吊销     | `users` 新增 `token_version INTEGER NOT NULL DEFAULT 0`。签发的 accessToken / refreshToken 均携带 `tv` 声明，`middleware/auth.js` 鉴权时与 `users.token_version` 比对；**登出 / 改密 / 改角色 / 删号**时递增该值即可立即吊销该用户全部已签发凭证（此前 JWT 无状态，登出为空实现、refreshToken 30 天内无法失效）。兼容性：升级前签发的旧 token 无 `tv` 声明，按 0 处理，与本列默认值一致，不会强制已登录员工重新登录 |
-| v16  | 使用反馈           | 新增 `feedbacks` 表（教师 / 管理员在使用系统过程中提交的问题与建议：提交人 `user_id`/`username`/`user_role`、`category`、`content`、`page_path`、`status`、`admin_reply`、`handled_by`/`handled_at`）。支撑首页「使用反馈」模块：教师提交并看到回复，admin 汇总、回复与跟踪处理。**只记录提交人身份与问题描述，不落任何学员数据**，避免反馈成为绕过四层权限的数据出口。建索引 `status` / `user_id` / `created_at` |
+| v15  | JWT 凭证可吊销     | `users` 新增 `token_version INTEGER NOT NULL DEFAULT 0`。签发的 accessToken / refreshToken 均携带 `tv` 声明，`middleware/auth.js` 鉴权时与 `users.token_version` 比对；**登出 / 改密 / 改角色 / 删号**时递增该值即可立即吊销该用户全部已签发凭证（此前 JWT 无状态，登出为空实现、refreshToken 30 天内无法失效）。兼容性：升级前签发的旧 token 无 `tv` 声明，按 0 处理，与本列默认值一致，不会强制已登录员工重新登录                                                            |
+| v16  | 使用反馈           | 新增 `feedbacks` 表（教师 / 管理员在使用系统过程中提交的问题与建议：提交人 `user_id`/`username`/`user_role`、`category`、`content`、`page_path`、`status`、`admin_reply`、`handled_by`/`handled_at`）。支撑首页「使用反馈」模块：教师提交并看到回复，admin 汇总、回复与跟踪处理。**只记录提交人身份与问题描述，不落任何学员数据**，避免反馈成为绕过四层权限的数据出口。建索引 `status` / `user_id` / `created_at`                                                              |
 
-| v17  | AI 配置中心       | 新增 `ai_settings`（AI 配置键值表，**优先级高于环境变量**，改完立即生效，无需重建容器）与 `ai_usage`（每次服务端生成后落一条用量：谁、什么场景、多少 token、多少成本）。支撑「AI 配置中心」页面（仅 admin，不进菜单，凭 `/#/ai-admin` 进入）。解决 2026-09-16 校区部署反馈的「改一个 Key 要重建镜像」问题 |
-| v18  | 学生成长时间轴     | 新增 5 张表，为 AI 工作台的「学生成长路径」提供数据地基：`student_timeline`（成长时间轴，**只增不改**）、`knowledge_points`（知识点体系，课时级粒度）、`class_evaluations`（课堂评价，3 维 1–5 分）、`kp_assessments`（知识点掌握评定，三档）、`growth_thresholds`（成长阈值，8 条默认值，可按真实分布调整不重建镜像）。**既有业务表一张未动**：出勤/成绩/课时仍由原表承载，读取时 UNION 合并 —— 见下文「★ 分工铁律」 |
-| v19  | 待办               | 新增 `todos`（待办）。**双端共用一张表 + 按角色过滤**，而不是两套表：`owner_id` 区分归属（教务端校区负责人 / AI 工作台一线老师读同一张表），`creator_id` 记录谁建的，`source` 区分 `manual`（手工）/ `auto`（L3 由业务事件自动生成）。★ 建 `(source_type, source_ref_id, owner_id)` **部分唯一索引** —— 这是 **L3 自动生成的幂等去重键**，提前在 v19 建好，L3 无需再迁移。**既有业务表一张未动** |
+| v17 | AI 配置中心 | 新增 `ai_settings`（AI 配置键值表，**优先级高于环境变量**，改完立即生效，无需重建容器）与 `ai_usage`（每次服务端生成后落一条用量：谁、什么场景、多少 token、多少成本）。支撑「AI 配置中心」页面（仅 admin，不进菜单，凭 `/#/ai-admin` 进入）。解决 2026-09-16 校区部署反馈的「改一个 Key 要重建镜像」问题 |
+| v18 | 学生成长时间轴 | 新增 5 张表，为 AI 工作台的「学生成长路径」提供数据地基：`student_timeline`（成长时间轴，**只增不改**）、`knowledge_points`（知识点体系，课时级粒度）、`class_evaluations`（课堂评价，3 维 1–5 分）、`kp_assessments`（知识点掌握评定，三档）、`growth_thresholds`（成长阈值，8 条默认值，可按真实分布调整不重建镜像）。**既有业务表一张未动**：出勤/成绩/课时仍由原表承载，读取时 UNION 合并 —— 见下文「★ 分工铁律」 |
+| v19 | 待办 | 新增 `todos`（待办）。**双端共用一张表 + 按角色过滤**，而不是两套表：`owner_id` 区分归属（教务端校区负责人 / AI 工作台一线老师读同一张表），`creator_id` 记录谁建的，`source` 区分 `manual`（手工）/ `auto`（L3 由业务事件自动生成）。★ 建 `(source_type, source_ref_id, owner_id)` **部分唯一索引** —— 这是 **L3 自动生成的幂等去重键**，提前在 v19 建好，L3 无需再迁移。**既有业务表一张未动** |
 
-| v20  | 员工头像           | `users` 新增 `avatar TEXT NOT NULL DEFAULT ''`（**只存相对路径**，如 `/assets/avatars/avatar-3-20260923...png`）。配套三个自助端点（改密码 / 改资料 / 上传头像，admin 与 teacher 均只改自己）。文件本体落盘 `server/data/assets/avatars/`，**随 `server/data/` 一起备份**（只备份 db 会丢文件）。上传判型与落盘复用公共实现 `server/src/utils/image.js`，与站点 Logo 同一套魔数校验 |
+| v20 | 员工头像 | `users` 新增 `avatar TEXT NOT NULL DEFAULT ''`（**只存相对路径**，如 `/assets/avatars/avatar-3-20260923...png`）。配套三个自助端点（改密码 / 改资料 / 上传头像，admin 与 teacher 均只改自己）。文件本体落盘 `server/data/assets/avatars/`，**随 `server/data/` 一起备份**（只备份 db 会丢文件）。上传判型与落盘复用公共实现 `server/src/utils/image.js`，与站点 Logo 同一套魔数校验 |
 
-| v21  | 课次实体与任课关系 | **G1 课次实体 + G2 任课关系（地基型增量）**。新增 4 表：`period_times`（节次时间表，独立结构化配置，预置 1–8 节）、`teaching_assignments`（任课关系：班级 × 课程 × 教师(可空) × 学期(可空)）、`class_sessions`（课次实例，唯一键 `(class_id, session_date, period)`）、`session_migration_report`（历史回填报告，只落「未匹配」）。**重建** `attendances` / `class_evaluations`：加 `session_id`，唯一键由 `(student_id, course_id, date)` 改为 **Q7 双条件部分唯一索引**（`session_id IS NULL` → 保旧键；`session_id IS NOT NULL` → 挂课次）。`hour_consumptions` 加 `session_id`、`makeup_classes` 加 `original_session_id` / `makeup_session_id`（均不重建）。**既有历史行全部落在 legacy 分区（`session_id IS NULL`），迁移只加列不回填** —— 回填在「生成本学期课次」后的独立步骤执行（幂等、可重跑、失败显式进报告）。节次固定 1–8 不放宽（Q3）— ★ 2026-10-01 已由 **v24/v25 修订**（节次改为可配置），见 **ADR-013** |
-| v26  | 智能题库一期 | **新增 2 张表**：`questions`（题目主表，27 字段：题型 6 类枚举 · LaTeX 题干/选项/答案/解析 · 难度 1–5 · `kp_ids` **知识点多值 JSON**（一题常挂多个，`json_each()` 反查）· `chapter_id` → `question_chapters` · `solve_method`（第三视角）· `source` 版权来源**必填且受限枚举**（自编/AI 原创/教材/授权题库，**刻意无默认值**）· `figure_path` 配图（按 ADR-008 文件落盘、DB 只存路径）· `content_hash` 查重 L1 · `parse_status` AI 识别状态机（manual/pending/recognized/filled/confirmed/failed）· `ocr_confidence` · `ocr_raw` · `custom_tags` · `exam_year` + `region`（真题维度）· `quality_score` · **闭环字段** `use_count`/`correct_rate`/`wrong_rate`（四期学情反哺落点）· `status` 4 态 · `created_by`（**teacher 只能改自己录入的**）· `updated_at`/`updated_by` 留痕）、`question_chapters`（章节表，章→ 节两层，预置 10 章 32 节**人教A 版**数学目录，非空即跳过、失败只 warn 不抛）。★ 预置 10 个索引。★ **检索刻意不用 FTS5**：实测 `unicode61` 与 `trigram` 在 `node:sqlite` 下**中文都搜不到**（搜「全等」0 条），改用 `LIKE '%kw%'`（2003 条时单次 <1ms，题库量级 <1万足够，遵 K-030 不引向量库）。★ 配套新增凭证类型 `qb_agent`（**写**权限，仅放行 `/api/qbank`，与工作台的 `ai_agent` 只读定位刻意分开）| 
-| v27  | 题库回收站（软删）| `questions` 加 `deleted_at TEXT` / `deleted_by INTEGER REFERENCES users(id)` + 索引 `idx_q_deleted`。★ 一期删题是**硬删**（`DELETE FROM`），老师误删无法找回 —— 题库是长期积累的资产，一道题可能是花 10 分钟录的，硬删代价远大于多存一行。★ **配套硬要求**：全部 **21 处** `questions` 查询都要加 `deleted_at IS NULL`（列表/详情/概览 7 项/facets 3 项/导出/查重 L1+L2/回收站/OCR 顺手查重 2 处），漏一处就是数据泄漏（已用脚本横向核查，零漏改）。★ 软删**不删配图文件** —— 恢复后还要用；文件清理由「彻底删除」负责。★ 新增三个端点：`GET /questions/recycle`（回收站列表）、`POST /questions/restore`（恢复）、`POST /questions/purge`（彻底删除 / 清空，仅 admin 且需显式 `all:true`）。★ 权限与删除**完全对称**：能用 `canMutate` 改的题才能恢复/彻底删除。★ 回填存量 `quality_score` |
-| v28  | 题库多学科（学段 × 学科）| **用户 2026-10-07拍板「不能只有一个学科」**。① `questions` 加 `course_id INTEGER REFERENCES courses(id)` + 索引 `idx_q_course`。★ **复用教务的 `courses` 表**（已被 15 张表引用），**不另建题库专属学科表** —— 两套学科必然分叉（教务叫「初中数学」题库叫「数学」），长期是灾难。★ **可空列而非 NOT NULL**：SQLite 的 `ALTER TABLE ADD COLUMN` 不允许加「NOT NULL 且无默认值」的列（既有行无法填值）；存量题目为 0 条故无回填负担，「必填」由**应用层强制**（建题/导入缺 `course_id` 一律 400）。★ **刻意不给 DEFAULT 1（默认数学）**：那会让忘选学科的物理题**静默记成数学题**，比直接报错难发现得多（K-050 静默即缺陷）。② 预置 **22 门学段学科**（小学 5 /初中 8 新增 / 高中 9；初中数学原有）+ **126 个知识板块**（只到**课标主题**级，如初中物理的「声现象」「光现象」，**不下沉教材「节」** —— 人教/北师大/苏科章节名差异大，编不准会污染教学体系；英语按实用维度、小学按学科模块）。★ 学科 code 规范 `<学段>-<学科码>`（PRI/JUN/SEN）；`courses.code` 有 UNIQUE 约束，预置按 code 幂等。★ 章节预置**仅在该学科一个章节都没有时**才铺**，避免与老师自建的重复。★ `knowledge_points`（学情分析用）**刻意不预置** —— 凭空造知识点等于给学情统计埋空节点，老师按实际教学进度自建（且有引用保护防误删有测评记录的知识点）|
+| v21 | 课次实体与任课关系 | **G1 课次实体 + G2 任课关系（地基型增量）**。新增 4 表：`period_times`（节次时间表，独立结构化配置，预置 1–8 节）、`teaching_assignments`（任课关系：班级 × 课程 × 教师(可空) × 学期(可空)）、`class_sessions`（课次实例，唯一键 `(class_id, session_date, period)`）、`session_migration_report`（历史回填报告，只落「未匹配」）。**重建** `attendances` / `class_evaluations`：加 `session_id`，唯一键由 `(student_id, course_id, date)` 改为 **Q7 双条件部分唯一索引**（`session_id IS NULL` → 保旧键；`session_id IS NOT NULL` → 挂课次）。`hour_consumptions` 加 `session_id`、`makeup_classes` 加 `original_session_id` / `makeup_session_id`（均不重建）。**既有历史行全部落在 legacy 分区（`session_id IS NULL`），迁移只加列不回填** —— 回填在「生成本学期课次」后的独立步骤执行（幂等、可重跑、失败显式进报告）。节次固定 1–8 不放宽（Q3）— ★ 2026-10-01 已由 **v24/v25 修订**（节次改为可配置），见 **ADR-013** |
+| v26 | 智能题库一期 | **新增 2 张表**：`questions`（题目主表，27 字段：题型 6 类枚举 · LaTeX 题干/选项/答案/解析 · 难度 1–5 · `kp_ids` **知识点多值 JSON**（一题常挂多个，`json_each()` 反查）· `chapter_id` → `question_chapters` · `solve_method`（第三视角）· `source` 版权来源**必填且受限枚举**（自编/AI 原创/教材/授权题库，**刻意无默认值**）· `figure_path` 配图（按 ADR-008 文件落盘、DB 只存路径）· `content_hash` 查重 L1 · `parse_status` AI 识别状态机（manual/pending/recognized/filled/confirmed/failed）· `ocr_confidence` · `ocr_raw` · `custom_tags` · `exam_year` + `region`（真题维度）· `quality_score` · **闭环字段** `use_count`/`correct_rate`/`wrong_rate`（四期学情反哺落点）· `status` 4 态 · `created_by`（**teacher 只能改自己录入的**）· `updated_at`/`updated_by` 留痕）、`question_chapters`（章节表，章→ 节两层，预置 10 章 32 节**人教A 版**数学目录，非空即跳过、失败只 warn 不抛）。★ 预置 10 个索引。★ **检索刻意不用 FTS5**：实测 `unicode61` 与 `trigram` 在 `node:sqlite` 下**中文都搜不到**（搜「全等」0 条），改用 `LIKE '%kw%'`（2003 条时单次 <1ms，题库量级 <1万足够，遵 K-030 不引向量库）。★ 配套新增凭证类型 `qb_agent`（**写**权限，仅放行 `/api/qbank`，与工作台的 `ai_agent` 只读定位刻意分开）|
+| v27 | 题库回收站（软删）| `questions` 加 `deleted_at TEXT` / `deleted_by INTEGER REFERENCES users(id)` + 索引 `idx_q_deleted`。★ 一期删题是**硬删**（`DELETE FROM`），老师误删无法找回 —— 题库是长期积累的资产，一道题可能是花 10 分钟录的，硬删代价远大于多存一行。★ **配套硬要求**：全部 **21 处** `questions` 查询都要加 `deleted_at IS NULL`（列表/详情/概览 7 项/facets 3 项/导出/查重 L1+L2/回收站/OCR 顺手查重 2 处），漏一处就是数据泄漏（已用脚本横向核查，零漏改）。★ 软删**不删配图文件** —— 恢复后还要用；文件清理由「彻底删除」负责。★ 新增三个端点：`GET /questions/recycle`（回收站列表）、`POST /questions/restore`（恢复）、`POST /questions/purge`（彻底删除 / 清空，仅 admin 且需显式 `all:true`）。★ 权限与删除**完全对称**：能用 `canMutate` 改的题才能恢复/彻底删除。★ 回填存量 `quality_score` |
+| v28 | 题库多学科（学段 × 学科）| **用户 2026-10-07拍板「不能只有一个学科」**。① `questions` 加 `course_id INTEGER REFERENCES courses(id)` + 索引 `idx_q_course`。★ **复用教务的 `courses` 表**（已被 15 张表引用），**不另建题库专属学科表** —— 两套学科必然分叉（教务叫「初中数学」题库叫「数学」），长期是灾难。★ **可空列而非 NOT NULL**：SQLite 的 `ALTER TABLE ADD COLUMN` 不允许加「NOT NULL 且无默认值」的列（既有行无法填值）；存量题目为 0 条故无回填负担，「必填」由**应用层强制**（建题/导入缺 `course_id` 一律 400）。★ **刻意不给 DEFAULT 1（默认数学）**：那会让忘选学科的物理题**静默记成数学题**，比直接报错难发现得多（K-050 静默即缺陷）。② 预置 **22 门学段学科**（小学 5 /初中 8 新增 / 高中 9；初中数学原有）+ **126 个知识板块**（只到**课标主题**级，如初中物理的「声现象」「光现象」，**不下沉教材「节」** —— 人教/北师大/苏科章节名差异大，编不准会污染教学体系；英语按实用维度、小学按学科模块）。★ 学科 code 规范 `<学段>-<学科码>`（PRI/JUN/SEN）；`courses.code` 有 UNIQUE 约束，预置按 code 幂等。★ 章节预置**仅在该学科一个章节都没有时**才铺**，避免与老师自建的重复。★ `knowledge_points`（学情分析用）**刻意不预置\*\* —— 凭空造知识点等于给学情统计埋空节点，老师按实际教学进度自建（且有引用保护防误删有测评记录的知识点）|
 
-当前最新版本：**v28**（`PRAGMA user_version` = 28）
+| v29 | 课时流水来源 | `hour_consumptions` 加 `source TEXT NOT NULL DEFAULT ''`（来源：考勤 / 补课 / 请假 / 手工调整 / 对账修正）+ `attendance_id INTEGER`（精确关联考勤）+ 索引 `idx_hour_cons_att`。★ 背景是 2026-10-12 真实漏扣事故：扣课原先只在「考勤状态变化那一瞬间」发生，订单没课时包 / 先点名后报班 / 退班后改回在读 三类场景永久漏扣且无提示。改成**对账式**扣课后，「这条流水是哪条考勤产生的」成了必需信息。★ 老流水回填是**近似**的（按补课单 / 请假单反推，对不上的记「考勤」），故对账采用两段匹配：精确（`attendance_id`）+ 宽松（`attendance_id IS NULL AND date`），宁少补不重复扣 |
+| v30 | 课时单位 + 学员软删 | ① `class_sessions` 加 `hours REAL NOT NULL DEFAULT 1`（**按课次设课时数**，支持「两节连上 = 2 课时」）。此前一节课固定 1 课时、硬编码在 6 处 SQL 里，改口径必漏。② `students` 加 `deleted_at TEXT DEFAULT NULL` + 索引 `idx_students_deleted`（软删）。此前删学员是硬删，会 CASCADE 清空考勤/请假/补课/课时流水/通知/成绩/课堂评价/知识点测评/成长档案 —— 教务数据需要留档，且删错无法恢复。★ 软删口径：列表默认隐藏、`deleted=1` 可查、admin 可恢复；**历史数据全部保留**（财务/考勤/课消统计照常包含已删学员）。★ 两处都是 ADD COLUMN，既有行零拷贝；132 条历史课次 hours 全部落 1，**行为与 v29 完全一致** |
+
+当前最新版本：**v30**（`PRAGMA user_version` = 30）
 
 > 📌 **不占版本号的表结构复用**：站点信息（`site.*`，见「settings」节）**复用 v6 的 `settings` 键值表**，**没有为它单独建迁移**。判断标准：只有**新建/改动表结构**才需要迁移；往既有 K-V 表里加键位属于纯数据写入，不算 schema 变更。
 > （例：v19 是「建 `todos` 表」所以占版本号；`site.*` 只是往 v6 的 `settings` 里加行，所以不占。）
@@ -50,17 +53,17 @@
 
 ### users（员工账号，纯员工端 CRM 唯一账号体系）
 
-| 字段          | 类型    | 约束                                                                  | 说明                                 |
-| ------------- | ------- | --------------------------------------------------------------------- | ------------------------------------ |
-| id            | INTEGER | PK, AUTOINCREMENT                                                     | 用户 ID                              |
-| username      | TEXT    | NOT NULL, UNIQUE                                                      | 登录账号                             |
-| password_hash | TEXT    | NOT NULL                                                              | bcrypt 密码哈希                      |
-| name          | TEXT    | NOT NULL                                                              | 姓名                                 |
-| role          | TEXT    | NOT NULL, DEFAULT 'teacher', CHECK IN ('admin','teacher')（v14 收紧） | 角色：管理员/教师（学生/家长无账号） |
-| phone         | TEXT    | UNIQUE                                                                | 手机号                               |
-| token_version | INTEGER | NOT NULL, DEFAULT 0（v15 新增）                                       | 凭证版本号；登录时写入 JWT 的 `tv` 声明，鉴权时比对。递增即吊销该员工全部已签发凭证（登出/改密/改角色） |
+| 字段          | 类型    | 约束                                                                  | 说明                                                                                                      |
+| ------------- | ------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| id            | INTEGER | PK, AUTOINCREMENT                                                     | 用户 ID                                                                                                   |
+| username      | TEXT    | NOT NULL, UNIQUE                                                      | 登录账号                                                                                                  |
+| password_hash | TEXT    | NOT NULL                                                              | bcrypt 密码哈希                                                                                           |
+| name          | TEXT    | NOT NULL                                                              | 姓名                                                                                                      |
+| role          | TEXT    | NOT NULL, DEFAULT 'teacher', CHECK IN ('admin','teacher')（v14 收紧） | 角色：管理员/教师（学生/家长无账号）                                                                      |
+| phone         | TEXT    | UNIQUE                                                                | 手机号                                                                                                    |
+| token_version | INTEGER | NOT NULL, DEFAULT 0（v15 新增）                                       | 凭证版本号；登录时写入 JWT 的 `tv` 声明，鉴权时比对。递增即吊销该员工全部已签发凭证（登出/改密/改角色）   |
 | avatar        | TEXT    | NOT NULL, DEFAULT ''（v20 新增）                                      | 头像**相对路径**（`/assets/avatars/...`），空串表示未上传 → 前端回落内置占位图。**不存二进制**（ADR-008） |
-| created_at    | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')                         | 创建时间                             |
+| created_at    | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')                         | 创建时间                                                                                                  |
 
 ### user_oauth（第三方/多端绑定，预留微信小程序）
 
@@ -144,37 +147,37 @@
 
 ### settings（系统参数，v6 新增，键值对）
 
-| 字段       | 类型 | 约束                 | 说明         |
-| ---------- | ---- | -------------------- | ------------ |
-| key        | TEXT | PK                   | 参数键       |
-| value      | TEXT | NOT NULL, DEFAULT '' | 参数值       |
-| updated_at | TEXT | NOT NULL, DEFAULT    | 更新时间     |
+| 字段       | 类型 | 约束                 | 说明     |
+| ---------- | ---- | -------------------- | -------- |
+| key        | TEXT | PK                   | 参数键   |
+| value      | TEXT | NOT NULL, DEFAULT '' | 参数值   |
+| updated_at | TEXT | NOT NULL, DEFAULT    | 更新时间 |
 
 **键位分组**（同一张表承载，新增键位**不需要迁移**；仅 `site.*` 有白名单，其余键由各自路由自行校验）：
 
-| 分组         | 键位                                                                                                       | 归属路由               | 说明                                                                       |
-| ------------ | ---------------------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------- |
-| 预警参数     | `warn_rate` / `warn_consecutive` / `warn_days`                                                             | `routes/settings.js`   | 缺勤预警阈值，管理端可调                                                   |
-| 站点信息     | `site.*`（12 个键）                                                                                        | `routes/site-info.js`  | 登录页 / 页签名 / 页脚展示信息，见下方「site.\* 键位」                     |
+| 分组     | 键位                                           | 归属路由              | 说明                                                   |
+| -------- | ---------------------------------------------- | --------------------- | ------------------------------------------------------ |
+| 预警参数 | `warn_rate` / `warn_consecutive` / `warn_days` | `routes/settings.js`  | 缺勤预警阈值，管理端可调                               |
+| 站点信息 | `site.*`（12 个键）                            | `routes/site-info.js` | 登录页 / 页签名 / 页脚展示信息，见下方「site.\* 键位」 |
 
 > ⚠️ `term_id` 已于 **v13** 移除（学期改为直接读 `terms.is_current`），此处不再列出。
 
 #### `site.*` 键位（v18 新增，复用 v6 的 settings 表，**无迁移**）
 
-| 键位                    | 默认值       | 说明                                             |
-| ----------------------- | ------------ | ------------------------------------------------ |
-| `site.name`             | 川外教育     | 品牌短名，展示于**登录页品牌位**与**左侧菜单顶部** |
-| `site.title`            | 川外教育教学管理系统 | 系统全称，写入浏览器**页签标题**          |
-| `site.orgName`          | 川外教育     | 机构全称，用于**页脚版权行**                     |
-| `site.sinceYear`        | 2020         | 起始年份，与当前年份组成 `2020-2026` 版权区间     |
-| `site.slogan`           | （空）       | 登录页副标题                                     |
-| `site.contact`          | （空）       | 联系电话，页脚展示                               |
-| `site.address`          | （空）       | 机构地址，页脚展示                               |
-| `site.icp`              | （空）       | ICP 备案号，页脚展示（**未备案留空即可，不留占位**） |
-| `site.policeNo`         | （空）       | 公安备案号，页脚展示                             |
-| `site.copyrightExtra`   | （空）       | 版权行补充说明                                   |
-| `site.logo`             | （空）       | Logo 图片路径，形如 `/assets/site/logo-*.png`     |
-| `site.favicon`          | （空）       | 站点图标路径，形如 `/assets/site/favicon-*.png`   |
+| 键位                  | 默认值               | 说明                                                 |
+| --------------------- | -------------------- | ---------------------------------------------------- |
+| `site.name`           | 川外教育             | 品牌短名，展示于**登录页品牌位**与**左侧菜单顶部**   |
+| `site.title`          | 川外教育教学管理系统 | 系统全称，写入浏览器**页签标题**                     |
+| `site.orgName`        | 川外教育             | 机构全称，用于**页脚版权行**                         |
+| `site.sinceYear`      | 2020                 | 起始年份，与当前年份组成 `2020-2026` 版权区间        |
+| `site.slogan`         | （空）               | 登录页副标题                                         |
+| `site.contact`        | （空）               | 联系电话，页脚展示                                   |
+| `site.address`        | （空）               | 机构地址，页脚展示                                   |
+| `site.icp`            | （空）               | ICP 备案号，页脚展示（**未备案留空即可，不留占位**） |
+| `site.policeNo`       | （空）               | 公安备案号，页脚展示                                 |
+| `site.copyrightExtra` | （空）               | 版权行补充说明                                       |
+| `site.logo`           | （空）               | Logo 图片路径，形如 `/assets/site/logo-*.png`        |
+| `site.favicon`        | （空）               | 站点图标路径，形如 `/assets/site/favicon-*.png`      |
 
 **读写规则（`routes/site-info.js`）**：
 
@@ -226,6 +229,7 @@
 | created_at / updated_at | TEXT | NOT NULL, DEFAULT | 创建/更新时间 |
 
 约束（v21 起）：原 `UNIQUE (student_id, course_id, date)` 改为 **Q7 双条件部分唯一索引**：
+
 - `ux_attendance_legacy (student_id, course_id, date) WHERE session_id IS NULL` —— 保住历史行去重（旧接口 upsert 生效）
 - `ux_attendance_session (session_id, student_id) WHERE session_id IS NOT NULL` —— 挂课次去重（同课次同一学员唯一）
 
@@ -374,19 +378,19 @@
 
 ### hour_consumptions（课时消耗流水，v11 新增）
 
-| 字段        | 类型    | 约束                                                | 说明                           |
-| ----------- | ------- | --------------------------------------------------- | ------------------------------ |
-| id          | INTEGER | PK, AUTOINCREMENT                                   | 流水 ID                        |
-| student_id  | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE | 学员 ID                        |
-| order_id    | INTEGER | NOT NULL, REFERENCES orders(id) ON DELETE CASCADE   | 课时包订单 ID                  |
-| course_id   | INTEGER | REFERENCES courses(id) ON DELETE CASCADE            | 课程 ID                        |
-| class_id    | INTEGER | REFERENCES classes(id) ON DELETE CASCADE            | 班级 ID                        |
-| date        | TEXT    | NOT NULL                                            | 考勤日期                       |
-| hours       | REAL    | NOT NULL, DEFAULT 1                                 | 变动课时**绝对值，恒为正数 1**（方向由 `type` 字段表达，非符号） |
-| type        | TEXT    | NOT NULL, DEFAULT '扣减', CHECK IN ('扣减','回补')  | 流水类型                       |
-| operator_id | INTEGER | REFERENCES users(id) ON DELETE SET NULL             | 操作人                         |
-| session_id  | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL（v21 新增） | 课次 ID（课消精确对账关键；legacy 为空） |
-| created_at  | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')       | 创建时间                       |
+| 字段        | 类型    | 约束                                                         | 说明                                                             |
+| ----------- | ------- | ------------------------------------------------------------ | ---------------------------------------------------------------- |
+| id          | INTEGER | PK, AUTOINCREMENT                                            | 流水 ID                                                          |
+| student_id  | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE          | 学员 ID                                                          |
+| order_id    | INTEGER | NOT NULL, REFERENCES orders(id) ON DELETE CASCADE            | 课时包订单 ID                                                    |
+| course_id   | INTEGER | REFERENCES courses(id) ON DELETE CASCADE                     | 课程 ID                                                          |
+| class_id    | INTEGER | REFERENCES classes(id) ON DELETE CASCADE                     | 班级 ID                                                          |
+| date        | TEXT    | NOT NULL                                                     | 考勤日期                                                         |
+| hours       | REAL    | NOT NULL, DEFAULT 1                                          | 变动课时**绝对值，恒为正数 1**（方向由 `type` 字段表达，非符号） |
+| type        | TEXT    | NOT NULL, DEFAULT '扣减', CHECK IN ('扣减','回补')           | 流水类型                                                         |
+| operator_id | INTEGER | REFERENCES users(id) ON DELETE SET NULL                      | 操作人                                                           |
+| session_id  | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL（v21 新增） | 课次 ID（课消精确对账关键；legacy 为空）                         |
+| created_at  | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')                | 创建时间                                                         |
 
 索引：`idx_hour_cons_order (order_id)`、`idx_hour_cons_student_date (student_id, date)`、`idx_hour_cons_course (course_id)`、`idx_hour_cons_session (session_id)`（v21 新增）
 （`011-teaching-consumption.js:56-58`。注意：**无**单独的 `idx_hour_cons_student` / `idx_hour_cons_date`，二者已由联合索引 `(student_id, date)` 覆盖）
@@ -412,39 +416,39 @@
 
 ### makeup_classes（补课登记，v12 新增）
 
-| 字段                    | 类型    | 约束                                                     | 说明                           |
-| ----------------------- | ------- | -------------------------------------------------------- | ------------------------------ |
-| id                      | INTEGER | PK, AUTOINCREMENT                                        | 登记 ID                        |
-| student_id              | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE      | 学员 ID                        |
-| class_id                | INTEGER | NOT NULL, REFERENCES classes(id) ON DELETE CASCADE       | 班级 ID                        |
-| course_id               | INTEGER | REFERENCES courses(id) ON DELETE CASCADE                 | 课程 ID                        |
-| original_date           | TEXT    | NOT NULL                                                 | 原始缺勤 / 请假日期            |
-| makeup_date             | TEXT    | NOT NULL                                                 | 补课日期                       |
-| status                  | TEXT    | NOT NULL, DEFAULT '待安排', CHECK IN ('待安排','已完成') | 状态（已完成时联动扣减课时包） |
-| remark                  | TEXT    | NOT NULL, DEFAULT ''                                     | 备注                           |
-| apply_user_id           | INTEGER | REFERENCES users(id) ON DELETE SET NULL                  | 登记人                         |
+| 字段                    | 类型    | 约束                                                         | 说明                                 |
+| ----------------------- | ------- | ------------------------------------------------------------ | ------------------------------------ |
+| id                      | INTEGER | PK, AUTOINCREMENT                                            | 登记 ID                              |
+| student_id              | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE          | 学员 ID                              |
+| class_id                | INTEGER | NOT NULL, REFERENCES classes(id) ON DELETE CASCADE           | 班级 ID                              |
+| course_id               | INTEGER | REFERENCES courses(id) ON DELETE CASCADE                     | 课程 ID                              |
+| original_date           | TEXT    | NOT NULL                                                     | 原始缺勤 / 请假日期                  |
+| makeup_date             | TEXT    | NOT NULL                                                     | 补课日期                             |
+| status                  | TEXT    | NOT NULL, DEFAULT '待安排', CHECK IN ('待安排','已完成')     | 状态（已完成时联动扣减课时包）       |
+| remark                  | TEXT    | NOT NULL, DEFAULT ''                                         | 备注                                 |
+| apply_user_id           | INTEGER | REFERENCES users(id) ON DELETE SET NULL                      | 登记人                               |
 | original_session_id     | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL（v21 新增） | 原课次（由日期字符串升级为课次引用） |
-| makeup_session_id       | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL（v21 新增） | 补课课次 |
-| created_at / updated_at | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')            | 创建 / 更新时间                |
+| makeup_session_id       | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL（v21 新增） | 补课课次                             |
+| created_at / updated_at | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')                | 创建 / 更新时间                      |
 
 索引：`idx_makeup_student (student_id)`、`idx_makeup_status (status)`、`idx_makeup_date (makeup_date)`
 
 ### feedbacks（使用反馈，v16 新增）
 
-| 字段                    | 类型    | 约束                                              | 说明                                                                              |
-| ----------------------- | ------- | ------------------------------------------------- | --------------------------------------------------------------------------------- |
-| id                      | INTEGER | PK, AUTOINCREMENT                                 | 反馈 ID                                                                           |
-| user_id                 | INTEGER | NOT NULL, REFERENCES users(id)                    | 提交人（员工账号）                                                                |
-| username                | TEXT    | NOT NULL, DEFAULT ''                              | 提交人账号快照                                                                    |
-| user_role               | TEXT    | NOT NULL, DEFAULT ''                              | 提交时角色（admin / teacher），用于定位「谁在什么角色下遇到问题」                 |
-| category                | TEXT    | NOT NULL, DEFAULT '其他'                          | 分类：功能异常 / 操作不便 / 数据不准 / 性能问题 / 功能建议 / 其他；非法值回落「其他」 |
-| content                 | TEXT    | NOT NULL                                          | 问题描述（5–2000 字）                                                             |
-| page_path               | TEXT    | NOT NULL, DEFAULT ''                              | 出现问题时的页面路径（选填，最长 200 字符）                                       |
-| status                  | TEXT    | NOT NULL, DEFAULT '待处理'                        | 处理状态：待处理 / 处理中 / 已处理 / 已忽略（后端白名单校验）                     |
-| admin_reply             | TEXT    | NOT NULL, DEFAULT ''                              | 管理员回复（提交人可见）                                                          |
-| handled_by              | INTEGER | REFERENCES users(id)                              | 处理人                                                                            |
-| handled_at              | TEXT    |                                                   | 处理时间（改状态时写入）                                                          |
-| created_at / updated_at | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')     | 创建 / 更新时间                                                                   |
+| 字段                    | 类型    | 约束                                          | 说明                                                                                  |
+| ----------------------- | ------- | --------------------------------------------- | ------------------------------------------------------------------------------------- |
+| id                      | INTEGER | PK, AUTOINCREMENT                             | 反馈 ID                                                                               |
+| user_id                 | INTEGER | NOT NULL, REFERENCES users(id)                | 提交人（员工账号）                                                                    |
+| username                | TEXT    | NOT NULL, DEFAULT ''                          | 提交人账号快照                                                                        |
+| user_role               | TEXT    | NOT NULL, DEFAULT ''                          | 提交时角色（admin / teacher），用于定位「谁在什么角色下遇到问题」                     |
+| category                | TEXT    | NOT NULL, DEFAULT '其他'                      | 分类：功能异常 / 操作不便 / 数据不准 / 性能问题 / 功能建议 / 其他；非法值回落「其他」 |
+| content                 | TEXT    | NOT NULL                                      | 问题描述（5–2000 字）                                                                 |
+| page_path               | TEXT    | NOT NULL, DEFAULT ''                          | 出现问题时的页面路径（选填，最长 200 字符）                                           |
+| status                  | TEXT    | NOT NULL, DEFAULT '待处理'                    | 处理状态：待处理 / 处理中 / 已处理 / 已忽略（后端白名单校验）                         |
+| admin_reply             | TEXT    | NOT NULL, DEFAULT ''                          | 管理员回复（提交人可见）                                                              |
+| handled_by              | INTEGER | REFERENCES users(id)                          | 处理人                                                                                |
+| handled_at              | TEXT    |                                               | 处理时间（改状态时写入）                                                              |
+| created_at / updated_at | TEXT    | NOT NULL, DEFAULT datetime('now','localtime') | 创建 / 更新时间                                                                       |
 
 索引：`idx_feedbacks_status (status)`、`idx_feedbacks_user (user_id)`、`idx_feedbacks_time (created_at)`
 
@@ -493,12 +497,12 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### ai_settings（AI 配置，优先级高于环境变量）
 
-| 字段       | 类型 | 约束                     | 说明                                                     |
-| ---------- | ---- | ------------------------ | -------------------------------------------------------- |
-| key        | TEXT | PK                       | 配置键，取值受后端白名单约束（未知键写入时忽略）         |
-| value      | TEXT | NOT NULL, DEFAULT ''     | 配置值；**空串或删除该行 = 回退到环境变量**              |
-| updated_by | TEXT | NOT NULL, DEFAULT ''     | 最近修改人                                               |
-| updated_at | TEXT | NOT NULL, DEFAULT ''     | 最近修改时间                                             |
+| 字段       | 类型 | 约束                 | 说明                                             |
+| ---------- | ---- | -------------------- | ------------------------------------------------ |
+| key        | TEXT | PK                   | 配置键，取值受后端白名单约束（未知键写入时忽略） |
+| value      | TEXT | NOT NULL, DEFAULT '' | 配置值；**空串或删除该行 = 回退到环境变量**      |
+| updated_by | TEXT | NOT NULL, DEFAULT '' | 最近修改人                                       |
+| updated_at | TEXT | NOT NULL, DEFAULT '' | 最近修改时间                                     |
 
 可配置键：`llmApiKey`、`llmBaseUrl`、`llmModel`、`llmMaxTokens`、`llmReasoningEffort`、
 `llmTimeoutMs`、`aiWorkbenchUrl`、`difyEndpoint`、`difyApiKey`、`difyWorkflows`。
@@ -507,16 +511,16 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### ai_usage（AI 用量，配置中心展示本月用量与成本）
 
-| 字段       | 类型    | 约束                 | 说明                                   |
-| ---------- | ------- | -------------------- | -------------------------------------- |
-| id         | INTEGER | PK, AUTOINCREMENT    | 记录 ID                                |
-| username   | TEXT    | NOT NULL, DEFAULT '' | 生成人                                 |
-| scene      | TEXT    | NOT NULL, DEFAULT '' | 场景（备课方案 / 学情报告 …）          |
-| model      | TEXT    | NOT NULL, DEFAULT '' | 实际使用的模型                         |
-| tokens_in  | INTEGER | NOT NULL, DEFAULT 0  | 输入 token                             |
-| tokens_out | INTEGER | NOT NULL, DEFAULT 0  | 输出 token                             |
-| cost       | REAL    | NOT NULL, DEFAULT 0  | 估算成本（元，高峰价，仅供量级参考）   |
-| created_at | TEXT    | NOT NULL, DEFAULT '' | 生成时间；建索引 `created_at`          |
+| 字段       | 类型    | 约束                 | 说明                                 |
+| ---------- | ------- | -------------------- | ------------------------------------ |
+| id         | INTEGER | PK, AUTOINCREMENT    | 记录 ID                              |
+| username   | TEXT    | NOT NULL, DEFAULT '' | 生成人                               |
+| scene      | TEXT    | NOT NULL, DEFAULT '' | 场景（备课方案 / 学情报告 …）        |
+| model      | TEXT    | NOT NULL, DEFAULT '' | 实际使用的模型                       |
+| tokens_in  | INTEGER | NOT NULL, DEFAULT 0  | 输入 token                           |
+| tokens_out | INTEGER | NOT NULL, DEFAULT 0  | 输出 token                           |
+| cost       | REAL    | NOT NULL, DEFAULT 0  | 估算成本（元，高峰价，仅供量级参考） |
+| created_at | TEXT    | NOT NULL, DEFAULT '' | 生成时间；建索引 `created_at`        |
 
 ## 待办（v19 新增 · `todos`）
 
@@ -530,28 +534,28 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### 表结构
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` | INTEGER PK | — |
-| `title` | TEXT NOT NULL | 标题（≤100 字） |
-| `content` | TEXT | 补充说明（≤5000 字） |
-| `owner_id` | INTEGER NOT NULL → `users(id)` ON DELETE CASCADE | **负责人**（归属谁） |
-| `creator_id` | INTEGER → `users(id)` ON DELETE SET NULL | 创建人（**系统自动生成时为空**） |
-| `source` | TEXT CHECK `manual` / `auto` | `manual`=手工建；`auto`=L3 由业务事件生成 |
-| `source_type` | TEXT | 自动来源类型（如 `tuition_low` / `absent_streak` / `lead_follow` / `eval_missing`）；**L2 全为空** |
-| `source_ref_id` | INTEGER | 来源记录 id（配合 `source_type` 做幂等去重） |
-| `status` | TEXT CHECK `待办` / `已完成` | 默认 `待办` |
-| `priority` | TEXT CHECK `普通` / `重要` / `紧急` | 默认 `普通` |
-| `due_date` | TEXT | 截止日期（可空，`YYYY-MM-DD`） |
-| `completed_at` | TEXT | 完成时间；**退回待办时清空** |
-| `created_at` / `updated_at` | TEXT | `datetime('now','localtime')` |
+| 字段                        | 类型                                             | 说明                                                                                               |
+| --------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `id`                        | INTEGER PK                                       | —                                                                                                  |
+| `title`                     | TEXT NOT NULL                                    | 标题（≤100 字）                                                                                    |
+| `content`                   | TEXT                                             | 补充说明（≤5000 字）                                                                               |
+| `owner_id`                  | INTEGER NOT NULL → `users(id)` ON DELETE CASCADE | **负责人**（归属谁）                                                                               |
+| `creator_id`                | INTEGER → `users(id)` ON DELETE SET NULL         | 创建人（**系统自动生成时为空**）                                                                   |
+| `source`                    | TEXT CHECK `manual` / `auto`                     | `manual`=手工建；`auto`=L3 由业务事件生成                                                          |
+| `source_type`               | TEXT                                             | 自动来源类型（如 `tuition_low` / `absent_streak` / `lead_follow` / `eval_missing`）；**L2 全为空** |
+| `source_ref_id`             | INTEGER                                          | 来源记录 id（配合 `source_type` 做幂等去重）                                                       |
+| `status`                    | TEXT CHECK `待办` / `已完成`                     | 默认 `待办`                                                                                        |
+| `priority`                  | TEXT CHECK `普通` / `重要` / `紧急`              | 默认 `普通`                                                                                        |
+| `due_date`                  | TEXT                                             | 截止日期（可空，`YYYY-MM-DD`）                                                                     |
+| `completed_at`              | TEXT                                             | 完成时间；**退回待办时清空**                                                                       |
+| `created_at` / `updated_at` | TEXT                                             | `datetime('now','localtime')`                                                                      |
 
 **索引**：
 
-| 索引 | 用途 |
-|---|---|
-| `idx_todos_owner_status (owner_id, status)` | 最高频查询：某人的待办列表 |
-| `idx_todos_due (due_date)` | 按截止排序 / 找逾期 |
+| 索引                                                                                                             | 用途                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `idx_todos_owner_status (owner_id, status)`                                                                      | 最高频查询：某人的待办列表                                                                           |
+| `idx_todos_due (due_date)`                                                                                       | 按截止排序 / 找逾期                                                                                  |
 | ★ `uniq_todos_source (source_type, source_ref_id, owner_id)` **部分唯一索引**（`WHERE source_type IS NOT NULL`） | **L3 幂等去重键** —— 同一来源 + 同一负责人只允许一条自动待办；手工待办（`source_type` 为空）不受约束 |
 
 > ★ **唯一索引为什么在 L2 就建好**：它只约束自动待办，L2 不写自动待办所以不影响；
@@ -559,11 +563,11 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### 权限模型（**边界在路由内的归属校验，不在路径**）
 
-| 角色 | 能力 |
-|---|---|
-| 本人 | 看自己的 · 改自己的 · 完成自己的 · 删自己的 |
-| `admin` | 上面全有 **+ 看全部（`?scope=all`）+ 指派给别人（`POST` 带 `owner_id`）+ 改他人待办** |
-| `teacher` | **只能自己的**。★ 无论传什么 `scope`，后端一律收敛为「只看自己」（越权 403） |
+| 角色      | 能力                                                                                  |
+| --------- | ------------------------------------------------------------------------------------- |
+| 本人      | 看自己的 · 改自己的 · 完成自己的 · 删自己的                                           |
+| `admin`   | 上面全有 **+ 看全部（`?scope=all`）+ 指派给别人（`POST` 带 `owner_id`）+ 改他人待办** |
+| `teacher` | **只能自己的**。★ 无论传什么 `scope`，后端一律收敛为「只看自己」（越权 403）          |
 
 > ★ AI 工作台凭证 `type=ai_agent` 放行 `/api/todos`（**读写同权**）——
 > 老师在工作台既要看也要改。**安全边界靠 `canManage`（owner 或 admin），不靠"挡住读"**。
@@ -574,39 +578,39 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 > ★★ **核心：待办的 owner 由「事件类型」决定，绝不是"生成给所有人"。**
 > 4 类事件的敏感度差别极大，无差别生成会把**财务与招生数据泄漏到工作台**。
 
-| 事件 | `source_type` | 检测口径 | 收件人（owner） | 老师可见 |
-|---|---|---|---|---|
-| 学员余额/课时不足 | `tuition_low` | `orders`（`status='在读'`）按学员汇总 `remain_hours` ≤ 阈值；学员须 `status='在读'` | **仅 admin** | ❌ **绝不给**（数据源是**财务表**，含 `amount`） |
-| 线索待跟进 | `lead_follow` | `leads.status='新线索'` 且 `updated_at` 距今 ≥ 阈值天 | **仅 admin** | ❌ **绝不给**（`routes/leads.js` **全程 `requireRole("admin")`**） |
-| 连续缺勤 | `absent_streak` | 按学员取最近考勤倒序，**连续** `缺勤` 节数 ≥ `warn_consecutive` | **该班班主任 + admin** | ✅ 仅本班 |
-| 课评欠录 | `eval_missing` | `schedules` 是**周几模板**（1=周一…7=周日）；最近 N 天里该班有课、但 `class_evaluations` 无对应 `(class_id, eval_date)` | **该班班主任 + admin** | ✅ 仅本班 |
+| 事件              | `source_type`   | 检测口径                                                                                                                | 收件人（owner）        | 老师可见                                                           |
+| ----------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------ |
+| 学员余额/课时不足 | `tuition_low`   | `orders`（`status='在读'`）按学员汇总 `remain_hours` ≤ 阈值；学员须 `status='在读'`                                     | **仅 admin**           | ❌ **绝不给**（数据源是**财务表**，含 `amount`）                   |
+| 线索待跟进        | `lead_follow`   | `leads.status='新线索'` 且 `updated_at` 距今 ≥ 阈值天                                                                   | **仅 admin**           | ❌ **绝不给**（`routes/leads.js` **全程 `requireRole("admin")`**） |
+| 连续缺勤          | `absent_streak` | 按学员取最近考勤倒序，**连续** `缺勤` 节数 ≥ `warn_consecutive`                                                         | **该班班主任 + admin** | ✅ 仅本班                                                          |
+| 课评欠录          | `eval_missing`  | `schedules` 是**周几模板**（1=周一…7=周日）；最近 N 天里该班有课、但 `class_evaluations` 无对应 `(class_id, eval_date)` | **该班班主任 + admin** | ✅ 仅本班                                                          |
 
 ★ 「给老师过滤」照抄现有先例 `notifications` 的 `notificationScope`（老师只看 `head_teacher_id = 自己` 的班）。
 
 **幂等规则**（靠上面的 `uniq_todos_source` 唯一索引，**故 L3 无需新迁移**）：
 
-| 情况 | 动作 |
-|---|---|
-| 该 `(source_type, source_ref_id, owner_id)` 不存在 | INSERT |
-| 已存在且 `status='已完成'` | **回写为「待办」** —— 条件又出现了（如学员续费后又用尽），不新增行 |
-| 已存在且 `status='待办'` | 跳过 |
+| 情况                                               | 动作                                                               |
+| -------------------------------------------------- | ------------------------------------------------------------------ |
+| 该 `(source_type, source_ref_id, owner_id)` 不存在 | INSERT                                                             |
+| 已存在且 `status='已完成'`                         | **回写为「待办」** —— 条件又出现了（如学员续费后又用尽），不新增行 |
+| 已存在且 `status='待办'`                           | 跳过                                                               |
 
 **阈值**（读 `settings` 表同名键，缺失用默认值；**往 K-V 表加键 = 纯数据写入，无需迁移**）：
 
-| 键 | 默认 | 含义 |
-|---|---|---|
-| `todo_hours_low` | 5 | 剩余课时 ≤ 此值 → 余额预警 |
-| `todo_lead_days` | 7 | 线索超过此天数未动 → 待跟进 |
-| `todo_eval_days` | 7 | 最近此天数内有课但无课评 → 欠录 |
-| `warn_consecutive` | 3 | **复用既有键**，与出勤预警同一口径 |
+| 键                 | 默认 | 含义                               |
+| ------------------ | ---- | ---------------------------------- |
+| `todo_hours_low`   | 5    | 剩余课时 ≤ 此值 → 余额预警         |
+| `todo_lead_days`   | 7    | 线索超过此天数未动 → 待跟进        |
+| `todo_eval_days`   | 7    | 最近此天数内有课但无课评 → 欠录    |
+| `warn_consecutive` | 3    | **复用既有键**，与出勤预警同一口径 |
 
 **触发点**（生成器幂等，故"多跑"安全）：
 
-| 触发 | 位置 |
-|---|---|
-| **A 按需** | `GET /api/todos` 内调用（**60 秒节流**，避免铃铛每次打开都全量扫库） |
+| 触发       | 位置                                                                                        |
+| ---------- | ------------------------------------------------------------------------------------------- |
+| **A 按需** | `GET /api/todos` 内调用（**60 秒节流**，避免铃铛每次打开都全量扫库）                        |
 | **C 定时** | `server/src/index.js` 的 `setInterval`，每 6 小时 + 启动 30 秒后（`unref()`，**零新依赖**） |
-| 手动 | `POST /api/todos/generate?force=1`（**仅 admin**，便于排查与验收） |
+| 手动       | `POST /api/todos/generate?force=1`（**仅 admin**，便于排查与验收）                          |
 
 ★ **脱敏**：`orders.amount`、`leads.phone` **一律不查、不带入文案**（ADR-005 白名单外）。
 
@@ -625,14 +629,14 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 >
 > ### ★ 分工铁律（实测缺陷后确立，务必遵守）
 >
-> | 维度 | 由谁承载 | 是否写 `student_timeline` |
-> | ---- | -------- | ------------------------- |
-> | 出勤 | `attendances`（既有表） | ❌ **不写** |
-> | 成绩 | `exam_scores` + `exams`（既有表） | ❌ **不写** |
-> | 课时变动 | `hour_consumptions`（既有表） | ❌ **不写** |
-> | 课堂评价 | `class_evaluations` + 时间轴 | ✅ 写 |
-> | 知识点掌握 | `kp_assessments` + 时间轴 | ✅ 写 |
-> | 里程碑 | 时间轴（引擎计算产出） | ✅ 写 |
+> | 维度       | 由谁承载                          | 是否写 `student_timeline` |
+> | ---------- | --------------------------------- | ------------------------- |
+> | 出勤       | `attendances`（既有表）           | ❌ **不写**               |
+> | 成绩       | `exam_scores` + `exams`（既有表） | ❌ **不写**               |
+> | 课时变动   | `hour_consumptions`（既有表）     | ❌ **不写**               |
+> | 课堂评价   | `class_evaluations` + 时间轴      | ✅ 写                     |
+> | 知识点掌握 | `kp_assessments` + 时间轴         | ✅ 写                     |
+> | 里程碑     | 时间轴（引擎计算产出）            | ✅ 写                     |
 >
 > **原因**：读取时会把既有表 UNION 进同一时间轴。若既有表承载的维度再写一份到
 > `student_timeline`，读出来就是双份 —— 实测表现为「12 次课算成 24 次」
@@ -644,18 +648,18 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### student_timeline（成长时间轴，核心，只增不改）
 
-| 字段 | 类型 | 约束 | 说明 |
-| ---- | ---- | ---- | ---- |
-| id | INTEGER | PK, AUTOINCREMENT | 事件 ID |
-| student_id | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE | 学员 |
-| class_id | INTEGER | REFERENCES classes(id) ON DELETE SET NULL | 班级（便于按班聚合） |
-| course_id | INTEGER | REFERENCES courses(id) ON DELETE SET NULL | 课程 |
-| occurred_at | TEXT | NOT NULL | 事件发生日期 `YYYY-MM-DD` |
-| event_type | TEXT | NOT NULL | 白名单：`class_eval` / `kp_assessment` / `milestone` / `note`（既有表承载的三类被 `appendEvent` 拒绝） |
-| payload | TEXT | NOT NULL, DEFAULT '{}' | JSON 事件细节；**禁止放金额、家长电话**（`scrubPayload` 兜底剔除） |
-| source | TEXT | NOT NULL, DEFAULT 'manual' | `manual` 老师录入 / `auto` 系统生成 / `engine` 引擎产出 |
-| created_by | INTEGER | REFERENCES users(id) ON DELETE SET NULL | 录入人 |
-| created_at | TEXT | NOT NULL, DEFAULT datetime('now','localtime') | 入库时间 |
+| 字段        | 类型    | 约束                                                | 说明                                                                                                   |
+| ----------- | ------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| id          | INTEGER | PK, AUTOINCREMENT                                   | 事件 ID                                                                                                |
+| student_id  | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE | 学员                                                                                                   |
+| class_id    | INTEGER | REFERENCES classes(id) ON DELETE SET NULL           | 班级（便于按班聚合）                                                                                   |
+| course_id   | INTEGER | REFERENCES courses(id) ON DELETE SET NULL           | 课程                                                                                                   |
+| occurred_at | TEXT    | NOT NULL                                            | 事件发生日期 `YYYY-MM-DD`                                                                              |
+| event_type  | TEXT    | NOT NULL                                            | 白名单：`class_eval` / `kp_assessment` / `milestone` / `note`（既有表承载的三类被 `appendEvent` 拒绝） |
+| payload     | TEXT    | NOT NULL, DEFAULT '{}'                              | JSON 事件细节；**禁止放金额、家长电话**（`scrubPayload` 兜底剔除）                                     |
+| source      | TEXT    | NOT NULL, DEFAULT 'manual'                          | `manual` 老师录入 / `auto` 系统生成 / `engine` 引擎产出                                                |
+| created_by  | INTEGER | REFERENCES users(id) ON DELETE SET NULL             | 录入人                                                                                                 |
+| created_at  | TEXT    | NOT NULL, DEFAULT datetime('now','localtime')       | 入库时间                                                                                               |
 
 索引：`idx_timeline_student_time (student_id, occurred_at)`、`idx_timeline_class_time (class_id, occurred_at)`、`idx_timeline_type (event_type)`
 
@@ -663,38 +667,39 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 粒度决策：章节级太粗看不出进步、知识点级太细老师会放弃，取中间值 —— 一个课时 2–4 个知识点。
 
-| 字段 | 类型 | 约束 | 说明 |
-| ---- | ---- | ---- | ---- |
-| id | INTEGER | PK, AUTOINCREMENT | 知识点 ID |
-| parent_id | INTEGER | REFERENCES knowledge_points(id) ON DELETE CASCADE | 父节点（两级：一级=单元，二级=知识点） |
-| code | TEXT | NOT NULL, UNIQUE | 编码，如 `U1-2` |
-| name | TEXT | NOT NULL | 名称，如「SSS 判定」 |
-| course_id | INTEGER | REFERENCES courses(id) ON DELETE SET NULL | 所属课程 |
-| grade / term_no / unit_no / seq | — | 整数与文本 | 年级 / 学期序号 / 单元号 / 排序，用于按教学顺序展示 |
-| difficulty | INTEGER | NOT NULL, DEFAULT 2, CHECK 1–5 | 相对难度 |
-| description | TEXT | NOT NULL, DEFAULT '' | 说明 |
-| is_active | INTEGER | NOT NULL, DEFAULT 1 | 停用标记 |
+| 字段                            | 类型    | 约束                                              | 说明                                                |
+| ------------------------------- | ------- | ------------------------------------------------- | --------------------------------------------------- |
+| id                              | INTEGER | PK, AUTOINCREMENT                                 | 知识点 ID                                           |
+| parent_id                       | INTEGER | REFERENCES knowledge_points(id) ON DELETE CASCADE | 父节点（两级：一级=单元，二级=知识点）              |
+| code                            | TEXT    | NOT NULL, UNIQUE                                  | 编码，如 `U1-2`                                     |
+| name                            | TEXT    | NOT NULL                                          | 名称，如「SSS 判定」                                |
+| course_id                       | INTEGER | REFERENCES courses(id) ON DELETE SET NULL         | 所属课程                                            |
+| grade / term_no / unit_no / seq | —       | 整数与文本                                        | 年级 / 学期序号 / 单元号 / 排序，用于按教学顺序展示 |
+| difficulty                      | INTEGER | NOT NULL, DEFAULT 2, CHECK 1–5                    | 相对难度                                            |
+| description                     | TEXT    | NOT NULL, DEFAULT ''                              | 说明                                                |
+| is_active                       | INTEGER | NOT NULL, DEFAULT 1                               | 停用标记                                            |
 
 ### class_evaluations（课堂评价，每课一条）
 
 维度决策：砍掉 demo 里的「作业」维（作业应由作业模块独立记录），保留老师一眼能判断的 3 维。
 用 1–5 分（3 = 一般），而非 0–100 —— 老师打不出「62 分」这种精度，强填只会产生假数据。
 
-| 字段 | 类型 | 约束 | 说明 |
-| ---- | ---- | ---- | ---- |
-| id | INTEGER | PK, AUTOINCREMENT | 记录 ID |
-| class_id | INTEGER | NOT NULL, REFERENCES classes(id) ON DELETE CASCADE | 班级 |
-| course_id | INTEGER | REFERENCES courses(id) ON DELETE SET NULL | 课程 |
-| student_id | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE | 学员 |
-| eval_date | TEXT | NOT NULL | 评价日期 |
-| session_id | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL（v21 新增） | 课次 ID（历史行/旧接口为空） |
-| session_no | INTEGER | NOT NULL, DEFAULT 0 | 第几次课（v21 起由课次推算） |
-| focus / participation / mastery | INTEGER | NOT NULL, DEFAULT 3, CHECK 1–5 | 专注度 / 参与度 / 掌握度 |
-| teacher_note | TEXT | NOT NULL, DEFAULT '' | 教师备注 |
-| created_by | INTEGER | REFERENCES users(id) ON DELETE SET NULL | 录入人 |
-| created_at / updated_at | TEXT | — | 时间戳 |
+| 字段                            | 类型    | 约束                                                         | 说明                         |
+| ------------------------------- | ------- | ------------------------------------------------------------ | ---------------------------- |
+| id                              | INTEGER | PK, AUTOINCREMENT                                            | 记录 ID                      |
+| class_id                        | INTEGER | NOT NULL, REFERENCES classes(id) ON DELETE CASCADE           | 班级                         |
+| course_id                       | INTEGER | REFERENCES courses(id) ON DELETE SET NULL                    | 课程                         |
+| student_id                      | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE          | 学员                         |
+| eval_date                       | TEXT    | NOT NULL                                                     | 评价日期                     |
+| session_id                      | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL（v21 新增） | 课次 ID（历史行/旧接口为空） |
+| session_no                      | INTEGER | NOT NULL, DEFAULT 0                                          | 第几次课（v21 起由课次推算） |
+| focus / participation / mastery | INTEGER | NOT NULL, DEFAULT 3, CHECK 1–5                               | 专注度 / 参与度 / 掌握度     |
+| teacher_note                    | TEXT    | NOT NULL, DEFAULT ''                                         | 教师备注                     |
+| created_by                      | INTEGER | REFERENCES users(id) ON DELETE SET NULL                      | 录入人                       |
+| created_at / updated_at         | TEXT    | —                                                            | 时间戳                       |
 
 约束（v21 起）：原 `UNIQUE (student_id, course_id, eval_date)` 改为 **Q7 双条件部分唯一索引**：
+
 - `ux_ce_legacy (student_id, course_id, eval_date) WHERE session_id IS NULL` —— 保住历史行去重
 - `ux_ce_session (session_id, student_id) WHERE session_id IS NOT NULL` —— 挂课次去重
 
@@ -705,18 +710,18 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 三档决策：`未掌握 / 部分掌握 / 已掌握`。不用百分制 —— 三档足够画出「从 0 到成功」的阶梯，
 且教师 1 分钟能打完整个班。
 
-| 字段 | 类型 | 约束 | 说明 |
-| ---- | ---- | ---- | ---- |
-| id | INTEGER | PK, AUTOINCREMENT | 记录 ID |
-| student_id | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE | 学员 |
-| kp_id | INTEGER | NOT NULL, REFERENCES knowledge_points(id) ON DELETE CASCADE | 知识点 |
-| class_id / course_id | INTEGER | REFERENCES … ON DELETE SET NULL | 班级 / 课程 |
-| assessed_at | TEXT | NOT NULL | 评定日期 |
-| session_no | INTEGER | NOT NULL, DEFAULT 0 | 第几次课 |
-| level | TEXT | NOT NULL, DEFAULT '部分掌握', CHECK 未掌握/部分掌握/已掌握 | 掌握等级（三档） |
-| evidence | TEXT | NOT NULL, DEFAULT '' | 证据说明 |
-| created_by | INTEGER | REFERENCES users(id) ON DELETE SET NULL | 录入人 |
-| created_at | TEXT | — | 时间戳 |
+| 字段                 | 类型    | 约束                                                        | 说明             |
+| -------------------- | ------- | ----------------------------------------------------------- | ---------------- |
+| id                   | INTEGER | PK, AUTOINCREMENT                                           | 记录 ID          |
+| student_id           | INTEGER | NOT NULL, REFERENCES students(id) ON DELETE CASCADE         | 学员             |
+| kp_id                | INTEGER | NOT NULL, REFERENCES knowledge_points(id) ON DELETE CASCADE | 知识点           |
+| class_id / course_id | INTEGER | REFERENCES … ON DELETE SET NULL                             | 班级 / 课程      |
+| assessed_at          | TEXT    | NOT NULL                                                    | 评定日期         |
+| session_no           | INTEGER | NOT NULL, DEFAULT 0                                         | 第几次课         |
+| level                | TEXT    | NOT NULL, DEFAULT '部分掌握', CHECK 未掌握/部分掌握/已掌握  | 掌握等级（三档） |
+| evidence             | TEXT    | NOT NULL, DEFAULT ''                                        | 证据说明         |
+| created_by           | INTEGER | REFERENCES users(id) ON DELETE SET NULL                     | 录入人           |
+| created_at           | TEXT    | —                                                           | 时间戳           |
 
 > **★ 每次课都写评定，即使等级未变**：这条记录本身就是「过程证据」。
 > 实测教训 —— 若只在等级变化时写入，每个知识点只剩一条记录，
@@ -730,13 +735,13 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 背景：跑一周真实数据后必须能按实际分布调阈值，不能让老师改一次阈值就改代码重建镜像。
 沿用 `ai_settings` 的键值机制。
 
-| 字段 | 类型 | 约束 | 说明 |
-| ---- | ---- | ---- | ---- |
-| key | TEXT | PK | 阈值键 |
-| value | TEXT | NOT NULL, DEFAULT '' | 阈值（后端按数值解析） |
-| label | TEXT | NOT NULL, DEFAULT '' | 中文名 |
-| description | TEXT | NOT NULL, DEFAULT '' | 用途说明 |
-| updated_by / updated_at | — | — | 修改人与时间 |
+| 字段                    | 类型 | 约束                 | 说明                   |
+| ----------------------- | ---- | -------------------- | ---------------------- |
+| key                     | TEXT | PK                   | 阈值键                 |
+| value                   | TEXT | NOT NULL, DEFAULT '' | 阈值（后端按数值解析） |
+| label                   | TEXT | NOT NULL, DEFAULT '' | 中文名                 |
+| description             | TEXT | NOT NULL, DEFAULT '' | 用途说明               |
+| updated_by / updated_at | —    | —                    | 修改人与时间           |
 
 默认 8 条：`absent_streak_warn` 2｜`score_trend_down` -8｜`score_trend_up` 8｜
 `hours_low_warn` 12｜`excellent_rate` 88｜`outlier_z` 1.2｜`kp_progress_step` 1｜`attention_score` 6
@@ -745,17 +750,17 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ## 成长时间轴 API（v18 新增）
 
-| 端点 | 权限 | 说明 |
-| ---- | ---- | ---- |
-| `GET /api/growth/eval-form?class_id&date` | auth + 本班 | 老师打开授课流程页时的预填数据（名单 + 待评知识点 + 今日已评情况） |
-| `POST /api/growth/class-eval` | auth + 本班 | 提交课堂评价（老师 10 秒动作，幂等覆盖 + 追加时间轴事件） |
-| `POST /api/growth/kp-assessment` | auth + 本班 | 批量知识点评定（老师 1 分钟动作，支持全班同状态 + 个别覆盖） |
-| `GET /api/growth/students/:id/timeline` | auth + 本班学员 | 单学员时间轴（既有三表 UNION + 新事件，已去重） |
-| `GET /api/growth/students/:id/growth` | auth + 本班学员 | 单学员成长画像（起点 vs 现在 + 知识点跃迁 + 里程碑） |
-| `GET /api/growth/classes/:id/growth` | auth + 本班 | 整班成长概览（班级课堂曲线 + 知识点掌握度分布） |
-| `GET /api/growth/knowledge-points` | auth | 知识点列表（可按课程筛选） |
-| `GET /api/growth/thresholds` | auth | 读成长阈值 |
-| `PUT /api/growth/thresholds` | admin | 改成长阈值（立即生效） |
+| 端点                                      | 权限            | 说明                                                               |
+| ----------------------------------------- | --------------- | ------------------------------------------------------------------ |
+| `GET /api/growth/eval-form?class_id&date` | auth + 本班     | 老师打开授课流程页时的预填数据（名单 + 待评知识点 + 今日已评情况） |
+| `POST /api/growth/class-eval`             | auth + 本班     | 提交课堂评价（老师 10 秒动作，幂等覆盖 + 追加时间轴事件）          |
+| `POST /api/growth/kp-assessment`          | auth + 本班     | 批量知识点评定（老师 1 分钟动作，支持全班同状态 + 个别覆盖）       |
+| `GET /api/growth/students/:id/timeline`   | auth + 本班学员 | 单学员时间轴（既有三表 UNION + 新事件，已去重）                    |
+| `GET /api/growth/students/:id/growth`     | auth + 本班学员 | 单学员成长画像（起点 vs 现在 + 知识点跃迁 + 里程碑）               |
+| `GET /api/growth/classes/:id/growth`      | auth + 本班     | 整班成长概览（班级课堂曲线 + 知识点掌握度分布）                    |
+| `GET /api/growth/knowledge-points`        | auth            | 知识点列表（可按课程筛选）                                         |
+| `GET /api/growth/thresholds`              | auth            | 读成长阈值                                                         |
+| `PUT /api/growth/thresholds`              | admin           | 改成长阈值（立即生效）                                             |
 
 > 权限全部复用 `utils/scope.js`：教师只能访问自己带的班与班内学员，与教务系统内可见范围严格一致。
 
@@ -768,26 +773,26 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### period_times（节次时间表，独立结构化配置）
 
-| 字段 | 类型 | 约束 | 说明 |
-| ---- | ---- | ---- | ---- |
-| id | INTEGER | PK, AUTOINCREMENT | — |
-| period | INTEGER | NOT NULL, UNIQUE, CHECK 1–8（Q3 固定不打宽） | 节次序号 |
-| start_time / end_time | TEXT | NOT NULL, DEFAULT '' | 起止时间 `HH:mm`（如 `08:00` / `08:45`） |
-| label | TEXT | NOT NULL, DEFAULT '' | 显示名（空则回落「第N节」） |
-| updated_at | TEXT | NOT NULL, DEFAULT | 更新时间 |
+| 字段                  | 类型    | 约束                                         | 说明                                     |
+| --------------------- | ------- | -------------------------------------------- | ---------------------------------------- |
+| id                    | INTEGER | PK, AUTOINCREMENT                            | —                                        |
+| period                | INTEGER | NOT NULL, UNIQUE, CHECK 1–8（Q3 固定不打宽） | 节次序号                                 |
+| start_time / end_time | TEXT    | NOT NULL, DEFAULT ''                         | 起止时间 `HH:mm`（如 `08:00` / `08:45`） |
+| label                 | TEXT    | NOT NULL, DEFAULT ''                         | 显示名（空则回落「第N节」）              |
+| updated_at            | TEXT    | NOT NULL, DEFAULT                            | 更新时间                                 |
 
 预置 8 节默认时间（★ v24 起**可自由增删**，数量不受限）；admin 可在「节次时间」页增删与修改。**课次生成时把起止时间快照写入 `class_sessions`**，日后改此表不回写历史（ADR-008 §9 只增不改）。
 
 ### teaching_assignments（任课关系）
 
-| 字段 | 类型 | 约束 | 说明 |
-| ---- | ---- | ---- | ---- |
-| id | INTEGER | PK, AUTOINCREMENT | — |
-| class_id | INTEGER | NOT NULL, REFERENCES classes(id) ON DELETE CASCADE | 班级 |
-| course_id | INTEGER | NOT NULL, REFERENCES courses(id) ON DELETE CASCADE | 课程 |
-| teacher_id | INTEGER | REFERENCES users(id) ON DELETE SET NULL（**可空**=未定教师） | 任课教师 |
-| term_id | INTEGER | REFERENCES terms(id) ON DELETE CASCADE（**可空**=长期有效） | 生效学期 |
-| created_at / updated_at | TEXT | NOT NULL, DEFAULT | 时间戳 |
+| 字段                    | 类型    | 约束                                                         | 说明     |
+| ----------------------- | ------- | ------------------------------------------------------------ | -------- |
+| id                      | INTEGER | PK, AUTOINCREMENT                                            | —        |
+| class_id                | INTEGER | NOT NULL, REFERENCES classes(id) ON DELETE CASCADE           | 班级     |
+| course_id               | INTEGER | NOT NULL, REFERENCES courses(id) ON DELETE CASCADE           | 课程     |
+| teacher_id              | INTEGER | REFERENCES users(id) ON DELETE SET NULL（**可空**=未定教师） | 任课教师 |
+| term_id                 | INTEGER | REFERENCES terms(id) ON DELETE CASCADE（**可空**=长期有效）  | 生效学期 |
+| created_at / updated_at | TEXT    | NOT NULL, DEFAULT                                            | 时间戳   |
 
 约束：`UNIQUE (class_id, course_id, term_id)`；加固 `ux_ta_no_term (class_id, course_id) WHERE term_id IS NULL`（term_id 可空时 SQLite UNIQUE 不约束 NULL，防「长期有效」重复）。
 索引：`idx_ta_class (class_id)`、`idx_ta_teacher (teacher_id)`
@@ -796,24 +801,25 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### class_sessions（课次实例）
 
-| 字段 | 类型 | 约束 | 说明 |
-| ---- | ---- | ---- | ---- |
-| id | INTEGER | PK, AUTOINCREMENT | 教学事件连接键 |
-| term_id | INTEGER | REFERENCES terms(id) ON DELETE SET NULL | 学期（Q2：加列，便于按学期筛选/生成） |
-| schedule_id | INTEGER | REFERENCES schedules(id) ON DELETE SET NULL | 来源模板（手工/补课可空） |
-| class_id | INTEGER | NOT NULL, REFERENCES classes(id) ON DELETE CASCADE | 班级 |
-| course_id | INTEGER | NOT NULL, REFERENCES courses(id) ON DELETE CASCADE | 课程 |
-| teacher_id | INTEGER | REFERENCES users(id) ON DELETE SET NULL | **本节课授课教师**（代课时仍为原教师） |
-| substitute_teacher_id | INTEGER | REFERENCES users(id) ON DELETE SET NULL | 代课人（Q5：可看可录，仅限他代的那一节） |
-| room_id | INTEGER | —（**可空**，本期不建资源表） | 教室 |
-| session_date | TEXT | NOT NULL | 具体日期 `YYYY-MM-DD` |
-| period | INTEGER | NOT NULL, CHECK 1–8 | 节次 |
-| start_time / end_time | TEXT | NOT NULL, DEFAULT '' | **生成时快照**（取自 period_times） |
-| status | TEXT | NOT NULL, DEFAULT '待上课', CHECK IN ('待上课','已上课','已停课','已挪课','已取消') | 状态 |
-| origin | TEXT | NOT NULL, DEFAULT '模板生成', CHECK IN ('模板生成','挪课','补课','手工') | 来源 |
-| related_session_id | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL | 挪课**双向关联**（原↔新，成对且不成环） |
-| topic | TEXT | NOT NULL, DEFAULT '' | 教学主题（**仅留位**，不做录入界面） |
-| created_at / updated_at | TEXT | NOT NULL, DEFAULT | 时间戳 |
+| 字段                    | 类型    | 约束                                                                                | 说明                                                                                               |
+| ----------------------- | ------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| id                      | INTEGER | PK, AUTOINCREMENT                                                                   | 教学事件连接键                                                                                     |
+| term_id                 | INTEGER | REFERENCES terms(id) ON DELETE SET NULL                                             | 学期（Q2：加列，便于按学期筛选/生成）                                                              |
+| schedule_id             | INTEGER | REFERENCES schedules(id) ON DELETE SET NULL                                         | 来源模板（手工/补课可空）                                                                          |
+| class_id                | INTEGER | NOT NULL, REFERENCES classes(id) ON DELETE CASCADE                                  | 班级                                                                                               |
+| course_id               | INTEGER | NOT NULL, REFERENCES courses(id) ON DELETE CASCADE                                  | 课程                                                                                               |
+| teacher_id              | INTEGER | REFERENCES users(id) ON DELETE SET NULL                                             | **本节课授课教师**（代课时仍为原教师）                                                             |
+| substitute_teacher_id   | INTEGER | REFERENCES users(id) ON DELETE SET NULL                                             | 代课人（Q5：可看可录，仅限他代的那一节）                                                           |
+| room_id                 | INTEGER | —（**可空**，本期不建资源表）                                                       | 教室                                                                                               |
+| session_date            | TEXT    | NOT NULL                                                                            | 具体日期 `YYYY-MM-DD`                                                                              |
+| period                  | INTEGER | NOT NULL, CHECK 1–8                                                                 | 节次                                                                                               |
+| start_time / end_time   | TEXT    | NOT NULL, DEFAULT ''                                                                | **生成时快照**（取自 period_times）                                                                |
+| status                  | TEXT    | NOT NULL, DEFAULT '待上课', CHECK IN ('待上课','已上课','已停课','已挪课','已取消') | 状态                                                                                               |
+| origin                  | TEXT    | NOT NULL, DEFAULT '模板生成', CHECK IN ('模板生成','挪课','补课','手工')            | 来源                                                                                               |
+| related_session_id      | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL                                    | 挪课**双向关联**（原↔新，成对且不成环）                                                           |
+| topic                   | TEXT    | NOT NULL, DEFAULT ''                                                                | 教学主题（**仅留位**，不做录入界面）                                                               |
+| hours                   | REAL    | NOT NULL, DEFAULT 1（v30 新增）                                                     | **一节课扣几个课时**。`> 0`，上限 20（应用层校验）。已产生课时流水的课次禁止修改（会造成账实不符） |
+| created_at / updated_at | TEXT    | NOT NULL, DEFAULT                                                                   | 时间戳                                                                                             |
 
 约束：`UNIQUE (class_id, session_date, period)`
 索引：`idx_cs_date`、`idx_cs_class_date`、`idx_cs_teacher_date`、`idx_cs_sub_teacher`、`idx_cs_term`
@@ -822,19 +828,19 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### session_migration_report（历史回填报告）
 
-| 字段 | 类型 | 约束 | 说明 |
-| ---- | ---- | ---- | ---- |
-| id | INTEGER | PK, AUTOINCREMENT | — |
-| data_type | TEXT | NOT NULL, CHECK IN ('考勤','课消','课评') | 数据类型 |
-| source_table | TEXT | NOT NULL | 来源表（attendances / hour_consumptions / class_evaluations） |
-| source_id | INTEGER | NOT NULL | 来源行 id |
-| class_id / course_id / student_id | INTEGER | 可空 | 定位信息 |
-| date | TEXT | NOT NULL, DEFAULT '' | 业务日期 |
-| matched_session_id | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL | 匹配到的课次（未匹配为空） |
-| reason | TEXT | NOT NULL, DEFAULT '' | 未匹配原因（当天无对应课次 / 同日同课程多个课次，无法唯一确定 / 课程为空） |
-| status | TEXT | NOT NULL, DEFAULT '未匹配', CHECK IN ('未匹配','已转待办') | 处理状态 |
-| todo_id | INTEGER | — | 转待办后回填 `todos.id`（Q6：仅指派 admin） |
-| created_at | TEXT | NOT NULL, DEFAULT | 创建时间 |
+| 字段                              | 类型    | 约束                                                       | 说明                                                                       |
+| --------------------------------- | ------- | ---------------------------------------------------------- | -------------------------------------------------------------------------- |
+| id                                | INTEGER | PK, AUTOINCREMENT                                          | —                                                                          |
+| data_type                         | TEXT    | NOT NULL, CHECK IN ('考勤','课消','课评')                  | 数据类型                                                                   |
+| source_table                      | TEXT    | NOT NULL                                                   | 来源表（attendances / hour_consumptions / class_evaluations）              |
+| source_id                         | INTEGER | NOT NULL                                                   | 来源行 id                                                                  |
+| class_id / course_id / student_id | INTEGER | 可空                                                       | 定位信息                                                                   |
+| date                              | TEXT    | NOT NULL, DEFAULT ''                                       | 业务日期                                                                   |
+| matched_session_id                | INTEGER | REFERENCES class_sessions(id) ON DELETE SET NULL           | 匹配到的课次（未匹配为空）                                                 |
+| reason                            | TEXT    | NOT NULL, DEFAULT ''                                       | 未匹配原因（当天无对应课次 / 同日同课程多个课次，无法唯一确定 / 课程为空） |
+| status                            | TEXT    | NOT NULL, DEFAULT '未匹配', CHECK IN ('未匹配','已转待办') | 处理状态                                                                   |
+| todo_id                           | INTEGER | —                                                          | 转待办后回填 `todos.id`（Q6：仅指派 admin）                                |
+| created_at                        | TEXT    | NOT NULL, DEFAULT                                          | 创建时间                                                                   |
 
 约束：`UNIQUE (source_table, source_id)` —— **回填幂等键**（可重跑不产生重复）。
 索引：`idx_smr_status (status)`、`idx_smr_class_date (class_id, date)`
@@ -843,22 +849,22 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### 回填与回填报告 API（v21 新增）
 
-| 端点 | 权限 | 说明 |
-| ---- | ---- | ---- |
-| `GET /api/sessions` | auth（scope） | 课次列表（term_id/class_id/teacher_id/status/date 范围 + 分页） |
-| `GET /api/sessions/week` | auth（scope） | 周视图（一次返回 days/periods/sessions；教师视角含 `substitute_teacher_id=me`） |
-| `GET /api/sessions/:id` | auth（scope，含该课次代课人） | 课次详情（名单 / 课评现状 / 课消流水 / 关联课次） |
-| `POST /api/sessions/preview` | admin | 预览生成（`to_create / already_exists / classes / templates / missing_period_times`） |
-| `POST /api/sessions/generate` | admin | 生成整学期课次（幂等 Q1）+ 同事务回填 |
-| `POST /api/sessions/backfill` | admin | 独立回填（可重跑、幂等） |
-| `GET /api/sessions/migration-report` | admin | 回填报告（列表 + summary：已匹配/未匹配/失败率） |
-| `POST /api/sessions/migration-report/:id/todo` | admin | 未匹配项一键转待办（Q6） |
-| `PUT /api/sessions/:id/stop` · `/:id/restore` | admin | 停课 / 恢复（Q9：停课阻止点名） |
-| `POST /api/sessions/:id/reschedule` | admin | 挪课（Q4：仅待上课；新建 + 双向关联） |
-| `POST /api/sessions/:id/substitute` | admin | 代课（原教师保留，另记代课人） |
-| `POST /api/sessions` | admin | 手工加课 / 补课（`origin = 手工/补课`） |
-| `GET/POST/PUT/DELETE /api/teaching-assignments` | GET auth（scope）/ 其余 admin | 任课关系 CRUD |
-| `GET /api/period-times` · `PUT /api/period-times` | auth / admin | 节次时间表 读取 / 批量保存（★ v24：只能改已存在节次；另见 POST 新增、DELETE 删除） |
+| 端点                                              | 权限                          | 说明                                                                                  |
+| ------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| `GET /api/sessions`                               | auth（scope）                 | 课次列表（term_id/class_id/teacher_id/status/date 范围 + 分页）                       |
+| `GET /api/sessions/week`                          | auth（scope）                 | 周视图（一次返回 days/periods/sessions；教师视角含 `substitute_teacher_id=me`）       |
+| `GET /api/sessions/:id`                           | auth（scope，含该课次代课人） | 课次详情（名单 / 课评现状 / 课消流水 / 关联课次）                                     |
+| `POST /api/sessions/preview`                      | admin                         | 预览生成（`to_create / already_exists / classes / templates / missing_period_times`） |
+| `POST /api/sessions/generate`                     | admin                         | 生成整学期课次（幂等 Q1）+ 同事务回填                                                 |
+| `POST /api/sessions/backfill`                     | admin                         | 独立回填（可重跑、幂等）                                                              |
+| `GET /api/sessions/migration-report`              | admin                         | 回填报告（列表 + summary：已匹配/未匹配/失败率）                                      |
+| `POST /api/sessions/migration-report/:id/todo`    | admin                         | 未匹配项一键转待办（Q6）                                                              |
+| `PUT /api/sessions/:id/stop` · `/:id/restore`     | admin                         | 停课 / 恢复（Q9：停课阻止点名）                                                       |
+| `POST /api/sessions/:id/reschedule`               | admin                         | 挪课（Q4：仅待上课；新建 + 双向关联）                                                 |
+| `POST /api/sessions/:id/substitute`               | admin                         | 代课（原教师保留，另记代课人）                                                        |
+| `POST /api/sessions`                              | admin                         | 手工加课 / 补课（`origin = 手工/补课`）                                               |
+| `GET/POST/PUT/DELETE /api/teaching-assignments`   | GET auth（scope）/ 其余 admin | 任课关系 CRUD                                                                         |
+| `GET /api/period-times` · `PUT /api/period-times` | auth / admin                  | 节次时间表 读取 / 批量保存（★ v24：只能改已存在节次；另见 POST 新增、DELETE 删除）    |
 
 > **权限**：课次 / 任课 / 节次时间的写端点均 **admin**；teacher 仅只读其「班主任或任课」范围。`finance` / `leads` 路由仍全程 `requireRole("admin")`，扩 `scope.js` 不外溢。
 > **历史数据**：迁移**只加列不落课次**，历史行 `session_id` 为空；回填后匹配不上的显式进报告（不静默置空）。
@@ -872,18 +878,18 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### rooms（教室）
 
-| 字段 | 类型 | 说明 |
-| ---- | ---- | ---- |
-| `id` | INTEGER PK | 自增主键 |
-| `name` | TEXT NOT NULL **UNIQUE** | 教室名称（唯一，防重复录入） |
-| `capacity` | INTEGER | 容量（人），可空 |
-| `remark` | TEXT NOT NULL DEFAULT '' | 备注 |
-| `created_at` / `updated_at` | TEXT NOT NULL | 本地时间；`updated_at` 由 UPDATE 语句维护 |
+| 字段                        | 类型                     | 说明                                      |
+| --------------------------- | ------------------------ | ----------------------------------------- |
+| `id`                        | INTEGER PK               | 自增主键                                  |
+| `name`                      | TEXT NOT NULL **UNIQUE** | 教室名称（唯一，防重复录入）              |
+| `capacity`                  | INTEGER                  | 容量（人），可空                          |
+| `remark`                    | TEXT NOT NULL DEFAULT '' | 备注                                      |
+| `created_at` / `updated_at` | TEXT NOT NULL            | 本地时间；`updated_at` 由 UPDATE 语句维护 |
 
 ### schedules.room_id（排课模板的教室，v23 加列）
 
-| 字段 | 类型 | 说明 |
-| ---- | ---- | ---- |
+| 字段      | 类型                                                | 说明                                   |
+| --------- | --------------------------------------------------- | -------------------------------------- |
 | `room_id` | INTEGER **REFERENCES rooms(id) ON DELETE SET NULL** | 排课模板上绑定的教室；生成的课次继承它 |
 
 > ★ **为什么带外键**：删除教室时 `utils/delete-guard.js` 能**自动发现**「被哪些排课模板引用」，无需手工列举。
@@ -893,14 +899,14 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### 教室 API（v23 新增）
 
-| 端点 | 权限 | 说明 |
-| ---- | ---- | ---- |
-| `GET /api/rooms` | auth | 教室列表（`keyword` 搜名称/备注；教室数量少，**不分页**） |
-| `POST /api/rooms` | admin | 新增（名称唯一；容量可空，给了必须是 ≥0 整数） |
-| `PUT /api/rooms/:id` | admin | 修改 |
-| `DELETE /api/rooms/:id` | admin | 删除；**被排课模板或课次引用时 400**，提示里给出引用条数 |
-| `PUT /api/sessions/:id/room` | admin / teacher | 改**本节**教室（`room_id = null` 表示清空）；teacher 限本人可访问课次（含代课） |
-| `GET /api/sessions/week?view=all` | **admin** | 全校视角：不按班级/教师过滤，一次返回全校区本周课次（teacher 调用 403） |
+| 端点                              | 权限            | 说明                                                                            |
+| --------------------------------- | --------------- | ------------------------------------------------------------------------------- |
+| `GET /api/rooms`                  | auth            | 教室列表（`keyword` 搜名称/备注；教室数量少，**不分页**）                       |
+| `POST /api/rooms`                 | admin           | 新增（名称唯一；容量可空，给了必须是 ≥0 整数）                                  |
+| `PUT /api/rooms/:id`              | admin           | 修改                                                                            |
+| `DELETE /api/rooms/:id`           | admin           | 删除；**被排课模板或课次引用时 400**，提示里给出引用条数                        |
+| `PUT /api/sessions/:id/room`      | admin / teacher | 改**本节**教室（`room_id = null` 表示清空）；teacher 限本人可访问课次（含代课） |
+| `GET /api/sessions/week?view=all` | **admin**       | 全校视角：不按班级/教师过滤，一次返回全校区本周课次（teacher 调用 403）         |
 
 > **生成继承**：`utils/session-engine.js` 展开排课模板时带出 `schedules.room_id` → 生成的课次自动带上教室。
 > **响应字段**：课次列表 / 详情 / 周视图统一新增 `room_name`（LEFT JOIN rooms），前端不再显示数字 id。
@@ -913,12 +919,12 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### 约束变化（period 列）
 
-| 表 | 原约束 | 现约束 |
-| ---- | ---- | ---- |
-| `period_times.period` | `BETWEEN 1 AND 8` | **`>= 1`**（只保底、不封顶） |
-| `class_sessions.period` | `BETWEEN 1 AND 8` | **`>= 1`** |
-| `schedules.period` | `BETWEEN 1 AND 8` | **`>= 1`** |
-| `schedule_adjustments.from_period / to_period` | `BETWEEN 1 AND 8` | **`>= 1`** |
+| 表                                             | 原约束            | 现约束                       |
+| ---------------------------------------------- | ----------------- | ---------------------------- |
+| `period_times.period`                          | `BETWEEN 1 AND 8` | **`>= 1`**（只保底、不封顶） |
+| `class_sessions.period`                        | `BETWEEN 1 AND 8` | **`>= 1`**                   |
+| `schedules.period`                             | `BETWEEN 1 AND 8` | **`>= 1`**                   |
+| `schedule_adjustments.from_period / to_period` | `BETWEEN 1 AND 8` | **`>= 1`**                   |
 
 - `day_of_week` 仍为 **1–7**（星期是固定的，未放开）
 - `UNIQUE(period)`（period_times）、`UNIQUE(class_id, course_id, day_of_week, period)`（schedules）、`UNIQUE(class_id, session_date, period)`（class_sessions）**全部保留**
@@ -929,11 +935,11 @@ students ──< makeup_classes（补课登记，完成时联动扣减课时包 
 
 ### 节次 API 变化
 
-| 端点 | 变化 |
-| ---- | ---- |
-| `GET /api/period-times` | 返回**实际配置**（几节就几行；不再补全到 8） |
-| `PUT /api/period-times` | ★ 只能修改**已存在**的节次（避免从这条路静默新增） |
-| `POST /api/period-times` | **新增**（v24 新增）：不传 `period` 则自动接在最后一节之后 |
+| 端点                               | 变化                                                                                         |
+| ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| `GET /api/period-times`            | 返回**实际配置**（几节就几行；不再补全到 8）                                                 |
+| `PUT /api/period-times`            | ★ 只能修改**已存在**的节次（避免从这条路静默新增）                                           |
+| `POST /api/period-times`           | **新增**（v24 新增）：不传 `period` 则自动接在最后一节之后                                   |
 | `DELETE /api/period-times/:period` | **删除**（v24 新增）：被课次或排课模板引用时 **400**，提示说明在哪用了；**删除后序号不前移** |
 
 > **范围口径**：`server/src/utils/period.js`（原先散在 4 处的常量已收口到这里）。

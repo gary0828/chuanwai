@@ -83,29 +83,22 @@ const onLogin = async (formEl: FormInstance | undefined) => {
           password: ruleForm.password
         })
         .then(res => {
-          if (res.success) {
-            // 获取后端路由
-            return initRouter().then(() => {
-              disabled.value = true;
-              router
-                .push(getTopMenu(true).path)
-                .then(() => {
-                  message("登录成功", { type: "success" });
-                })
-                .finally(() => (disabled.value = false));
-            });
-          } else {
-            message(res.message || "登录失败", { type: "error" });
-            refreshCaptcha();
-          }
+          if (!res?.success) return;
+          // 获取后端路由
+          return initRouter().then(() => {
+            disabled.value = true;
+            router
+              .push(getTopMenu(true).path)
+              .then(() => {
+                message("登录成功", { type: "success" });
+              })
+              .finally(() => (disabled.value = false));
+          });
         })
-        .catch(error => {
-          // 后端以 400/403 等非 2xx 返回登录失败，axios 走 reject：
-          // 展示后端具体原因（账号或密码错误 / 学生暂未开放登录等），避免静默无提示
-          message(
-            error?.response?.data?.message || error?.message || "登录失败",
-            { type: "error" }
-          );
+        .catch(() => {
+          // ★ 登录失败只在**这里刷新验证码**，不再自己弹错误：
+          //   非 2xx 与 200+success:false 都由响应拦截器统一提示后端 message，
+          //   页面再弹一次就是「同一次失败弹两遍」（P1-6 / P2-14）。
           refreshCaptcha();
         })
         .finally(() => (loading.value = false));

@@ -24,7 +24,9 @@ function dataVersion() {
 
 /** 解析 [?start=YYYY-MM-DD&end=YYYY-MM-DD] 时间范围 */
 function parsePeriod(query) {
-  const start = /^\d{4}-\d{2}-\d{2}$/.test(query.start || "") ? query.start : null;
+  const start = /^\d{4}-\d{2}-\d{2}$/.test(query.start || "")
+    ? query.start
+    : null;
   const end = /^\d{4}-\d{2}-\d{2}$/.test(query.end || "") ? query.end : null;
   return { start, end };
 }
@@ -139,12 +141,17 @@ function toCsv(rows, columns) {
         ? Object.keys(rows[0])
         : [];
   if (!headers.length) return "\uFEFF";
+  // ★ P2-16（2026-10-18 深度测试）：CSV 公式注入防护。
+  //   以 = + - @ 制表符 回车 开头的单元格，Excel/WPS 打开时会当公式执行（CSV injection）。
+  //   前置一个单引号把内容固定为文本；随后仍走原有引号转义（含逗号/引号/换行时加双引号）。
+  //   注意顺序：先加前缀再判断是否需要引号包裹，否则前缀会落在引号外。
   const escape = v => {
     if (v === null || v === undefined) return "";
-    const s = String(v);
+    let s = String(v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const lines = [headers.join(",")];
+  const lines = [headers.map(escape).join(",")];
   for (const r of rows) lines.push(headers.map(h => escape(r[h])).join(","));
   return "\uFEFF" + lines.join("\r\n");
 }
@@ -199,24 +206,37 @@ router.get("/metrics", (_req, res) => {
 // ---------------------------------------------------------------------------
 router.get("/overview", (req, res) => {
   const period = parsePeriod(req.query);
-  const range = { start: period.start, end: period.end };
 
-  // 学员 / 班级
+  // 学员 / 班级（★ 2026-10-19：当前人数口径排除软删档案，与名单类一致；历史金额/课消不受影响）
   const studentTotal = Number(
-    db.prepare("SELECT COUNT(*) AS n FROM students").get().n || 0
+    db
+      .prepare("SELECT COUNT(*) AS n FROM students WHERE deleted_at IS NULL")
+      .get().n || 0
   );
   const classTotal = Number(
     db.prepare("SELECT COUNT(*) AS n FROM classes").get().n || 0
   );
   const activeStudents = Number(
-    db.prepare("SELECT COUNT(DISTINCT student_id) AS n FROM orders WHERE status = '在读'").get().n || 0
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT o.student_id) AS n
+         FROM orders o JOIN students s ON s.id = o.student_id
+         WHERE o.status = '在读' AND s.deleted_at IS NULL`
+      )
+      .get().n || 0
   );
 
   // 考勤（受 period 过滤）
   const attWhere = [];
   const attParams = [];
-  if (period.start) { attWhere.push("date(date) >= date(?)"); attParams.push(period.start); }
-  if (period.end) { attWhere.push("date(date) <= date(?)"); attParams.push(period.end); }
+  if (period.start) {
+    attWhere.push("date(date) >= date(?)");
+    attParams.push(period.start);
+  }
+  if (period.end) {
+    attWhere.push("date(date) <= date(?)");
+    attParams.push(period.end);
+  }
   const attSql = `
     SELECT COUNT(*) AS total,
            SUM(CASE WHEN status IN ('正常','迟到','早退') THEN 1 ELSE 0 END) AS present,
@@ -236,31 +256,57 @@ router.get("/overview", (req, res) => {
   // 财务（受 period 过滤）
   const payWhere = [];
   const payParams = [];
-  if (period.start) { payWhere.push("date(pay_time) >= date(?)"); payParams.push(period.start); }
-  if (period.end) { payWhere.push("date(pay_time) <= date(?)"); payParams.push(period.end); }
+  if (period.start) {
+    payWhere.push("date(pay_time) >= date(?)");
+    payParams.push(period.start);
+  }
+  if (period.end) {
+    payWhere.push("date(pay_time) <= date(?)");
+    payParams.push(period.end);
+  }
   const income =
     Number(
-      db.prepare(
-        `SELECT COALESCE(SUM(amount),0) AS s FROM payments ${payWhere.length ? "WHERE " + payWhere.join(" AND ") : ""}`
-      ).get(...payParams).s || 0
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(amount),0) AS s FROM payments ${payWhere.length ? "WHERE " + payWhere.join(" AND ") : ""}`
+        )
+        .get(...payParams).s || 0
     ) || 0;
 
   const refWhere = ["status = '通过'"];
   const refParams = [];
-  if (period.start) { refWhere.push("date(COALESCE(approve_time, apply_time, created_at)) >= date(?)"); refParams.push(period.start); }
-  if (period.end) { refWhere.push("date(COALESCE(approve_time, apply_time, created_at)) <= date(?)"); refParams.push(period.end); }
+  if (period.start) {
+    refWhere.push(
+      "date(COALESCE(approve_time, apply_time, created_at)) >= date(?)"
+    );
+    refParams.push(period.start);
+  }
+  if (period.end) {
+    refWhere.push(
+      "date(COALESCE(approve_time, apply_time, created_at)) <= date(?)"
+    );
+    refParams.push(period.end);
+  }
   const refunded =
     Number(
-      db.prepare(
-        `SELECT COALESCE(SUM(amount),0) AS s FROM refunds WHERE ${refWhere.join(" AND ")}`
-      ).get(...refParams).s || 0
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(amount),0) AS s FROM refunds WHERE ${refWhere.join(" AND ")}`
+        )
+        .get(...refParams).s || 0
     ) || 0;
 
   // 招生线索（受 period 过滤，按创建时间）
   const leadWhere = [];
   const leadParams = [];
-  if (period.start) { leadWhere.push("date(created_at) >= date(?)"); leadParams.push(period.start); }
-  if (period.end) { leadWhere.push("date(created_at) <= date(?)"); leadParams.push(period.end); }
+  if (period.start) {
+    leadWhere.push("date(created_at) >= date(?)");
+    leadParams.push(period.start);
+  }
+  if (period.end) {
+    leadWhere.push("date(created_at) <= date(?)");
+    leadParams.push(period.end);
+  }
   const leadSql = `
     SELECT COUNT(*) AS total,
            SUM(CASE WHEN status = '已转化' THEN 1 ELSE 0 END) AS converted,
@@ -275,8 +321,14 @@ router.get("/overview", (req, res) => {
   // 课时消耗（受 period 过滤）
   const hcWhere = [];
   const hcParams = [];
-  if (period.start) { hcWhere.push("date(date) >= date(?)"); hcParams.push(period.start); }
-  if (period.end) { hcWhere.push("date(date) <= date(?)"); hcParams.push(period.end); }
+  if (period.start) {
+    hcWhere.push("date(date) >= date(?)");
+    hcParams.push(period.start);
+  }
+  if (period.end) {
+    hcWhere.push("date(date) <= date(?)");
+    hcParams.push(period.end);
+  }
   const hc = db
     .prepare(
       `SELECT COALESCE(SUM(CASE WHEN type='扣减' THEN hours ELSE -hours END),0) AS net
@@ -287,8 +339,14 @@ router.get("/overview", (req, res) => {
   // 成绩（受 period 过滤，按考试日期）
   const scWhere = [];
   const scParams = [];
-  if (period.start) { scWhere.push("date(e.exam_date) >= date(?)"); scParams.push(period.start); }
-  if (period.end) { scWhere.push("date(e.exam_date) <= date(?)"); scParams.push(period.end); }
+  if (period.start) {
+    scWhere.push("date(e.exam_date) >= date(?)");
+    scParams.push(period.start);
+  }
+  if (period.end) {
+    scWhere.push("date(e.exam_date) <= date(?)");
+    scParams.push(period.end);
+  }
   const sc = db
     .prepare(
       `SELECT COUNT(*) AS total, AVG(sc.score) AS avg_score,
@@ -315,6 +373,9 @@ router.get("/overview", (req, res) => {
     revenue_income: Number(income.toFixed(2)),
     revenue_refunded: Number(refunded.toFixed(2)),
     revenue_total: Number((income - refunded).toFixed(2)),
+    // ★ 2026-10-18：口径自解释别名（本模块一律是"实收 − 退费"的收付实现制口径，
+    //   与 finance 的 revenue_accrual 不是同一个数，命名必须拉开）
+    revenue_cash_net: Number((income - refunded).toFixed(2)),
     lead_total: leadTotal,
     lead_converted: leadConverted,
     lead_lost: Number(lead.lost || 0),
@@ -385,8 +446,14 @@ const DATASETS = {
     build(period) {
       const where = [];
       const params = [];
-      if (period.start) { where.push("date(a.date) >= date(?)"); params.push(period.start); }
-      if (period.end) { where.push("date(a.date) <= date(?)"); params.push(period.end); }
+      if (period.start) {
+        where.push("date(a.date) >= date(?)");
+        params.push(period.start);
+      }
+      if (period.end) {
+        where.push("date(a.date) <= date(?)");
+        params.push(period.end);
+      }
       const sql = `
         SELECT a.id, a.date, s.student_no, s.name AS student_name,
                cl.name AS class_name, c.name AS course_name,
@@ -417,8 +484,14 @@ const DATASETS = {
       const rows = [];
       const payWhere = [];
       const payParams = [];
-      if (period.start) { payWhere.push("date(p.pay_time) >= date(?)"); payParams.push(period.start); }
-      if (period.end) { payWhere.push("date(p.pay_time) <= date(?)"); payParams.push(period.end); }
+      if (period.start) {
+        payWhere.push("date(p.pay_time) >= date(?)");
+        payParams.push(period.start);
+      }
+      if (period.end) {
+        payWhere.push("date(p.pay_time) <= date(?)");
+        payParams.push(period.end);
+      }
       const pays = db
         .prepare(
           `SELECT p.pay_time AS time, '缴费' AS type, s.student_no, s.name AS student_name,
@@ -435,8 +508,18 @@ const DATASETS = {
 
       const refWhere = [];
       const refParams = [];
-      if (period.start) { refWhere.push("date(COALESCE(r.approve_time, r.apply_time, r.created_at)) >= date(?)"); refParams.push(period.start); }
-      if (period.end) { refWhere.push("date(COALESCE(r.approve_time, r.apply_time, r.created_at)) <= date(?)"); refParams.push(period.end); }
+      if (period.start) {
+        refWhere.push(
+          "date(COALESCE(r.approve_time, r.apply_time, r.created_at)) >= date(?)"
+        );
+        refParams.push(period.start);
+      }
+      if (period.end) {
+        refWhere.push(
+          "date(COALESCE(r.approve_time, r.apply_time, r.created_at)) <= date(?)"
+        );
+        refParams.push(period.end);
+      }
       const refs = db
         .prepare(
           `SELECT COALESCE(r.approve_time, r.apply_time, r.created_at) AS time,
@@ -452,7 +535,9 @@ const DATASETS = {
         .all(...refParams);
       rows.push(...refs);
       return rows
-        .sort((x, y) => String(y.time || "").localeCompare(String(x.time || "")))
+        .sort((x, y) =>
+          String(y.time || "").localeCompare(String(x.time || ""))
+        )
         .map(r => ({ ...r, amount: Number(r.amount || 0) }));
     }
   },
@@ -475,8 +560,14 @@ const DATASETS = {
     build(period) {
       const where = [];
       const params = [];
-      if (period.start) { where.push("date(l.created_at) >= date(?)"); params.push(period.start); }
-      if (period.end) { where.push("date(l.created_at) <= date(?)"); params.push(period.end); }
+      if (period.start) {
+        where.push("date(l.created_at) >= date(?)");
+        params.push(period.start);
+      }
+      if (period.end) {
+        where.push("date(l.created_at) <= date(?)");
+        params.push(period.end);
+      }
       const sql = `
         SELECT l.id, l.name, l.phone, c.name AS intent_course, l.source, l.status,
                u.name AS follow_user, s.student_no AS converted_student_no,
@@ -488,17 +579,20 @@ const DATASETS = {
         ${where.length ? "WHERE " + where.join(" AND ") : ""}
         ORDER BY l.created_at DESC LIMIT 20000
       `;
-      return db.prepare(sql).all(...params).map(r => {
-        let followCount = 0;
-        try {
-          const arr = JSON.parse(r.follow_records || "[]");
-          followCount = Array.isArray(arr) ? arr.length : 0;
-        } catch {
-          followCount = 0;
-        }
-        const { follow_records: _raw, ...rest } = r;
-        return { ...rest, follow_count: followCount };
-      });
+      return db
+        .prepare(sql)
+        .all(...params)
+        .map(r => {
+          let followCount = 0;
+          try {
+            const arr = JSON.parse(r.follow_records || "[]");
+            followCount = Array.isArray(arr) ? arr.length : 0;
+          } catch {
+            followCount = 0;
+          }
+          const { follow_records: _raw, ...rest } = r;
+          return { ...rest, follow_count: followCount };
+        });
     }
   },
   scores: {
@@ -519,8 +613,14 @@ const DATASETS = {
     build(period) {
       const where = [];
       const params = [];
-      if (period.start) { where.push("date(e.exam_date) >= date(?)"); params.push(period.start); }
-      if (period.end) { where.push("date(e.exam_date) <= date(?)"); params.push(period.end); }
+      if (period.start) {
+        where.push("date(e.exam_date) >= date(?)");
+        params.push(period.start);
+      }
+      if (period.end) {
+        where.push("date(e.exam_date) <= date(?)");
+        params.push(period.end);
+      }
       const sql = `
         SELECT e.name AS exam_name, e.exam_date, e.type AS exam_type, e.full_score,
                cl.name AS class_name, c.name AS course_name,
@@ -536,7 +636,10 @@ const DATASETS = {
       return db
         .prepare(sql)
         .all(...params)
-        .map(r => ({ ...r, level: calcLevel(Number(r.score || 0), Number(r.full_score || 0)) }));
+        .map(r => ({
+          ...r,
+          level: calcLevel(Number(r.score || 0), Number(r.full_score || 0))
+        }));
     }
   }
 };
@@ -560,7 +663,11 @@ router.get("/:dataset/export", (req, res) => {
   respond(
     req,
     res,
-    envelope({ records, period, extraMeta: { dataset: req.params.dataset, dataset_label: ds.label } }),
+    envelope({
+      records,
+      period,
+      extraMeta: { dataset: req.params.dataset, dataset_label: ds.label }
+    }),
     `analytics-${req.params.dataset}`,
     ds.columns
   );

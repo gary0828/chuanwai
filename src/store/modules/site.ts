@@ -60,6 +60,21 @@ export const useSiteStore = defineStore("site", {
     hasBeian: state =>
       Boolean(state.info["site.icp"] || state.info["site.policeNo"]),
 
+    /** ICP 备案号（页脚） */
+    icp: state => state.info["site.icp"] || "",
+
+    /** 公安备案号（页脚） */
+    policeNo: state => state.info["site.policeNo"] || "",
+
+    /** 联系电话（页脚；用户在设置页「页脚信息」里填） */
+    contact: state => state.info["site.contact"] || "",
+
+    /** 机构地址（页脚） */
+    address: state => state.info["site.address"] || "",
+
+    /** 版权行补充说明（页脚，跟在机构名后面） */
+    copyrightExtra: state => state.info["site.copyrightExtra"] || "",
+
     /** 机构全称：优先 site.orgName，回退简称 */
     orgName: state =>
       state.info["site.orgName"] || state.info["site.name"] || "",

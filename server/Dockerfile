@@ -4,6 +4,16 @@ FROM node:24-alpine
 
 WORKDIR /app
 
+# 时区（P1-10）：Alpine 基础镜像默认 UTC 且不带 tzdata，会导致
+#   1) 日志时间比校区早/晚 8 小时；
+#   2) utils/backup.js 按 `new Date()` 本地时间生成备份文件名（日期错位）。
+# 安装 tzdata 并把系统时区固定为 Asia/Shanghai；TZ 供 Node 解析，
+# /etc/localtime 让 `date` / `ls` 等容器内命令的语义与 Node 一致。
+RUN apk add --no-cache tzdata \
+ && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+ && echo "Asia/Shanghai" > /etc/timezone
+ENV TZ=Asia/Shanghai
+
 # 国内网络：使用 npmmirror 镜像源
 RUN npm config set registry https://registry.npmmirror.com
 

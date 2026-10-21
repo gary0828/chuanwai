@@ -25,7 +25,11 @@ const express = require("express");
 const db = require("../db");
 const { auth } = require("../middleware/auth");
 const { requireRole } = require("../middleware/auth");
-const { canManageClass, canManageStudent, canAccessSession } = require("../utils/scope");
+const {
+  canManageClass,
+  canManageStudent,
+  canAccessSession
+} = require("../utils/scope");
 const timeline = require("../utils/timeline");
 
 const router = express.Router();
@@ -37,7 +41,9 @@ function isDate(s) {
 
 /** 取学员所属班级（用于权限校验与时间轴归档） */
 function studentClass(studentId) {
-  return db.prepare("SELECT class_id FROM students WHERE id = ?").get(Number(studentId));
+  return db
+    .prepare("SELECT class_id FROM students WHERE id = ?")
+    .get(Number(studentId));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -56,7 +62,9 @@ router.get("/eval-form", auth, (req, res) => {
     return res.status(400).json({ success: false, message: "class_id 不合法" });
   }
   if (!isDate(date)) {
-    return res.status(400).json({ success: false, message: "date 需为 YYYY-MM-DD" });
+    return res
+      .status(400)
+      .json({ success: false, message: "date 需为 YYYY-MM-DD" });
   }
   if (!canManageClass(req, classId)) {
     return res.status(403).json({ success: false, message: "无权操作该班级" });
@@ -65,7 +73,8 @@ router.get("/eval-form", auth, (req, res) => {
   const students = db
     .prepare(
       `SELECT id, student_no, name FROM students
-       WHERE class_id = ? AND status = '在读' ORDER BY student_no`
+       WHERE class_id = ? AND status = '在读' AND deleted_at IS NULL
+       ORDER BY student_no`
     )
     .all(classId);
 
@@ -151,33 +160,46 @@ router.get("/eval-form", auth, (req, res) => {
  * student_timeline 是「历史事实」（不可改）。
  */
 router.post("/class-eval", auth, (req, res, next) => {
-  const { class_id, course_id, eval_date, items, session_no, session_id } = req.body || {};
+  const { class_id, course_id, eval_date, items, session_no, session_id } =
+    req.body || {};
   const classId = Number(class_id);
   if (!Number.isInteger(classId) || classId <= 0) {
     return res.status(400).json({ success: false, message: "class_id 不合法" });
   }
   if (!isDate(eval_date)) {
-    return res.status(400).json({ success: false, message: "eval_date 需为 YYYY-MM-DD" });
+    return res
+      .status(400)
+      .json({ success: false, message: "eval_date 需为 YYYY-MM-DD" });
   }
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ success: false, message: "items 不能为空" });
   }
   // 课次分支（G1-P0-4）：可选。传入时按时课次 upsert，并允许该课次代课人录入（Q5）
-  const sessionId = session_id != null && session_id !== "" ? Number(session_id) : null;
+  const sessionId =
+    session_id != null && session_id !== "" ? Number(session_id) : null;
   let sessionRow = null;
   if (sessionId != null) {
-    sessionRow = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(sessionId);
+    sessionRow = db
+      .prepare("SELECT * FROM class_sessions WHERE id = ?")
+      .get(sessionId);
     if (!sessionRow) {
       return res.status(400).json({ success: false, message: "课次不存在" });
     }
     if (Number(sessionRow.class_id) !== classId) {
-      return res.status(400).json({ success: false, message: "课次不属于该班级" });
+      return res
+        .status(400)
+        .json({ success: false, message: "课次不属于该班级" });
     }
     if (sessionRow.status === "已停课") {
-      return res.status(400).json({ success: false, message: "该课次已停课，不能录课评" });
+      return res
+        .status(400)
+        .json({ success: false, message: "该课次已停课，不能录课评" });
     }
   }
-  if (!canManageClass(req, classId) && !(sessionId != null && canAccessSession(req, sessionId))) {
+  if (
+    !canManageClass(req, classId) &&
+    !(sessionId != null && canAccessSession(req, sessionId))
+  ) {
     return res.status(403).json({ success: false, message: "无权操作该班级" });
   }
 
@@ -190,7 +212,9 @@ router.post("/class-eval", auth, (req, res, next) => {
   let sessionNo = Number(session_no) || 0;
   if (sessionRow) {
     sessionNo = db
-      .prepare("SELECT COUNT(*) AS c FROM class_sessions WHERE class_id = ? AND session_date <= ?")
+      .prepare(
+        "SELECT COUNT(*) AS c FROM class_sessions WHERE class_id = ? AND session_date <= ?"
+      )
       .get(classId, sessionRow.session_date).c;
   }
 
@@ -243,17 +267,41 @@ router.post("/class-eval", auth, (req, res, next) => {
 
       if (sessionRow) {
         if (findEvalBySession.get(sessionId, sid)) {
-          updateEvalSession.run(focus, participation, mastery, note, sessionId, sid);
+          updateEvalSession.run(
+            focus,
+            participation,
+            mastery,
+            note,
+            sessionId,
+            sid
+          );
         } else {
           insertEvalSession.run(
-            classId, course_id || null, sid, eval_date, sessionId, sessionNo,
-            focus, participation, mastery, note, req.user.id
+            classId,
+            course_id || null,
+            sid,
+            eval_date,
+            sessionId,
+            sessionNo,
+            focus,
+            participation,
+            mastery,
+            note,
+            req.user.id
           );
         }
       } else {
         legacyUpsert.run(
-          classId, course_id || null, sid, eval_date, sessionNo,
-          focus, participation, mastery, note, req.user.id
+          classId,
+          course_id || null,
+          sid,
+          eval_date,
+          sessionNo,
+          focus,
+          participation,
+          mastery,
+          note,
+          req.user.id
         );
       }
       saved++;
@@ -278,7 +326,11 @@ router.post("/class-eval", auth, (req, res, next) => {
       data: { saved, appended, eval_date, class_id: classId }
     });
   } catch (e) {
-    try { db.exec("ROLLBACK"); } catch { /* ignore */ }
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
     next(e);
   }
 });
@@ -290,13 +342,23 @@ router.post("/class-eval", auth, (req, res, next) => {
  * - 个别学生单独调：overrides: [{student_id, kp_id, level}]
  */
 router.post("/kp-assessment", auth, (req, res, next) => {
-  const { class_id, course_id, assessed_at, kps, student_ids, overrides, session_no } = req.body || {};
+  const {
+    class_id,
+    course_id,
+    assessed_at,
+    kps,
+    student_ids,
+    overrides,
+    session_no
+  } = req.body || {};
   const classId = Number(class_id);
   if (!Number.isInteger(classId) || classId <= 0) {
     return res.status(400).json({ success: false, message: "class_id 不合法" });
   }
   if (!isDate(assessed_at)) {
-    return res.status(400).json({ success: false, message: "assessed_at 需为 YYYY-MM-DD" });
+    return res
+      .status(400)
+      .json({ success: false, message: "assessed_at 需为 YYYY-MM-DD" });
   }
   if (!Array.isArray(kps) || kps.length === 0) {
     return res.status(400).json({ success: false, message: "kps 不能为空" });
@@ -308,12 +370,15 @@ router.post("/kp-assessment", auth, (req, res, next) => {
   const LEVELS = new Set(["未掌握", "部分掌握", "已掌握"]);
 
   // 目标学生：显式传入或默认全班在读
-  let targets = Array.isArray(student_ids) && student_ids.length
-    ? student_ids.map(Number).filter(n => Number.isInteger(n) && n > 0)
-    : db
-        .prepare("SELECT id FROM students WHERE class_id = ? AND status = '在读'")
-        .all(classId)
-        .map(r => Number(r.id));
+  let targets =
+    Array.isArray(student_ids) && student_ids.length
+      ? student_ids.map(Number).filter(n => Number.isInteger(n) && n > 0)
+      : db
+          .prepare(
+            "SELECT id FROM students WHERE class_id = ? AND status = '在读' AND deleted_at IS NULL"
+          )
+          .all(classId)
+          .map(r => Number(r.id));
 
   // 越权保护：剔除不属于该班的学生
   const validIds = new Set(
@@ -324,7 +389,9 @@ router.post("/kp-assessment", auth, (req, res, next) => {
   );
   targets = targets.filter(id => validIds.has(id));
 
-  const kpIds = kps.map(k => Number(k.kp_id)).filter(n => Number.isInteger(n) && n > 0);
+  const kpIds = kps
+    .map(k => Number(k.kp_id))
+    .filter(n => Number.isInteger(n) && n > 0);
   const kpInfo = new Map(
     db
       .prepare(
@@ -372,8 +439,16 @@ router.post("/kp-assessment", auth, (req, res, next) => {
           )
           .get(sid, kid);
 
-        ins.run(sid, kid, classId, course_id || null, assessed_at,
-                Number(session_no) || 0, level, req.user.id);
+        ins.run(
+          sid,
+          kid,
+          classId,
+          course_id || null,
+          assessed_at,
+          Number(session_no) || 0,
+          level,
+          req.user.id
+        );
         count++;
 
         timeline.appendEvent({
@@ -396,9 +471,16 @@ router.post("/kp-assessment", auth, (req, res, next) => {
     }
 
     db.exec("COMMIT");
-    res.json({ success: true, data: { students: targets.length, records: count } });
+    res.json({
+      success: true,
+      data: { students: targets.length, records: count }
+    });
   } catch (e) {
-    try { db.exec("ROLLBACK"); } catch { /* ignore */ }
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
     next(e);
   }
 });
@@ -491,7 +573,9 @@ router.get("/knowledge-points", auth, (req, res) => {
 /** 读成长阈值 */
 router.get("/thresholds", auth, (_req, res) => {
   const rows = db
-    .prepare("SELECT key, value, label, description FROM growth_thresholds ORDER BY key")
+    .prepare(
+      "SELECT key, value, label, description FROM growth_thresholds ORDER BY key"
+    )
     .all();
   res.json({
     success: true,
@@ -517,7 +601,9 @@ router.put("/thresholds", auth, requireRole("admin"), (req, res) => {
   for (const it of items) {
     if (typeof it.key !== "string" || !it.key) continue;
     if (!Number.isFinite(Number(it.value))) continue;
-    const exists = db.prepare("SELECT 1 FROM growth_thresholds WHERE key = ?").get(it.key);
+    const exists = db
+      .prepare("SELECT 1 FROM growth_thresholds WHERE key = ?")
+      .get(it.key);
     if (!exists) continue;
     upd.run(String(it.value), req.user.id, it.key);
     n++;

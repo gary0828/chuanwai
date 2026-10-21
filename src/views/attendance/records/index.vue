@@ -167,7 +167,10 @@ onMounted(() => {
 
 <template>
   <div class="app-page">
-    <AppPageHeader title="考勤记录" description="查询与订正历史考勤；缺勤不扣课时" />
+    <AppPageHeader
+      title="考勤记录"
+      description="查询与订正历史考勤；缺勤不扣课时"
+    />
     <el-card shadow="never">
       <!-- 筛选 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

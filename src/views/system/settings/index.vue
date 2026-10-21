@@ -119,7 +119,10 @@ function makeUploader(kind: "logo" | "favicon") {
     if (kind === "logo") logoTempUrl.value = localUrl;
     else faviconTempUrl.value = localUrl;
 
-    uploadSiteImage(options.file as unknown as File, kind)
+    // ★ 必须 return 出去：`el-upload` 的 http-request 契约要求返回
+    //   Promise，否则 TS 报「void 不能赋给 UploadRequestHandler」，
+    //   组件也感知不到上传结束（loading / 内部状态不回收）。
+    return uploadSiteImage(options.file as unknown as File, kind)
       .then((res: any) => {
         if (res?.success) {
           const url = res.data.url;
@@ -146,7 +149,10 @@ function makeUploader(kind: "logo" | "favicon") {
           ElMessage.error("图片过大，服务器拒绝接收（上限 2MB），请压缩后重试");
         } else if (status === 401 || status === 403) {
           ElMessage.error("登录状态已失效或无权限，请重新登录后再试");
-        } else if (err?.code === "ECONNABORTED" || err?.message?.includes("timeout")) {
+        } else if (
+          err?.code === "ECONNABORTED" ||
+          err?.message?.includes("timeout")
+        ) {
           ElMessage.error("上传超时，请检查网络后重试");
         } else {
           ElMessage.error(err?.response?.data?.message || "上传失败，请重试");
@@ -438,31 +444,31 @@ onMounted(() => {
 
 .card-head {
   display: flex;
-  align-items: baseline;
   gap: 10px;
+  align-items: baseline;
 }
 
 .card-head__hint {
-  color: var(--ink-400);
   font-size: 12px;
+  color: var(--ink-400);
 }
 
 .divider-text {
-  color: var(--ink-500);
   font-size: 13px;
+  color: var(--ink-500);
 }
 
 .form-tip {
   margin-left: 8px;
-  color: var(--ink-400);
   font-size: 12px;
   line-height: 1.5;
+  color: var(--ink-400);
 }
 
 .upload-row {
   display: flex;
-  align-items: center;
   gap: 16px;
+  align-items: center;
 }
 
 .upload-preview {
@@ -490,13 +496,13 @@ onMounted(() => {
 }
 
 .upload-preview__empty {
-  color: var(--ink-400);
   font-size: 12px;
+  color: var(--ink-400);
 }
 
 .upload-actions {
   display: flex;
-  align-items: center;
   gap: 8px;
+  align-items: center;
 }
 </style>

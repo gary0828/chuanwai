@@ -4,6 +4,8 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const db = require("../db");
 const { auth, requireRole, revokeTokens } = require("../middleware/auth");
+const { scanReferences, describeImpacts } = require("../utils/delete-guard");
+const { clampPagination } = require("../utils/pagination");
 
 const router = express.Router();
 
@@ -11,10 +13,9 @@ const VALID_ROLES = ["admin", "teacher"];
 
 /** 员工列表（分页 + 角色/关键字筛选；仅 admin） */
 router.get("/", auth, requireRole("admin"), (req, res) => {
-  const { role = "", keyword = "", page = 1, pageSize = 10 } = req.query;
-  const p = Number(page) || 1;
-  const ps = Number(pageSize) || 10;
-  const offset = (p - 1) * ps;
+  const { role = "", keyword = "" } = req.query;
+  // ★ 2026-10-19（P2-4）：分页钳制，避免 pageSize=1e999 → datatype mismatch 500 / -1 → 全表
+  const { pageSize: ps, offset } = clampPagination(req.query);
 
   let where = "WHERE 1=1";
   const params = [];
@@ -191,6 +192,20 @@ router.delete("/:id", auth, requireRole("admin"), (req, res) => {
     return res
       .status(400)
       .json({ success: false, message: "该用户发布过公告，无法删除" });
+  }
+  // ★ 2026-10-18：兜底从「一句笼统的关联数据」改为**自动发现具体是哪张表**。
+  //   背景：users 被 27 处外键引用，原来只查 classes / audit_logs / notices 三张，
+  //   其余（如 feedbacks.user_id 是 NO ACTION）会落到 catch 里，
+  //   用户只看到"该用户存在关联数据，无法删除"，不知道该去清理什么。
+  //   SET NULL / CASCADE 不阻止删除（前者静默置空、后者连带删除），故只拦这两类以外的。
+  const blocking = scanReferences("users", id).filter(
+    i => !["SET NULL", "CASCADE"].includes(i.action)
+  );
+  if (blocking.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: `该用户仍被以下数据引用，无法删除：${describeImpacts(blocking)}`
+    });
   }
   try {
     db.prepare("DELETE FROM users WHERE id = ?").run(id);

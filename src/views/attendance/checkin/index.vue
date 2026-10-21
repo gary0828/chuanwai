@@ -126,7 +126,10 @@ onMounted(loadOptions);
 
 <template>
   <div class="app-page">
-    <AppPageHeader title="考勤登记" description="按当日课表点名，记录正常、迟到、早退、缺勤与请假" />
+    <AppPageHeader
+      title="考勤登记"
+      description="按当日课表点名，记录正常、迟到、早退、缺勤与请假"
+    />
     <el-card shadow="never">
       <!-- 选择条件 -->
       <div class="mb-4 flex flex-wrap items-center gap-2">

@@ -45,12 +45,17 @@ export const updateStudent = (id: number, data: object) => {
   return http.request("put", `/api/students/${id}`, { data });
 };
 
-/** 删除学生 */
+/** 删除学生（v30 起为**软删**：档案移入「已删除」，历史数据全部保留） */
 export const deleteStudent = (id: number) => {
   return http.request("delete", `/api/students/${id}`);
 };
 
-/** ★ 2026-09-26 新增：删除前预览影响（将连带清理多少考勤/通知/成绩等），供确认框展示代价 */
+/** 恢复已删除的学员（v30，仅 admin） */
+export const restoreStudent = (id: number) => {
+  return http.request("post", `/api/students/${id}/restore`);
+};
+
+/** ★ 2026-09-26 新增：删除前预览影响（v30 起返回「关联数据条数」，这些数据**不会被删**） */
 export const getStudentDeleteImpact = (id: number) => {
   return http.request("get", `/api/students/${id}/delete-impact`);
 };

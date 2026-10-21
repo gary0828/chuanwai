@@ -7,22 +7,29 @@
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
-const { canManageStudent } = require("../utils/scope");
+const { canManageStudent, isStudentDeleted } = require("../utils/scope");
 const { audit } = require("../utils/audit");
 const { parseDate, parseDateTime } = require("../utils/validate");
 const { scanReferences, describeImpacts } = require("../utils/delete-guard");
-const { SOURCE, reconcile, listGaps, computeGap, findGrantOrder } = require("../utils/hours-reconcile");
+const {
+  SOURCE,
+  reconcile,
+  listGaps,
+  computeGap,
+  findGrantOrder
+} = require("../utils/hours-reconcile");
+const { clampPagination } = require("../utils/pagination");
 
 const { paidNetSql, REFUND_TIME_SQL } = require("../utils/money");
 
 const router = express.Router();
 
-
 // ── 金额 / 课时边界校验（上线门禁 B4）────────────────────────────────
 // 此前金额仅做 Number() 转换、课时完全无校验，可写入负数或超大值污染财务。
 const MAX_AMOUNT = 10000000; // 单笔金额上限 1000 万元
 const MAX_HOURS = 100000; // 单订单课时上限
-const toNullableNumber = v => (v === undefined || v === null || v === "") ? null : v;
+const toNullableNumber = v =>
+  v === undefined || v === null || v === "" ? null : v;
 
 /**
  * 校验金额
@@ -98,29 +105,52 @@ function reconcileQuietly(studentId, courseIds, operatorId) {
       } catch {
         /* 回滚失败时忽略：下一步的连接状态检查会兜住 */
       }
-      console.error(`[hours-reconcile] 学员#${studentId} 课程#${cid} 对账失败：${e.message}`);
+      console.error(
+        `[hours-reconcile] 学员#${studentId} 课程#${cid} 对账失败：${e.message}`
+      );
     }
   }
 }
 
 // ==================== 报班订单 ====================
 
-/** 订单列表（分页 + 筛选：状态/关键字/班级/低课时） */
+/** 订单列表（分页 + 筛选：状态/关键字/班级/低课时）
+ *  P2-4（2026-10-18）：分页参数统一走 utils/pagination 钳制，避免 page=1e999 → 500、
+ *  pageSize=-1 → SQLite `LIMIT -1` 全表返回。 */
 router.get("/orders", auth, requireRole("admin"), (req, res) => {
-  const { status, keyword, class_id, low_hours, page = 1, pageSize = 10 } = req.query;
+  const { status, keyword, class_id, low_hours } = req.query;
+  const { pageSize, offset } = clampPagination(req.query);
   const conds = [];
   const params = [];
-  if (status) { conds.push("o.status = ?"); params.push(status); }
-  if (keyword) { conds.push("(s.name LIKE ? OR s.student_no LIKE ?)"); params.push(`%${keyword}%`, `%${keyword}%`); }
-  if (class_id) { conds.push("o.class_id = ?"); params.push(Number(class_id)); }
-  if (low_hours) { conds.push("o.status = '在读' AND o.total_hours > 0 AND o.remain_hours <= ?"); params.push(Number(low_hours)); }
+  if (status) {
+    conds.push("o.status = ?");
+    params.push(status);
+  }
+  if (keyword) {
+    conds.push("(s.name LIKE ? OR s.student_no LIKE ?)");
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+  if (class_id) {
+    conds.push("o.class_id = ?");
+    params.push(Number(class_id));
+  }
+  if (low_hours) {
+    conds.push(
+      "o.status = '在读' AND o.total_hours > 0 AND o.remain_hours <= ?"
+    );
+    params.push(Number(low_hours));
+  }
   const where = conds.length ? conds.join(" AND ") : "1=1";
   const allParams = params;
 
   const total = db
-    .prepare(`SELECT COUNT(*) AS c FROM orders o JOIN students s ON s.id = o.student_id WHERE ${where}`)
+    .prepare(
+      `SELECT COUNT(*) AS c FROM orders o JOIN students s ON s.id = o.student_id WHERE ${where}`
+    )
     .get(...allParams).c;
-  const list = db.prepare(`
+  const list = db
+    .prepare(
+      `
     SELECT o.id, o.student_id, s.student_no, s.name AS student_name, s.class_id,
            c.name AS class_name, cu.name AS course_name,
            o.enroll_date, o.amount, o.total_hours, o.remain_hours,
@@ -135,7 +165,9 @@ router.get("/orders", auth, requireRole("admin"), (req, res) => {
     WHERE ${where}
     ORDER BY o.id DESC
     LIMIT ? OFFSET ?
-  `).all(...allParams, Number(pageSize), (Number(page) - 1) * Number(pageSize));
+  `
+    )
+    .all(...allParams, pageSize, offset);
 
   res.json({ success: true, data: { list, total } });
 });
@@ -143,7 +175,9 @@ router.get("/orders", auth, requireRole("admin"), (req, res) => {
 /** 订单详情（含缴费明细与退费记录） */
 router.get("/orders/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT o.*, s.student_no, s.name AS student_name, s.phone,
            c.name AS class_name, cu.name AS course_name, u.name AS enroll_user_name
     FROM orders o
@@ -152,30 +186,50 @@ router.get("/orders/:id", auth, requireRole("admin"), (req, res) => {
     LEFT JOIN courses cu ON cu.id = o.course_id
     LEFT JOIN users u ON u.id = o.enroll_user_id
     WHERE o.id = ?
-  `).get(id);
-  if (!row) return res.status(404).json({ success: false, message: "订单不存在" });
+  `
+    )
+    .get(id);
+  if (!row)
+    return res.status(404).json({ success: false, message: "订单不存在" });
   if (!canManageStudent(req, row.student_id)) {
     return res.status(403).json({ success: false, message: "无权查看该订单" });
   }
-  const payments = db.prepare(`
+  const payments = db
+    .prepare(
+      `
     SELECT p.*, u.name AS pay_user_name
     FROM payments p LEFT JOIN users u ON u.id = p.pay_user_id
     WHERE p.order_id = ? ORDER BY p.pay_time DESC
-  `).all(id);
-  const refunds = db.prepare(`
+  `
+    )
+    .all(id);
+  const refunds = db
+    .prepare(
+      `
     SELECT r.*, u1.name AS apply_user_name, u2.name AS approved_name
     FROM refunds r
     LEFT JOIN users u1 ON u1.id = r.apply_user_id
     LEFT JOIN users u2 ON u2.id = r.approved_by
     WHERE r.order_id = ? ORDER BY r.apply_time DESC
-  `).all(id);
+  `
+    )
+    .all(id);
   res.json({ success: true, data: { ...row, payments, refunds } });
 });
 
 /** 新增订单（学员报班） */
 router.post("/orders", auth, requireRole("admin"), (req, res) => {
-  const { student_id, class_id, course_id, enroll_date, amount, total_hours, remark } = req.body;
-  if (!student_id) return res.status(400).json({ success: false, message: "请选择学员" });
+  const {
+    student_id,
+    class_id,
+    course_id,
+    enroll_date,
+    amount,
+    total_hours,
+    remark
+  } = req.body;
+  if (!student_id)
+    return res.status(400).json({ success: false, message: "请选择学员" });
   // ★ 2026-09-26 课程改为必填：考勤自动扣课时依赖订单的 course_id 精确匹配
   //   （见 attendance.js 的 findDeductOrder：student_id + course_id + status='在读'）。
   //   此前 course_id 可空 → 不选课程建出的订单**永远不会扣课时**，
@@ -183,17 +237,27 @@ router.post("/orders", auth, requireRole("admin"), (req, res) => {
   if (!course_id) {
     return res.status(400).json({
       success: false,
-      message: "请选择课程（考勤按「学员 + 课程」匹配订单来扣课时，不选课程将无法自动扣课时）"
+      message:
+        "请选择课程（考勤按「学员 + 课程」匹配订单来扣课时，不选课程将无法自动扣课时）"
     });
   }
+  if (isStudentDeleted(student_id)) {
+    return res
+      .status(400)
+      .json({ success: false, message: "该学员档案已删除，请先恢复后再报班" });
+  }
   if (!canManageStudent(req, student_id)) {
-    return res.status(403).json({ success: false, message: "无权为该学员报班" });
+    return res
+      .status(403)
+      .json({ success: false, message: "无权为该学员报班" });
   }
   // B4：金额与课时的边界校验
   const amountRes = parseAmount(amount, { allowZero: true, field: "订单金额" });
-  if (!amountRes.ok) return res.status(400).json({ success: false, message: amountRes.message });
+  if (!amountRes.ok)
+    return res.status(400).json({ success: false, message: amountRes.message });
   const hoursRes = parseHours(total_hours, { field: "课时包总课时" });
-  if (!hoursRes.ok) return res.status(400).json({ success: false, message: hoursRes.message });
+  if (!hoursRes.ok)
+    return res.status(400).json({ success: false, message: hoursRes.message });
   const hours = hoursRes.value;
   // ★ v29（2026-10-12）：课时包总课时改为**必填且大于 0**。
   //   原由：不填课时包建出的订单 `total_hours = 0`，考勤扣课的匹配条件含 `total_hours > 0`
@@ -208,24 +272,33 @@ router.post("/orders", auth, requireRole("admin"), (req, res) => {
   let enrollDate = new Date().toLocaleDateString("sv");
   if (enroll_date !== undefined && enroll_date !== null && enroll_date !== "") {
     const dRes = parseDate(enroll_date, { field: "报班日期" });
-    if (!dRes.ok) return res.status(400).json({ success: false, message: dRes.message });
+    if (!dRes.ok)
+      return res.status(400).json({ success: false, message: dRes.message });
     enrollDate = dRes.value;
   }
-  const info = db.prepare(`
+  const info = db
+    .prepare(
+      `
     INSERT INTO orders (student_id, class_id, course_id, enroll_date, amount, total_hours, remain_hours, status, enroll_user_id, remark)
     VALUES (?, ?, ?, ?, ?, ?, ?, '在读', ?, ?)
-  `).run(
-    Number(student_id),
-    class_id ? Number(class_id) : null,
-    course_id ? Number(course_id) : null,
-    enrollDate,
-    amountRes.value,
-    hours,
-    hours,
-    req.user.id,
-    remark || ""
+  `
+    )
+    .run(
+      Number(student_id),
+      class_id ? Number(class_id) : null,
+      course_id ? Number(course_id) : null,
+      enrollDate,
+      amountRes.value,
+      hours,
+      hours,
+      req.user.id,
+      remark || ""
+    );
+  audit(
+    req.user,
+    "新增报班订单",
+    `订单#${info.lastInsertRowid} 学员ID=${student_id}`
   );
-  audit(req.user, "新增报班订单", `订单#${info.lastInsertRowid} 学员ID=${student_id}`);
   // v29：新单生效后对账 —— 覆盖「先点名、后报班」：此前的出勤考勤这次一并补扣
   reconcileQuietly(student_id, course_id, req.user.id);
   res.json({ success: true, data: { id: info.lastInsertRowid } });
@@ -238,58 +311,103 @@ router.put("/orders/:id/status", auth, requireRole("admin"), (req, res) => {
   if (!["在读", "结业", "退班"].includes(status)) {
     return res.status(400).json({ success: false, message: "无效的订单状态" });
   }
-  const info = db.prepare(`
+  const info = db
+    .prepare(
+      `
     UPDATE orders SET status = ?, updated_at = datetime('now','localtime') WHERE id = ?
-  `).run(status, id);
-  if (info.changes === 0) return res.status(404).json({ success: false, message: "订单不存在" });
+  `
+    )
+    .run(status, id);
+  if (info.changes === 0)
+    return res.status(404).json({ success: false, message: "订单不存在" });
   audit(req.user, "变更订单状态", `订单#${id} → ${status}`);
   // v29：重新置为「在读」时对账 —— 订单退班期间产生的出勤考勤此前无法扣减，此时补齐
   if (status === "在读") {
-    const cur = db.prepare("SELECT student_id, course_id FROM orders WHERE id = ?").get(id);
+    const cur = db
+      .prepare("SELECT student_id, course_id FROM orders WHERE id = ?")
+      .get(id);
     if (cur) reconcileQuietly(cur.student_id, cur.course_id, req.user.id);
   }
   res.json({ success: true, data: null });
 });
 
 /** 修改订单信息（班级/课程/金额/课时/备注；未传字段保留原值）
- *  v13：校验 remain_hours <= total_hours */
+ *  v13：校验 remain_hours <= total_hours
+ *  ★ P2-9（2026-10-18 深度测试）：修改 total_hours 必须联动 remain_hours 并保持台账不变式
+ *      total_hours - remain_hours == Σ扣减 - Σ回补（按订单）
+ *    只改总课时、未显式传 remain_hours 时，remain 按「总课时差值」平移（clamp [0, nextTotal]）。
+ *    平移后「已耗课时」不变，因此正常情况下**不写新流水**；
+ *    只有 clamp 截断使 remain 无法完整平移时，才补一条差额流水把台账拉平
+ *    （这正是本不变式唯一自洽的写法：差额流水 = Δtotal − Δremain）。
+ *    显式传 remain_hours 的手工修改逻辑保持不变（差额由此公式自动涵盖）。
+ */
 router.put("/orders/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  const { class_id, course_id, amount, total_hours, remain_hours, remark } = req.body;
+  const { class_id, course_id, amount, total_hours, remain_hours, remark } =
+    req.body;
   const cur = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-  if (!cur) return res.status(404).json({ success: false, message: "订单不存在" });
+  if (!cur)
+    return res.status(404).json({ success: false, message: "订单不存在" });
+
+  const prevTotal = Number(cur.total_hours);
+  const prevRemain = Number(cur.remain_hours);
 
   // B4：边界校验（未传字段保留原值）
   let nextAmount = Number(cur.amount);
   if (amount !== undefined && amount !== null && amount !== "") {
     const r = parseAmount(amount, { allowZero: true, field: "订单金额" });
-    if (!r.ok) return res.status(400).json({ success: false, message: r.message });
+    if (!r.ok)
+      return res.status(400).json({ success: false, message: r.message });
     nextAmount = r.value;
   }
-  let nextTotal = Number(cur.total_hours);
-  if (total_hours !== undefined && total_hours !== null && total_hours !== "") {
+  const totalProvided =
+    total_hours !== undefined && total_hours !== null && total_hours !== "";
+  let nextTotal = prevTotal;
+  if (totalProvided) {
     const r = parseHours(total_hours, { field: "课时包总课时" });
-    if (!r.ok) return res.status(400).json({ success: false, message: r.message });
+    if (!r.ok)
+      return res.status(400).json({ success: false, message: r.message });
     nextTotal = r.value;
   }
-  let nextRemain = Number(cur.remain_hours);
-  if (remain_hours !== undefined && remain_hours !== null && remain_hours !== "") {
+  const remainProvided =
+    remain_hours !== undefined && remain_hours !== null && remain_hours !== "";
+  let nextRemain = prevRemain;
+  if (remainProvided) {
     const r = parseHours(remain_hours, { field: "剩余课时" });
-    if (!r.ok) return res.status(400).json({ success: false, message: r.message });
+    if (!r.ok)
+      return res.status(400).json({ success: false, message: r.message });
     nextRemain = r.value;
   }
+
+  // P2-9：只改总课时 → remain 按差值平移；夹在 [0, nextTotal] 内。
+  //   例：total 10 / remain 5 → total 改 8，remain 5-2=3（已耗仍 5，流水净扣不变）。
+  if (totalProvided && !remainProvided) {
+    const shifted = prevRemain + (nextTotal - prevTotal);
+    nextRemain = Math.min(nextTotal, Math.max(0, shifted));
+  }
   if (nextRemain > nextTotal) {
-    return res.status(400).json({ success: false, message: `剩余课时不能大于总课时（${nextTotal}）` });
+    return res.status(400).json({
+      success: false,
+      message: `剩余课时不能大于总课时（${nextTotal}）`
+    });
   }
 
-  // B4：手工调整剩余课时必须留流水，保证 orders.remain_hours 与 hour_consumptions 始终对账
-  const prevRemain = Number(cur.remain_hours);
-  const manualAdjust = nextRemain !== prevRemain;
-  const adjustHours = Math.abs(nextRemain - prevRemain);
+  // B4/P2-9：台账调整流水 —— 保证 total - remain == 流水净扣。
+  //   ledgerDelta = Δtotal − Δremain：
+  //     · 只改 remain：Δtotal=0 → 与原有「手工调整」逻辑完全一致（减 remain=扣减 / 加 remain=回补）
+  //     · 只改 total 且 remain 完整平移：Δtotal=Δremain → 0，不写流水（净扣本就没变）
+  //     · 缩容夹到 0（remain 少减了一段）：Δtotal≠Δremain → 补差额流水
+  //   若按字面「扩容=回补 / 缩容=扣减」逐次记账，会把 total-remain 与净扣拉开 2×差值，
+  //   反而破坏本不变式（见 _verify_test/_tmp/fix-finance 的验证脚本）。
+  const ledgerDelta = nextTotal - prevTotal - (nextRemain - prevRemain);
+  const flowHours = Math.abs(ledgerDelta);
+  const hasFlow = flowHours > 1e-9;
 
   db.exec("BEGIN");
   try {
-    const info = db.prepare(`
+    const info = db
+      .prepare(
+        `
       UPDATE orders SET
         class_id = COALESCE(?, class_id),
         course_id = COALESCE(?, course_id),
@@ -299,31 +417,35 @@ router.put("/orders/:id", auth, requireRole("admin"), (req, res) => {
         remark = COALESCE(NULLIF(?, ''), remark),
         updated_at = datetime('now','localtime')
       WHERE id = ?
-    `).run(
-      class_id != null && class_id !== "" ? Number(class_id) : null,
-      course_id != null && course_id !== "" ? Number(course_id) : null,
-      nextAmount,
-      nextTotal,
-      nextRemain,
-      remark || "",
-      id
-    );
+    `
+      )
+      .run(
+        class_id != null && class_id !== "" ? Number(class_id) : null,
+        course_id != null && course_id !== "" ? Number(course_id) : null,
+        nextAmount,
+        nextTotal,
+        nextRemain,
+        remark || "",
+        id
+      );
     if (info.changes === 0) {
       db.exec("ROLLBACK");
       return res.status(404).json({ success: false, message: "订单不存在" });
     }
-    if (manualAdjust) {
-      db.prepare(`
+    if (hasFlow) {
+      db.prepare(
+        `
         INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, hours, type, source, operator_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, '手工调整', ?)
-      `).run(
+      `
+      ).run(
         cur.student_id,
         id,
         cur.course_id,
         cur.class_id,
         new Date().toLocaleDateString("sv"),
-        adjustHours,
-        nextRemain < prevRemain ? "扣减" : "回补",
+        flowHours,
+        ledgerDelta > 0 ? "扣减" : "回补",
         req.user.id
       );
     }
@@ -332,12 +454,20 @@ router.put("/orders/:id", auth, requireRole("admin"), (req, res) => {
     db.exec("ROLLBACK");
     throw err;
   }
+  const changes = [];
+  if (nextTotal !== prevTotal)
+    changes.push(`总课时 ${prevTotal} → ${nextTotal}`);
+  if (nextRemain !== prevRemain)
+    changes.push(`剩余课时 ${prevRemain} → ${nextRemain}`);
+  if (hasFlow) {
+    changes.push(
+      `已记流水 ${ledgerDelta > 0 ? "扣减" : "回补"} ${flowHours} 课时`
+    );
+  }
   audit(
     req.user,
     "修改报班订单",
-    manualAdjust
-      ? `订单#${id}（剩余课时 ${prevRemain} → ${nextRemain}，已记流水 ${adjustHours} 课时）`
-      : `订单#${id}`
+    changes.length ? `订单#${id}（${changes.join("，")}）` : `订单#${id}`
   );
   // v29：课时包补填后对账 —— 这正是本次事故的场景（remaining 0 → 16 之后，那节课该被补扣）
   reconcileQuietly(cur.student_id, [cur.course_id, course_id], req.user.id);
@@ -389,23 +519,44 @@ router.delete("/orders/:id", auth, requireRole("admin"), (req, res) => {
 
 // ==================== 收费记录 ====================
 
-/** 缴费记录列表（分页 + 筛选：订单/学员关键字/支付方式/时间范围） */
+/** 缴费记录列表（分页 + 筛选：订单/学员关键字/支付方式/时间范围）
+ *  P2-4：分页参数统一钳制（pageSize 上限 200）。 */
 router.get("/payments", auth, requireRole("admin"), (req, res) => {
-  const { order_id, keyword, pay_method, start, end, page = 1, pageSize = 10 } = req.query;
+  const { order_id, keyword, pay_method, start, end } = req.query;
+  const { pageSize, offset } = clampPagination(req.query);
   const conds = [];
   const params = [];
-  if (order_id) { conds.push("p.order_id = ?"); params.push(Number(order_id)); }
-  if (keyword) { conds.push("(s.name LIKE ? OR s.student_no LIKE ?)"); params.push(`%${keyword}%`, `%${keyword}%`); }
-  if (pay_method) { conds.push("p.pay_method = ?"); params.push(pay_method); }
-  if (start) { conds.push("date(p.pay_time) >= ?"); params.push(start); }
-  if (end) { conds.push("date(p.pay_time) <= ?"); params.push(end); }
+  if (order_id) {
+    conds.push("p.order_id = ?");
+    params.push(Number(order_id));
+  }
+  if (keyword) {
+    conds.push("(s.name LIKE ? OR s.student_no LIKE ?)");
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+  if (pay_method) {
+    conds.push("p.pay_method = ?");
+    params.push(pay_method);
+  }
+  if (start) {
+    conds.push("date(p.pay_time) >= ?");
+    params.push(start);
+  }
+  if (end) {
+    conds.push("date(p.pay_time) <= ?");
+    params.push(end);
+  }
   const where = conds.length ? conds.join(" AND ") : "1=1";
   const allParams = params;
 
   const total = db
-    .prepare(`SELECT COUNT(*) AS c FROM payments p JOIN students s ON s.id = p.student_id WHERE ${where}`)
+    .prepare(
+      `SELECT COUNT(*) AS c FROM payments p JOIN students s ON s.id = p.student_id WHERE ${where}`
+    )
     .get(...allParams).c;
-  const list = db.prepare(`
+  const list = db
+    .prepare(
+      `
     SELECT p.id, p.order_id, p.student_id, s.student_no, s.name AS student_name,
            c.name AS class_name, p.amount, p.pay_method, p.pay_time, p.remark,
            u.name AS pay_user_name
@@ -416,9 +567,13 @@ router.get("/payments", auth, requireRole("admin"), (req, res) => {
     WHERE ${where}
     ORDER BY p.pay_time DESC, p.id DESC
     LIMIT ? OFFSET ?
-  `).all(...allParams, Number(pageSize), (Number(page) - 1) * Number(pageSize));
+  `
+    )
+    .all(...allParams, pageSize, offset);
   const totalAmount = db
-    .prepare(`SELECT COALESCE(SUM(p.amount),0) AS total FROM payments p JOIN students s ON s.id = p.student_id WHERE ${where}`)
+    .prepare(
+      `SELECT COALESCE(SUM(p.amount),0) AS total FROM payments p JOIN students s ON s.id = p.student_id WHERE ${where}`
+    )
     .get(...allParams).total;
 
   res.json({ success: true, data: { list, total, totalAmount } });
@@ -426,40 +581,55 @@ router.get("/payments", auth, requireRole("admin"), (req, res) => {
 
 /** 新增缴费记录（v13：校验订单属于所选学员，避免跨学员挂账） */
 router.post("/payments", auth, requireRole("admin"), (req, res) => {
-  const { order_id, student_id, amount, pay_method, pay_time, remark } = req.body;
+  const { order_id, student_id, amount, pay_method, pay_time, remark } =
+    req.body;
   if (!order_id || !student_id) {
-    return res.status(400).json({ success: false, message: "请选择订单与学员" });
+    return res
+      .status(400)
+      .json({ success: false, message: "请选择订单与学员" });
   }
   // B4：金额边界校验（>0 且 ≤ 上限，保留 2 位小数）
   const amtRes = parseAmount(amount, { field: "缴费金额" });
-  if (!amtRes.ok) return res.status(400).json({ success: false, message: amtRes.message });
+  if (!amtRes.ok)
+    return res.status(400).json({ success: false, message: amtRes.message });
   const amt = amtRes.value;
   if (!canManageStudent(req, student_id)) {
-    return res.status(403).json({ success: false, message: "无权为该学员登记缴费" });
+    return res
+      .status(403)
+      .json({ success: false, message: "无权为该学员登记缴费" });
   }
-  const order = db.prepare("SELECT id FROM orders WHERE id = ? AND student_id = ?").get(Number(order_id), Number(student_id));
+  const order = db
+    .prepare("SELECT id FROM orders WHERE id = ? AND student_id = ?")
+    .get(Number(order_id), Number(student_id));
   if (!order) {
-    return res.status(400).json({ success: false, message: "订单与学员不匹配" });
+    return res
+      .status(400)
+      .json({ success: false, message: "订单与学员不匹配" });
   }
   // 缴费时间：提供时必须是合法的日期时间（未提供则取当前时间）
   let payTime = null;
   if (pay_time !== undefined && pay_time !== null && pay_time !== "") {
     const tRes = parseDateTime(pay_time, { field: "缴费时间" });
-    if (!tRes.ok) return res.status(400).json({ success: false, message: tRes.message });
+    if (!tRes.ok)
+      return res.status(400).json({ success: false, message: tRes.message });
     payTime = tRes.value;
   }
-  const info = db.prepare(`
+  const info = db
+    .prepare(
+      `
     INSERT INTO payments (order_id, student_id, amount, pay_method, pay_user_id, pay_time, remark)
     VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now','localtime')), ?)
-  `).run(
-    Number(order_id),
-    Number(student_id),
-    amt,
-    pay_method || "转账",
-    req.user.id,
-    payTime,
-    remark || ""
-  );
+  `
+    )
+    .run(
+      Number(order_id),
+      Number(student_id),
+      amt,
+      pay_method || "转账",
+      req.user.id,
+      payTime,
+      remark || ""
+    );
   audit(req.user, "登记缴费", `订单#${order_id} ¥${amt}`);
   res.json({ success: true, data: { id: info.lastInsertRowid } });
 });
@@ -470,19 +640,26 @@ router.put("/payments/:id", auth, requireRole("admin"), (req, res) => {
   const { amount, pay_method, pay_time, remark } = req.body;
   // B4：金额边界校验
   const amtRes = parseAmount(amount, { field: "缴费金额" });
-  if (!amtRes.ok) return res.status(400).json({ success: false, message: amtRes.message });
+  if (!amtRes.ok)
+    return res.status(400).json({ success: false, message: amtRes.message });
   const amt = amtRes.value;
   // 缴费时间：提供时必须是合法的日期时间（空值保留原值）
   let payTime = "";
   if (pay_time !== undefined && pay_time !== null && pay_time !== "") {
     const tRes = parseDateTime(pay_time, { field: "缴费时间" });
-    if (!tRes.ok) return res.status(400).json({ success: false, message: tRes.message });
+    if (!tRes.ok)
+      return res.status(400).json({ success: false, message: tRes.message });
     payTime = tRes.value;
   }
-  const info = db.prepare(`
+  const info = db
+    .prepare(
+      `
     UPDATE payments SET amount = ?, pay_method = ?, pay_time = COALESCE(NULLIF(?, ''), pay_time), remark = ? WHERE id = ?
-  `).run(amt, pay_method || "转账", payTime, remark || "", id);
-  if (info.changes === 0) return res.status(404).json({ success: false, message: "缴费记录不存在" });
+  `
+    )
+    .run(amt, pay_method || "转账", payTime, remark || "", id);
+  if (info.changes === 0)
+    return res.status(404).json({ success: false, message: "缴费记录不存在" });
   audit(req.user, "修改缴费记录", `缴费#${id}`);
   res.json({ success: true, data: null });
 });
@@ -491,27 +668,40 @@ router.put("/payments/:id", auth, requireRole("admin"), (req, res) => {
 router.delete("/payments/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   const info = db.prepare("DELETE FROM payments WHERE id = ?").run(id);
-  if (info.changes === 0) return res.status(404).json({ success: false, message: "缴费记录不存在" });
+  if (info.changes === 0)
+    return res.status(404).json({ success: false, message: "缴费记录不存在" });
   audit(req.user, "删除缴费记录", `缴费#${id}`);
   res.json({ success: true, data: null });
 });
 
 // ==================== 退费记录 ====================
 
-/** 退费记录列表（分页 + 筛选：状态/关键字） */
+/** 退费记录列表（分页 + 筛选：状态/关键字）
+ *  P2-4：分页参数统一钳制（pageSize 上限 200）。 */
 router.get("/refunds", auth, requireRole("admin"), (req, res) => {
-  const { status, keyword, page = 1, pageSize = 10 } = req.query;
+  const { status, keyword } = req.query;
+  const { pageSize, offset } = clampPagination(req.query);
   const conds = [];
   const params = [];
-  if (status) { conds.push("r.status = ?"); params.push(status); }
-  if (keyword) { conds.push("(s.name LIKE ? OR s.student_no LIKE ?)"); params.push(`%${keyword}%`, `%${keyword}%`); }
+  if (status) {
+    conds.push("r.status = ?");
+    params.push(status);
+  }
+  if (keyword) {
+    conds.push("(s.name LIKE ? OR s.student_no LIKE ?)");
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
   const where = conds.length ? conds.join(" AND ") : "1=1";
   const allParams = params;
 
   const total = db
-    .prepare(`SELECT COUNT(*) AS c FROM refunds r JOIN students s ON s.id = r.student_id WHERE ${where}`)
+    .prepare(
+      `SELECT COUNT(*) AS c FROM refunds r JOIN students s ON s.id = r.student_id WHERE ${where}`
+    )
     .get(...allParams).c;
-  const list = db.prepare(`
+  const list = db
+    .prepare(
+      `
     SELECT r.id, r.order_id, r.student_id, s.student_no, s.name AS student_name,
            c.name AS class_name, r.amount, r.reason, r.status, r.apply_time, r.approve_time, r.remark,
            u1.name AS apply_user_name, u2.name AS approved_name
@@ -523,7 +713,9 @@ router.get("/refunds", auth, requireRole("admin"), (req, res) => {
     WHERE ${where}
     ORDER BY r.apply_time DESC, r.id DESC
     LIMIT ? OFFSET ?
-  `).all(...allParams, Number(pageSize), (Number(page) - 1) * Number(pageSize));
+  `
+    )
+    .all(...allParams, pageSize, offset);
 
   res.json({ success: true, data: { list, total } });
 });
@@ -532,25 +724,38 @@ router.get("/refunds", auth, requireRole("admin"), (req, res) => {
 router.post("/refunds", auth, requireRole("admin"), (req, res) => {
   const { order_id, student_id, amount, reason, remark } = req.body;
   if (!order_id || !student_id) {
-    return res.status(400).json({ success: false, message: "请选择订单与学员" });
+    return res
+      .status(400)
+      .json({ success: false, message: "请选择订单与学员" });
   }
   // B4：金额边界校验
   const amtRes = parseAmount(amount, { field: "退费金额" });
-  if (!amtRes.ok) return res.status(400).json({ success: false, message: amtRes.message });
+  if (!amtRes.ok)
+    return res.status(400).json({ success: false, message: amtRes.message });
   const amt = amtRes.value;
   if (!canManageStudent(req, student_id)) {
-    return res.status(403).json({ success: false, message: "无权为该学员提交退费" });
+    return res
+      .status(403)
+      .json({ success: false, message: "无权为该学员提交退费" });
   }
-  const order = db.prepare("SELECT id, status FROM orders WHERE id = ? AND student_id = ?").get(Number(order_id), Number(student_id));
+  const order = db
+    .prepare("SELECT id, status FROM orders WHERE id = ? AND student_id = ?")
+    .get(Number(order_id), Number(student_id));
   if (!order) {
-    return res.status(400).json({ success: false, message: "订单与学员不匹配" });
+    return res
+      .status(400)
+      .json({ success: false, message: "订单与学员不匹配" });
   }
   if (order.status !== "在读") {
-    return res.status(400).json({ success: false, message: "仅在读订单可发起退费" });
+    return res
+      .status(400)
+      .json({ success: false, message: "仅在读订单可发起退费" });
   }
   // B4：退费金额不得超过「该订单已缴金额 − 已申请/已通过退费」，防止超额退款
   const paid = db
-    .prepare("SELECT COALESCE(SUM(amount), 0) AS s FROM payments WHERE order_id = ?")
+    .prepare(
+      "SELECT COALESCE(SUM(amount), 0) AS s FROM payments WHERE order_id = ?"
+    )
     .get(Number(order_id)).s;
   const refunded = db
     .prepare(
@@ -564,10 +769,21 @@ router.post("/refunds", auth, requireRole("admin"), (req, res) => {
       message: `退费金额超出可退上限（已缴 ¥${Number(paid).toFixed(2)} − 已退/在途 ¥${Number(refunded).toFixed(2)} = ¥${refundable.toFixed(2)}）`
     });
   }
-  const info = db.prepare(`
+  const info = db
+    .prepare(
+      `
     INSERT INTO refunds (order_id, student_id, amount, reason, status, apply_user_id, remark)
     VALUES (?, ?, ?, ?, '待审批', ?, ?)
-  `).run(Number(order_id), Number(student_id), amt, reason || "", req.user.id, remark || "");
+  `
+    )
+    .run(
+      Number(order_id),
+      Number(student_id),
+      amt,
+      reason || "",
+      req.user.id,
+      remark || ""
+    );
   audit(req.user, "提交退费申请", `订单#${order_id} ¥${amt}`);
   res.json({ success: true, data: { id: info.lastInsertRowid } });
 });
@@ -581,29 +797,43 @@ router.put("/refunds/:id/approve", auth, requireRole("admin"), (req, res) => {
     return res.status(400).json({ success: false, message: "无效的审批状态" });
   }
   const refund = db
-    .prepare("SELECT r.id, r.status AS refund_status, r.order_id, o.status AS order_status FROM refunds r LEFT JOIN orders o ON o.id = r.order_id WHERE r.id = ?")
+    .prepare(
+      "SELECT r.id, r.status AS refund_status, r.order_id, o.status AS order_status FROM refunds r LEFT JOIN orders o ON o.id = r.order_id WHERE r.id = ?"
+    )
     .get(id);
-  if (!refund) return res.status(404).json({ success: false, message: "退费记录不存在" });
+  if (!refund)
+    return res.status(404).json({ success: false, message: "退费记录不存在" });
   if (refund.refund_status !== "待审批") {
-    return res.status(400).json({ success: false, message: "该退费已审批，请勿重复操作" });
+    return res
+      .status(400)
+      .json({ success: false, message: "该退费已审批，请勿重复操作" });
   }
   if (status === "通过" && refund.order_status !== "在读") {
-    return res.status(400).json({ success: false, message: "关联订单已非在读状态，无法通过退费" });
+    return res
+      .status(400)
+      .json({ success: false, message: "关联订单已非在读状态，无法通过退费" });
   }
   db.exec("BEGIN");
   try {
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE refunds SET status = ?, approved_by = ?,
              approve_time = datetime('now','localtime')
       WHERE id = ?
-    `).run(status, req.user.id, id);
+    `
+    ).run(status, req.user.id, id);
     if (status === "通过") {
       // 订单置退班：考勤/补课的扣减查询仅匹配「在读」订单，自动停止从此订单扣课时
-      db.prepare("UPDATE orders SET status = '退班', updated_at = datetime('now','localtime') WHERE id = ?")
-        .run(refund.order_id);
+      db.prepare(
+        "UPDATE orders SET status = '退班', updated_at = datetime('now','localtime') WHERE id = ?"
+      ).run(refund.order_id);
     }
     db.exec("COMMIT");
-    audit(req.user, "审批退费", `退费#${id} → ${status}${status === "通过" ? "（订单置退班）" : ""}`);
+    audit(
+      req.user,
+      "审批退费",
+      `退费#${id} → ${status}${status === "通过" ? "（订单置退班）" : ""}`
+    );
     res.json({ success: true, data: null });
   } catch (err) {
     db.exec("ROLLBACK");
@@ -615,7 +845,8 @@ router.put("/refunds/:id/approve", auth, requireRole("admin"), (req, res) => {
 router.delete("/refunds/:id", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   const info = db.prepare("DELETE FROM refunds WHERE id = ?").run(id);
-  if (info.changes === 0) return res.status(404).json({ success: false, message: "退费记录不存在" });
+  if (info.changes === 0)
+    return res.status(404).json({ success: false, message: "退费记录不存在" });
   audit(req.user, "删除退费记录", `退费#${id}`);
   res.json({ success: true, data: null });
 });
@@ -628,37 +859,64 @@ router.get("/stats/revenue", auth, requireRole("admin"), (req, res) => {
   const unit = granularity === "month" ? 7 : 10; // substr(pay_time,1,7) 按月 / 1,10 按天
   const conds = [];
   const params = [];
-  if (start) { conds.push("date(p.pay_time) >= ?"); params.push(start); }
-  if (end) { conds.push("date(p.pay_time) <= ?"); params.push(end); }
+  if (start) {
+    conds.push("date(p.pay_time) >= ?");
+    params.push(start);
+  }
+  if (end) {
+    conds.push("date(p.pay_time) <= ?");
+    params.push(end);
+  }
   const where = conds.length ? conds.join(" AND ") : "1=1";
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT substr(p.pay_time, 1, ?) AS period, SUM(p.amount) AS total, COUNT(*) AS cnt
     FROM payments p
     JOIN students s ON s.id = p.student_id
     WHERE ${where}
     GROUP BY period ORDER BY period
-  `).all(unit, ...params);
+  `
+    )
+    .all(unit, ...params);
 
   // ★ 2026-09-26 净额口径（对齐 ADR-003）：减去同期「已审批通过」的退费。
   //   此前只算缴费 → 报表里的"实收"是毛额，**退出去的钱在任何报表里都看不见**。
   //   仍同时返回 gross（缴费毛额）与 refunded（同期退费），便于向业务解释差额。
   const rConds = [];
   const rParams = [];
-  if (start) { rConds.push(`date(${REFUND_TIME_SQL}) >= date(?)`); rParams.push(start); }
-  if (end) { rConds.push(`date(${REFUND_TIME_SQL}) <= date(?)`); rParams.push(end); }
+  if (start) {
+    rConds.push(`date(${REFUND_TIME_SQL}) >= date(?)`);
+    rParams.push(start);
+  }
+  if (end) {
+    rConds.push(`date(${REFUND_TIME_SQL}) <= date(?)`);
+    rParams.push(end);
+  }
   const rWhere = rConds.length ? rConds.join(" AND ") : "1=1";
-  const refRows = db.prepare(`
+  const refRows = db
+    .prepare(
+      `
     SELECT substr(${REFUND_TIME_SQL}, 1, ?) AS period, SUM(r.amount) AS total
     FROM refunds r
     WHERE r.status = '通过' AND ${rWhere}
     GROUP BY period
-  `).all(unit, ...rParams);
+  `
+    )
+    .all(unit, ...rParams);
 
   const payMap = Object.fromEntries(
-    rows.map(r => [r.period, { total: Number(r.total) || 0, cnt: Number(r.cnt) || 0 }])
+    rows.map(r => [
+      r.period,
+      { total: Number(r.total) || 0, cnt: Number(r.cnt) || 0 }
+    ])
   );
-  const refMap = Object.fromEntries(refRows.map(r => [r.period, Number(r.total) || 0]));
-  const periods = [...new Set([...Object.keys(payMap), ...Object.keys(refMap)])].sort();
+  const refMap = Object.fromEntries(
+    refRows.map(r => [r.period, Number(r.total) || 0])
+  );
+  const periods = [
+    ...new Set([...Object.keys(payMap), ...Object.keys(refMap)])
+  ].sort();
   const list = periods.map(p => {
     const pay = payMap[p] || { total: 0, cnt: 0 };
     const refunded = refMap[p] || 0;
@@ -667,18 +925,30 @@ router.get("/stats/revenue", auth, requireRole("admin"), (req, res) => {
       cnt: pay.cnt,
       gross: pay.total, // 缴费毛额（保留，便于解释差额）
       refunded, // 同期已通过退费
-      total: Number((pay.total - refunded).toFixed(2)) // 净额（前端沿用 total，无需改动）
+      total: Number((pay.total - refunded).toFixed(2)), // 净额（前端沿用 total，无需改动）
+      // ★ 2026-10-18：口径自解释字段，与 revenue_accrual 成对出现
+      revenue_cash_net: Number((pay.total - refunded).toFixed(2))
     };
   });
   const grand = Number(list.reduce((sum, r) => sum + r.total, 0).toFixed(2));
-  res.json({ success: true, data: { list, totalRevenue: grand } });
+  res.json({
+    success: true,
+    data: {
+      list,
+      totalRevenue: grand,
+      // 别名：明确这是「收付实现制净额」，不是权责发生制的确认收入
+      totalRevenueCashNet: grand
+    }
+  });
 });
 
 /** 欠费统计：订单金额 > 实缴净额 的在读/结业订单 */
 router.get("/stats/arrears", auth, requireRole("admin"), (req, res) => {
   // ★ 2026-09-26 「已缴」改为净额（减退费）：退款之后欠费应当回升，
   //   此前用缴费毛额 → 退过费的订单欠费被系统性低估。
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT o.id, o.student_id, s.student_no, s.name AS student_name,
            c.name AS class_name, o.enroll_date, o.amount,
            ${paidNetSql("o.id")} AS paid,
@@ -690,7 +960,9 @@ router.get("/stats/arrears", auth, requireRole("admin"), (req, res) => {
     GROUP BY o.id
     HAVING arrears > 0
     ORDER BY arrears DESC
-  `).all();
+  `
+    )
+    .all();
   const totalArrears = rows.reduce((sum, r) => sum + r.arrears, 0);
   res.json({ success: true, data: { list: rows, totalArrears } });
 });
@@ -698,7 +970,9 @@ router.get("/stats/arrears", auth, requireRole("admin"), (req, res) => {
 /** 剩余课时不足预警：在读且设了课时包的订单中，剩余课时 ≤ 阈值（教师仅本班） */
 router.get("/stats/low-hours", auth, requireRole("admin"), (req, res) => {
   const { threshold = 5 } = req.query;
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT o.id, o.student_id, s.student_no, s.name AS student_name,
            c.name AS class_name, cu.name AS course_name,
            o.total_hours, o.remain_hours, o.enroll_date
@@ -708,8 +982,13 @@ router.get("/stats/low-hours", auth, requireRole("admin"), (req, res) => {
     LEFT JOIN courses cu ON cu.id = o.course_id
     WHERE o.status = '在读' AND o.total_hours > 0 AND o.remain_hours <= ?
     ORDER BY o.remain_hours ASC
-  `).all(Number(threshold));
-  res.json({ success: true, data: { list: rows, threshold: Number(threshold) } });
+  `
+    )
+    .all(Number(threshold));
+  res.json({
+    success: true,
+    data: { list: rows, threshold: Number(threshold) }
+  });
 });
 
 // ==================== 经营报表（仅 admin） ====================
@@ -718,39 +997,70 @@ router.get("/stats/low-hours", auth, requireRole("admin"), (req, res) => {
 router.get("/stats/business", auth, requireRole("admin"), (req, res) => {
   const now = new Date();
   const pad = n => String(n).padStart(2, "0");
-  const fmtDate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const twelveMonthsAgo = fmtDate(new Date(now.getFullYear(), now.getMonth() - 11, 1));
-  const sixMonthsAgo = fmtDate(new Date(now.getFullYear(), now.getMonth() - 5, 1));
+  const fmtDate = d =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const twelveMonthsAgo = fmtDate(
+    new Date(now.getFullYear(), now.getMonth() - 11, 1)
+  );
+  const sixMonthsAgo = fmtDate(
+    new Date(now.getFullYear(), now.getMonth() - 5, 1)
+  );
   const monthStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
 
-  // 总览
-  const totalStudents = db.prepare("SELECT COUNT(*) AS c FROM students").get().c;
-  const activeStudents = db.prepare("SELECT COUNT(*) AS c FROM students WHERE status = '在读'").get().c;
-  const activeOrders = db.prepare("SELECT COUNT(*) AS c FROM orders WHERE status = '在读'").get().c;
+  // 总览（★ 2026-10-19：当前人数口径排除软删档案；历史财务金额/课消按 v30 设计保留）
+  const totalStudents = db
+    .prepare("SELECT COUNT(*) AS c FROM students WHERE deleted_at IS NULL")
+    .get().c;
+  const activeStudents = db
+    .prepare(
+      "SELECT COUNT(*) AS c FROM students WHERE status = '在读' AND deleted_at IS NULL"
+    )
+    .get().c;
+  const activeOrders = db
+    .prepare("SELECT COUNT(*) AS c FROM orders WHERE status = '在读'")
+    .get().c;
   // ★ 2026-09-26 净额口径（对齐 ADR-003）：实收 = 缴费 − 已审批通过的退费。
   //   此前是缴费毛额 —— 校长在这一页看到的是"收了多少"，而不是"实际留下多少"。
   const monthPay = Number(
-    db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE pay_time >= ?").get(monthStart).s || 0
+    db
+      .prepare(
+        "SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE pay_time >= ?"
+      )
+      .get(monthStart).s || 0
   );
   const monthRefund = Number(
     db
-      .prepare(`SELECT COALESCE(SUM(r.amount),0) AS s FROM refunds r WHERE r.status = '通过' AND ${REFUND_TIME_SQL} >= ?`)
+      .prepare(
+        `SELECT COALESCE(SUM(r.amount),0) AS s FROM refunds r WHERE r.status = '通过' AND ${REFUND_TIME_SQL} >= ?`
+      )
       .get(monthStart).s || 0
   );
   const monthRevenue = Number((monthPay - monthRefund).toFixed(2));
-  const totalPay = Number(db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments").get().s || 0);
+  const totalPay = Number(
+    db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments").get().s || 0
+  );
   const totalRefund = Number(
-    db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM refunds WHERE status = '通过'").get().s || 0
+    db
+      .prepare(
+        "SELECT COALESCE(SUM(amount),0) AS s FROM refunds WHERE status = '通过'"
+      )
+      .get().s || 0
   );
   const totalRevenue = Number((totalPay - totalRefund).toFixed(2));
   const totalLeads = db.prepare("SELECT COUNT(*) AS c FROM leads").get().c;
-  const convertedLeads = db.prepare("SELECT COUNT(*) AS c FROM leads WHERE status = '已转化'").get().c;
+  const convertedLeads = db
+    .prepare("SELECT COUNT(*) AS c FROM leads WHERE status = '已转化'")
+    .get().c;
 
   // 续班率：近 6 个月结业的学员中，存在后续在读订单的比例
-  const graduated6m = db.prepare(
-    "SELECT COUNT(DISTINCT student_id) AS c FROM orders WHERE status = '结业' AND enroll_date >= ?"
-  ).get(sixMonthsAgo).c;
-  const renewed6m = db.prepare(`
+  const graduated6m = db
+    .prepare(
+      "SELECT COUNT(DISTINCT student_id) AS c FROM orders WHERE status = '结业' AND enroll_date >= ?"
+    )
+    .get(sixMonthsAgo).c;
+  const renewed6m = db
+    .prepare(
+      `
     SELECT COUNT(DISTINCT o.student_id) AS c
     FROM orders o
     WHERE o.status = '结业' AND o.enroll_date >= ?
@@ -758,24 +1068,38 @@ router.get("/stats/business", auth, requireRole("admin"), (req, res) => {
         SELECT 1 FROM orders o2
         WHERE o2.student_id = o.student_id AND o2.status = '在读' AND o2.id != o.id
       )
-  `).get(sixMonthsAgo).c;
+  `
+    )
+    .get(sixMonthsAgo).c;
 
   // 近 12 个月月度营收（★ 2026-09-26 改为净额：按月减去同期已通过退费，退款不再从报表里消失）
-  const payByMonth = db.prepare(`
+  const payByMonth = db
+    .prepare(
+      `
     SELECT substr(p.pay_time, 1, 7) AS period, SUM(p.amount) AS total, COUNT(*) AS cnt
     FROM payments p
     WHERE p.pay_time >= ?
     GROUP BY period ORDER BY period
-  `).all(twelveMonthsAgo);
-  const refByMonth = db.prepare(`
+  `
+    )
+    .all(twelveMonthsAgo);
+  const refByMonth = db
+    .prepare(
+      `
     SELECT substr(${REFUND_TIME_SQL}, 1, 7) AS period, SUM(r.amount) AS total
     FROM refunds r
     WHERE r.status = '通过' AND ${REFUND_TIME_SQL} >= ?
     GROUP BY period ORDER BY period
-  `).all(twelveMonthsAgo);
+  `
+    )
+    .all(twelveMonthsAgo);
   const payMonthMap = Object.fromEntries(payByMonth.map(r => [r.period, r]));
-  const refMonthMap = Object.fromEntries(refByMonth.map(r => [r.period, Number(r.total) || 0]));
-  const monthPeriods = [...new Set([...Object.keys(payMonthMap), ...Object.keys(refMonthMap)])].sort();
+  const refMonthMap = Object.fromEntries(
+    refByMonth.map(r => [r.period, Number(r.total) || 0])
+  );
+  const monthPeriods = [
+    ...new Set([...Object.keys(payMonthMap), ...Object.keys(refMonthMap)])
+  ].sort();
   const revenueByMonth = monthPeriods.map(p => {
     const pay = payMonthMap[p];
     const gross = pay ? Number(pay.total) : 0;
@@ -790,23 +1114,33 @@ router.get("/stats/business", auth, requireRole("admin"), (req, res) => {
   });
 
   // 按课程营收（近 12 个月）★ 2026-09-26 改为净额：按课程减去同期退费（退费经订单关联到课程）
-  const payByCourse = db.prepare(`
+  const payByCourse = db
+    .prepare(
+      `
     SELECT COALESCE(cu.name, '未选课程') AS course_name, SUM(p.amount) AS total, COUNT(*) AS cnt
     FROM payments p
     JOIN orders o ON o.id = p.order_id
     LEFT JOIN courses cu ON cu.id = o.course_id
     WHERE p.pay_time >= ?
     GROUP BY cu.id ORDER BY total DESC
-  `).all(twelveMonthsAgo);
-  const refByCourse = db.prepare(`
+  `
+    )
+    .all(twelveMonthsAgo);
+  const refByCourse = db
+    .prepare(
+      `
     SELECT COALESCE(cu.name, '未选课程') AS course_name, SUM(r.amount) AS total
     FROM refunds r
     JOIN orders o ON o.id = r.order_id
     LEFT JOIN courses cu ON cu.id = o.course_id
     WHERE r.status = '通过' AND ${REFUND_TIME_SQL} >= ?
     GROUP BY cu.id
-  `).all(twelveMonthsAgo);
-  const refCourseMap = Object.fromEntries(refByCourse.map(r => [r.course_name, Number(r.total) || 0]));
+  `
+    )
+    .all(twelveMonthsAgo);
+  const refCourseMap = Object.fromEntries(
+    refByCourse.map(r => [r.course_name, Number(r.total) || 0])
+  );
   const revenueByCourse = payByCourse
     .map(r => {
       const gross = Number(r.total);
@@ -822,20 +1156,26 @@ router.get("/stats/business", auth, requireRole("admin"), (req, res) => {
     .sort((a, b) => b.total - a.total);
 
   // 招生渠道统计（线索数 / 转化数 / 转化率）
-  const channelStats = db.prepare(`
+  const channelStats = db
+    .prepare(
+      `
     SELECT source, COUNT(*) AS total,
            SUM(CASE WHEN status = '已转化' THEN 1 ELSE 0 END) AS converted
     FROM leads GROUP BY source
-  `).all().map(r => {
-    const total = Number(r.total);
-    const converted = Number(r.converted);
-    return {
-      source: r.source,
-      total,
-      converted,
-      conversion_rate: total > 0 ? Number((converted / total * 100).toFixed(1)) : 0
-    };
-  });
+  `
+    )
+    .all()
+    .map(r => {
+      const total = Number(r.total);
+      const converted = Number(r.converted);
+      return {
+        source: r.source,
+        total,
+        converted,
+        conversion_rate:
+          total > 0 ? Number(((converted / total) * 100).toFixed(1)) : 0
+      };
+    });
 
   res.json({
     success: true,
@@ -843,16 +1183,25 @@ router.get("/stats/business", auth, requireRole("admin"), (req, res) => {
       overview: {
         total_students: totalStudents,
         active_students: activeStudents,
-        enrollment_rate: totalStudents > 0 ? Number((activeStudents / totalStudents * 100).toFixed(1)) : 0,
+        enrollment_rate:
+          totalStudents > 0
+            ? Number(((activeStudents / totalStudents) * 100).toFixed(1))
+            : 0,
         active_orders: activeOrders,
         month_revenue: Number(monthRevenue),
         total_revenue: Number(totalRevenue),
         total_leads: totalLeads,
         converted_leads: convertedLeads,
-        conversion_rate: totalLeads > 0 ? Number((convertedLeads / totalLeads * 100).toFixed(1)) : 0,
+        conversion_rate:
+          totalLeads > 0
+            ? Number(((convertedLeads / totalLeads) * 100).toFixed(1))
+            : 0,
         graduated_6m: graduated6m,
         renewed_6m: renewed6m,
-        renewal_rate: graduated6m > 0 ? Number((renewed6m / graduated6m * 100).toFixed(1)) : 0
+        renewal_rate:
+          graduated6m > 0
+            ? Number(((renewed6m / graduated6m) * 100).toFixed(1))
+            : 0
       },
       revenue_by_month: revenueByMonth,
       revenue_by_course: revenueByCourse,
@@ -867,8 +1216,14 @@ router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
   const { dimension = "teacher", start, end } = req.query;
   const conds = [];
   const params = [];
-  if (start) { conds.push("hc.date >= ?"); params.push(start); }
-  if (end) { conds.push("hc.date <= ?"); params.push(end); }
+  if (start) {
+    conds.push("hc.date >= ?");
+    params.push(start);
+  }
+  if (end) {
+    conds.push("hc.date <= ?");
+    params.push(end);
+  }
   const where = conds.length ? conds.join(" AND ") : "1=1";
   const allParams = params;
 
@@ -877,7 +1232,9 @@ router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
 
   let list;
   if (dimension === "course") {
-    list = db.prepare(`
+    list = db
+      .prepare(
+        `
       SELECT COALESCE(cu.name, '未指定课程') AS course_name,
              ${consumedExpr} AS consumed,
              ${refundedExpr} AS refunded,
@@ -888,16 +1245,21 @@ router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
       WHERE ${where}
       GROUP BY hc.course_id
       ORDER BY consumed DESC
-    `).all(...allParams).map(r => ({
-      course_name: r.course_name,
-      consumed: Number(r.consumed || 0),
-      refunded: Number(r.refunded || 0),
-      student_count: Number(r.student_count || 0)
-    }));
+    `
+      )
+      .all(...allParams)
+      .map(r => ({
+        course_name: r.course_name,
+        consumed: Number(r.consumed || 0),
+        refunded: Number(r.refunded || 0),
+        student_count: Number(r.student_count || 0)
+      }));
   } else if (dimension === "student") {
     // ★ 2026-10-12：补 LEFT JOIN classes —— 前端「班级」列绑定 class_name，
     //   而此前查询根本没 join 班级表 → 该列一直渲染空白（与「姓名」列同一个缺陷）。
-    list = db.prepare(`
+    list = db
+      .prepare(
+        `
       SELECT s.id AS student_id, s.student_no, s.name AS student_name,
              c.name AS class_name,
              ${consumedExpr} AS consumed,
@@ -922,59 +1284,79 @@ router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
       WHERE ${where}
       GROUP BY s.id
       ORDER BY consumed DESC
-    `).all(...allParams).map(r => ({
-      student_id: r.student_id,
-      student_no: r.student_no,
-      student_name: r.student_name,
-      class_name: r.class_name || "—",
-      consumed: Number(r.consumed || 0),
-      refunded: Number(r.refunded || 0),
-      total_hours: Number(r.total_hours || 0),
-      remain_hours: Number(r.remain_hours || 0),
-      total_hours_all: Number(r.total_hours_all || 0),
-      remain_hours_all: Number(r.remain_hours_all || 0),
-      closed_order_count: Number(r.closed_order_count || 0)
-    }));
+    `
+      )
+      .all(...allParams)
+      .map(r => ({
+        student_id: r.student_id,
+        student_no: r.student_no,
+        student_name: r.student_name,
+        class_name: r.class_name || "—",
+        consumed: Number(r.consumed || 0),
+        refunded: Number(r.refunded || 0),
+        total_hours: Number(r.total_hours || 0),
+        remain_hours: Number(r.remain_hours || 0),
+        total_hours_all: Number(r.total_hours_all || 0),
+        remain_hours_all: Number(r.remain_hours_all || 0),
+        closed_order_count: Number(r.closed_order_count || 0)
+      }));
   } else {
     // teacher（默认）：按班级聚合，班主任为空归「未绑定班主任」
-    list = db.prepare(`
+    // ★ 2026-10-18 修复「转班追认历史业绩」：
+    //   原先按 `s.class_id`（学员**当前**班级）聚合 —— 学员转班后，他在原班产生的
+    //   历史课消会被整笔算到新班级，原班业绩凭空消失、新班凭空增长，且不可追溯。
+    //   改为优先用流水上的 `class_id`（写入时的班级快照），老流水没有快照才回退当前班级。
+    list = db
+      .prepare(
+        `
       SELECT COALESCE(u.name, '未绑定') AS teacher_name, c.name AS class_name,
              ${consumedExpr} AS consumed,
              ${refundedExpr} AS refunded
       FROM hour_consumptions hc
       JOIN students s ON s.id = hc.student_id
-      JOIN classes c ON c.id = s.class_id
+      JOIN classes c ON c.id = COALESCE(hc.class_id, s.class_id)
       LEFT JOIN users u ON u.id = c.head_teacher_id
       WHERE ${where}
       GROUP BY c.id
       ORDER BY consumed DESC
-    `).all(...allParams).map(r => ({
-      teacher_name: r.teacher_name,
-      class_name: r.class_name,
-      consumed: Number(r.consumed || 0),
-      refunded: Number(r.refunded || 0)
-    }));
+    `
+      )
+      .all(...allParams)
+      .map(r => ({
+        teacher_name: r.teacher_name,
+        class_name: r.class_name,
+        consumed: Number(r.consumed || 0),
+        refunded: Number(r.refunded || 0)
+      }));
   }
 
   // 汇总：总扣减/回补 + 已确认收入 + 金额可见权限
-  const totals = db.prepare(`
+  const totals = db
+    .prepare(
+      `
     SELECT COALESCE(SUM(CASE WHEN hc.type = '扣减' THEN hc.hours ELSE 0 END), 0) AS consumed_total,
            COALESCE(SUM(CASE WHEN hc.type = '回补' THEN hc.hours ELSE 0 END), 0) AS refunded_total
     FROM hour_consumptions hc
     JOIN students s ON s.id = hc.student_id
     WHERE ${where}
-  `).get(...allParams);
+  `
+    )
+    .get(...allParams);
   // B3：权责发生制收入 = Σ(订单金额 × 已消耗课时 / 总课时)
   // 注意：这里**不能**按 status 过滤。退班订单的已消耗课时是已经真实提供过的教学服务，
   //       对应收入应当保留（退款只退「剩余未消耗课时」对应的部分）。
   //       历史实现为 `o.status IN ('在读','结业')`，会把退班订单整单收入抹除，
   //       导致已上课的收入凭空消失且不可追溯（2026-09-12 上线门禁 B3）。
-  const revenueRow = db.prepare(`
+  const revenueRow = db
+    .prepare(
+      `
     SELECT COALESCE(SUM(o.amount * (o.total_hours - o.remain_hours) / o.total_hours), 0) AS revenue
     FROM orders o
     JOIN students s ON s.id = o.student_id
     WHERE o.total_hours > 0 AND o.remain_hours <= o.total_hours
-  `).get();
+  `
+    )
+    .get();
 
   res.json({
     success: true,
@@ -983,6 +1365,11 @@ router.get("/stats/consumption", auth, requireRole("admin"), (req, res) => {
       summary: {
         consumed_total: Number(totals.consumed_total),
         refunded_total: Number(totals.refunded_total),
+        // ★ 2026-10-18 命名统一：本项目有两个"收入"口径，名字必须能自解释 ——
+        //   revenue_accrual     = 权责发生制：已消耗课时对应的收入（本接口）
+        //   revenue_cash_net    = 收付实现制：实收 − 退费（财务统计 / 经营分析）
+        //   旧字段 revenue_recognized 保留，避免破坏现有前端与 openapi 契约。
+        revenue_accrual: Number(Number(revenueRow.revenue).toFixed(2)),
         revenue_recognized: Number(Number(revenueRow.revenue).toFixed(2)),
         can_see_amount: req.user.role === "admin"
       }

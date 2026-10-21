@@ -70,16 +70,14 @@ const visibleGroups = computed(() =>
     ...g,
     fields: g.keys
       .filter(k => config.value?.fields?.[k])
-      .map(k => ({ key: k, ...(config.value?.fields?.[k] as never) }))
+      .map(k => ({ key: k, ...config.value!.fields[k] }))
   }))
     .filter(g => g.fields.length > 0)
     // 未接入的分组：已有非空值才显示（敏感字段是掩码，非空即代表已配置过）
     .filter(
       g =>
         !g.hideWhenUnset ||
-        g.fields.some(
-          f => String((f as { value?: unknown }).value ?? "").trim() !== ""
-        )
+        g.fields.some(f => String(f.value ?? "").trim() !== "")
     )
 );
 
@@ -283,7 +281,21 @@ onMounted(reloadAll);
 </template>
 
 <style lang="scss" scoped>
-/* 说明条：浅品牌底 + 图标，语气是"告知"而不是"报警" */
+
+
+/* 平板竖屏及以下：标签移到输入框上方，避免长标签挤压输入区 */
+@media (width <= 768px) {
+  .group__form :deep(.el-form-item) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .group__form :deep(.el-form-item__label) {
+    justify-content: flex-start;
+    margin-bottom: var(--space-1);
+  }
+}
+
 .notice {
   display: flex;
   gap: var(--space-3);
@@ -387,16 +399,5 @@ onMounted(reloadAll);
   margin-left: var(--space-2);
 }
 
-/* 平板竖屏及以下：标签移到输入框上方，避免长标签挤压输入区 */
-@media (width <= 768px) {
-  .group__form :deep(.el-form-item) {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .group__form :deep(.el-form-item__label) {
-    justify-content: flex-start;
-    margin-bottom: var(--space-1);
-  }
-}
+/* 说明条：浅品牌底 + 图标，语气是"告知"而不是"报警" */
 </style>

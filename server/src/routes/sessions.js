@@ -11,16 +11,24 @@
 const express = require("express");
 const db = require("../db");
 const { auth, requireRole } = require("../middleware/auth");
-const { canManageClass, canAccessSession, teacherClassPredicate } = require("../utils/scope");
+const {
+  canManageClass,
+  canAccessSession,
+  teacherClassPredicate
+} = require("../utils/scope");
 const { parseRoomId } = require("../utils/room");
-const { checkPeriod, listPeriods } = require("../utils/period");
+const { listPeriods } = require("../utils/period");
 const { parseDate } = require("../utils/validate");
+const { DEFAULT_HOURS } = require("../utils/hours-reconcile");
+const { audit } = require("../utils/audit");
 const engine = require("../utils/session-engine");
 
 const router = express.Router();
 
 const STATUSES = ["待上课", "已上课", "已停课", "已挪课", "已取消"];
 const ORIGINS = ["模板生成", "挪课", "补课", "手工"];
+// 单节课时数上限：挡住 999 这类误输入（常见于一节 45 分钟=1 课时，两节连上=2）
+const MAX_SESSION_HOURS = 20;
 const DOW_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
 /** 解析 statuses 查询参数（可为逗号分隔字符串或数组），仅保留合法状态 */
@@ -40,9 +48,13 @@ function toIntOrNull(v) {
 /** 周基准：给定日期（或今天）所在周的周一（YYYY-MM-DD） */
 function mondayOf(dateStr) {
   const base = dateStr ? engine.parseYmd(dateStr) : new Date();
-  const dt = dateStr ? base : new Date(Date.UTC(base.getFullYear(), base.getMonth(), base.getDate()));
+  const dt = dateStr
+    ? base
+    : new Date(Date.UTC(base.getFullYear(), base.getMonth(), base.getDate()));
   const dow = engine.isoDow(dt); // 1..7
-  return engine.fmtYmd(new Date(dt.getTime() - (dow - 1) * 24 * 60 * 60 * 1000));
+  return engine.fmtYmd(
+    new Date(dt.getTime() - (dow - 1) * 24 * 60 * 60 * 1000)
+  );
 }
 
 /** 组装课次行（含班级/课程/教师/代课人/教室/关联课次日期）的公共 SELECT 片段 */
@@ -54,6 +66,7 @@ const SESSION_SELECT = `
   cs.room_id, r.name AS room_name,
   cs.session_date, cs.period, cs.start_time, cs.end_time,
   cs.status, cs.origin, cs.related_session_id,
+  cs.hours,
   (SELECT rs.session_date FROM class_sessions rs WHERE rs.id = cs.related_session_id) AS related_date,
   cs.topic, cs.created_at, cs.updated_at`;
 
@@ -69,7 +82,16 @@ const SESSION_FROM = `
 // 列表
 // ─────────────────────────────────────────────────────────────
 router.get("/", auth, (req, res) => {
-  const { term_id, class_id, teacher_id, status, date_start, date_end, page = 1, pageSize = 20 } = req.query;
+  const {
+    term_id,
+    class_id,
+    teacher_id,
+    status,
+    date_start,
+    date_end,
+    page = 1,
+    pageSize = 20
+  } = req.query;
   const p = Number(page) || 1;
   const ps = Math.min(Number(pageSize) || 20, 200);
   const offset = (p - 1) * ps;
@@ -82,20 +104,40 @@ router.get("/", auth, (req, res) => {
     params.push(req.user.id, req.user.id, req.user.id);
   }
   const tid = toIntOrNull(term_id);
-  if (tid) { where += " AND cs.term_id = ?"; params.push(tid); }
+  if (tid) {
+    where += " AND cs.term_id = ?";
+    params.push(tid);
+  }
   const cid = toIntOrNull(class_id);
-  if (cid) { where += " AND cs.class_id = ?"; params.push(cid); }
+  if (cid) {
+    where += " AND cs.class_id = ?";
+    params.push(cid);
+  }
   const teach = toIntOrNull(teacher_id);
-  if (teach) { where += " AND (cs.teacher_id = ? OR cs.substitute_teacher_id = ?)"; params.push(teach, teach); }
-  if (status && STATUSES.includes(status)) { where += " AND cs.status = ?"; params.push(status); }
-  if (date_start) { where += " AND cs.session_date >= ?"; params.push(date_start); }
-  if (date_end) { where += " AND cs.session_date <= ?"; params.push(date_end); }
+  if (teach) {
+    where += " AND (cs.teacher_id = ? OR cs.substitute_teacher_id = ?)";
+    params.push(teach, teach);
+  }
+  if (status && STATUSES.includes(status)) {
+    where += " AND cs.status = ?";
+    params.push(status);
+  }
+  if (date_start) {
+    where += " AND cs.session_date >= ?";
+    params.push(date_start);
+  }
+  if (date_end) {
+    where += " AND cs.session_date <= ?";
+    params.push(date_end);
+  }
 
   const total = db
     .prepare(`SELECT COUNT(*) AS c ${SESSION_FROM} ${where}`)
     .get(...params).c;
   const list = db
-    .prepare(`SELECT ${SESSION_SELECT} ${SESSION_FROM} ${where} ORDER BY cs.session_date DESC, cs.period DESC, cs.id DESC LIMIT ? OFFSET ?`)
+    .prepare(
+      `SELECT ${SESSION_SELECT} ${SESSION_FROM} ${where} ORDER BY cs.session_date DESC, cs.period DESC, cs.id DESC LIMIT ? OFFSET ?`
+    )
     .all(...params, ps, offset);
 
   res.json({ success: true, data: { list, total } });
@@ -115,7 +157,9 @@ router.get("/week", auth, (req, res) => {
     ws = mondayOf(null);
   }
   const startDate = engine.parseYmd(ws);
-  const we = engine.fmtYmd(new Date(startDate.getTime() + 6 * 24 * 60 * 60 * 1000));
+  const we = engine.fmtYmd(
+    new Date(startDate.getTime() + 6 * 24 * 60 * 60 * 1000)
+  );
   const today = engine.todayStr();
 
   let where = "WHERE cs.session_date >= ? AND cs.session_date <= ?";
@@ -125,12 +169,15 @@ router.get("/week", auth, (req, res) => {
     // ★ 2026-09-30 校区反馈③：新增「全校视角」—— 不按班级 / 教师过滤，一次返回全校区本周课次。
     //   仅 admin 可用：教师若能访问会看到非本班数据，与「教师仅见本班」的既有约定冲突。
     if (req.user.role !== "admin") {
-      return res.status(403).json({ success: false, message: "仅管理员可查看全校视角" });
+      return res
+        .status(403)
+        .json({ success: false, message: "仅管理员可查看全校视角" });
     }
     // where 只保留上方的时间区间条件
   } else if (view === "teacher") {
     // Q8：teacher 角色默认锁定本人；admin 可指定任意教师
-    let tid = req.user.role === "teacher" ? req.user.id : toIntOrNull(teacher_id);
+    let tid =
+      req.user.role === "teacher" ? req.user.id : toIntOrNull(teacher_id);
     if (!tid) {
       return res.status(400).json({ success: false, message: "请选择教师" });
     }
@@ -142,7 +189,9 @@ router.get("/week", auth, (req, res) => {
       return res.status(400).json({ success: false, message: "请选择班级" });
     }
     if (req.user.role === "teacher" && !canManageClass(req, cid)) {
-      return res.status(403).json({ success: false, message: "无权查看该班级周课表" });
+      return res
+        .status(403)
+        .json({ success: false, message: "无权查看该班级周课表" });
     }
     where += " AND cs.class_id = ?";
     params.push(cid);
@@ -154,7 +203,9 @@ router.get("/week", auth, (req, res) => {
   }
 
   const sessions = db
-    .prepare(`SELECT ${SESSION_SELECT} ${SESSION_FROM} ${where} ORDER BY cs.session_date, cs.period, cs.id`)
+    .prepare(
+      `SELECT ${SESSION_SELECT} ${SESSION_FROM} ${where} ORDER BY cs.session_date, cs.period, cs.id`
+    )
     .all(...params);
 
   const days = [];
@@ -177,29 +228,61 @@ router.get("/week", auth, (req, res) => {
     end_time: p.end_time || ""
   }));
 
-  res.json({ success: true, data: { week_start: ws, week_end: we, days, periods, sessions } });
+  res.json({
+    success: true,
+    data: { week_start: ws, week_end: we, days, periods, sessions }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
 // 回填报告（必须先于 /:id）
 // ─────────────────────────────────────────────────────────────
 router.get("/migration-report", auth, requireRole("admin"), (req, res) => {
-  const { data_type, class_id, date_start, date_end, reason, status, page = 1, pageSize = 20 } = req.query;
+  const {
+    data_type,
+    class_id,
+    date_start,
+    date_end,
+    reason,
+    status,
+    page = 1,
+    pageSize = 20
+  } = req.query;
   const p = Number(page) || 1;
   const ps = Math.min(Number(pageSize) || 20, 200);
   const offset = (p - 1) * ps;
 
   let where = "WHERE 1=1";
   const params = [];
-  if (data_type) { where += " AND r.data_type = ?"; params.push(data_type); }
+  if (data_type) {
+    where += " AND r.data_type = ?";
+    params.push(data_type);
+  }
   const cid = toIntOrNull(class_id);
-  if (cid) { where += " AND r.class_id = ?"; params.push(cid); }
-  if (date_start) { where += " AND r.date >= ?"; params.push(date_start); }
-  if (date_end) { where += " AND r.date <= ?"; params.push(date_end); }
-  if (reason) { where += " AND r.reason LIKE ?"; params.push(`%${reason}%`); }
-  if (status) { where += " AND r.status = ?"; params.push(status); }
+  if (cid) {
+    where += " AND r.class_id = ?";
+    params.push(cid);
+  }
+  if (date_start) {
+    where += " AND r.date >= ?";
+    params.push(date_start);
+  }
+  if (date_end) {
+    where += " AND r.date <= ?";
+    params.push(date_end);
+  }
+  if (reason) {
+    where += " AND r.reason LIKE ?";
+    params.push(`%${reason}%`);
+  }
+  if (status) {
+    where += " AND r.status = ?";
+    params.push(status);
+  }
 
-  const total = db.prepare(`SELECT COUNT(*) AS c FROM session_migration_report r ${where}`).get(...params).c;
+  const total = db
+    .prepare(`SELECT COUNT(*) AS c FROM session_migration_report r ${where}`)
+    .get(...params).c;
   const list = db
     .prepare(
       `SELECT r.*, c.name AS class_name, co.name AS course_name, s.name AS student_name
@@ -217,44 +300,65 @@ router.get("/migration-report", auth, requireRole("admin"), (req, res) => {
     db.prepare("SELECT COUNT(*) AS c FROM attendances").get().c +
     db.prepare("SELECT COUNT(*) AS c FROM hour_consumptions").get().c +
     db.prepare("SELECT COUNT(*) AS c FROM class_evaluations").get().c;
-  const unmatched = db.prepare("SELECT COUNT(*) AS c FROM session_migration_report").get().c;
+  const unmatched = db
+    .prepare("SELECT COUNT(*) AS c FROM session_migration_report")
+    .get().c;
   const matched = Math.max(0, srcTotal - unmatched);
-  const fail_rate = srcTotal > 0 ? Number(((unmatched / srcTotal) * 100).toFixed(2)) : 0;
+  const fail_rate =
+    srcTotal > 0 ? Number(((unmatched / srcTotal) * 100).toFixed(2)) : 0;
 
   res.json({
     success: true,
-    data: { list, total, summary: { matched, unmatched, total: srcTotal, fail_rate } }
+    data: {
+      list,
+      total,
+      summary: { matched, unmatched, total: srcTotal, fail_rate }
+    }
   });
 });
 
 /** 未匹配项一键转待办（Q6：仅指派 admin） */
-router.post("/migration-report/:id/todo", auth, requireRole("admin"), (req, res) => {
-  const id = Number(req.params.id);
-  const row = db.prepare("SELECT * FROM session_migration_report WHERE id = ?").get(id);
-  if (!row) return res.status(404).json({ success: false, message: "报告记录不存在" });
-  if (row.status === "已转待办" && row.todo_id) {
-    return res.json({ success: true, data: { todo_id: row.todo_id, already: true } });
-  }
-  const title = `课次回填未匹配：${row.data_type} ${row.date || ""}`.trim();
-  const content = `来源表 ${row.source_table}#${row.source_id}，原因：${row.reason || "未说明"}`;
-  const info = db
-    .prepare(
-      `INSERT INTO todos (title, content, owner_id, creator_id, source, status, priority)
+router.post(
+  "/migration-report/:id/todo",
+  auth,
+  requireRole("admin"),
+  (req, res) => {
+    const id = Number(req.params.id);
+    const row = db
+      .prepare("SELECT * FROM session_migration_report WHERE id = ?")
+      .get(id);
+    if (!row)
+      return res
+        .status(404)
+        .json({ success: false, message: "报告记录不存在" });
+    if (row.status === "已转待办" && row.todo_id) {
+      return res.json({
+        success: true,
+        data: { todo_id: row.todo_id, already: true }
+      });
+    }
+    const title = `课次回填未匹配：${row.data_type} ${row.date || ""}`.trim();
+    const content = `来源表 ${row.source_table}#${row.source_id}，原因：${row.reason || "未说明"}`;
+    const info = db
+      .prepare(
+        `INSERT INTO todos (title, content, owner_id, creator_id, source, status, priority)
        VALUES (?, ?, ?, ?, 'manual', '待办', '普通')`
-    )
-    .run(title, content, req.user.id, req.user.id);
-  db.prepare(
-    "UPDATE session_migration_report SET status = '已转待办', todo_id = ? WHERE id = ?"
-  ).run(info.lastInsertRowid, id);
-  res.json({ success: true, data: { todo_id: info.lastInsertRowid } });
-});
+      )
+      .run(title, content, req.user.id, req.user.id);
+    db.prepare(
+      "UPDATE session_migration_report SET status = '已转待办', todo_id = ? WHERE id = ?"
+    ).run(info.lastInsertRowid, id);
+    res.json({ success: true, data: { todo_id: info.lastInsertRowid } });
+  }
+);
 
 // ─────────────────────────────────────────────────────────────
 // 预览 / 生成 / 回填（admin）
 // ─────────────────────────────────────────────────────────────
 router.post("/preview", auth, requireRole("admin"), (req, res) => {
   const termId = toIntOrNull((req.body || {}).term_id);
-  if (!termId) return res.status(400).json({ success: false, message: "请选择学期" });
+  if (!termId)
+    return res.status(400).json({ success: false, message: "请选择学期" });
   try {
     res.json({ success: true, data: engine.previewGeneration(termId) });
   } catch (e) {
@@ -264,12 +368,19 @@ router.post("/preview", auth, requireRole("admin"), (req, res) => {
 
 router.post("/generate", auth, requireRole("admin"), (req, res) => {
   const termId = toIntOrNull((req.body || {}).term_id);
-  if (!termId) return res.status(400).json({ success: false, message: "请选择学期" });
+  if (!termId)
+    return res.status(400).json({ success: false, message: "请选择学期" });
   try {
-    res.json({ success: true, data: engine.generateSessions(termId, req.user.id) });
+    res.json({
+      success: true,
+      data: engine.generateSessions(termId, req.user.id)
+    });
   } catch (e) {
     if (/UNIQUE/i.test(String(e.message))) {
-      return res.status(400).json({ success: false, message: "生成过程中出现唯一键冲突，请刷新后重试" });
+      return res.status(400).json({
+        success: false,
+        message: "生成过程中出现唯一键冲突，请刷新后重试"
+      });
     }
     return res.status(400).json({ success: false, message: e.message });
   }
@@ -288,19 +399,51 @@ router.post("/backfill", auth, requireRole("admin"), (req, res) => {
 // 手工新增课次（加课 / 补课）
 // ─────────────────────────────────────────────────────────────
 router.post("/", auth, requireRole("admin"), (req, res) => {
-  const { class_id, course_id, teacher_id, session_date, period, room_id, origin = "手工" } = req.body || {};
+  const {
+    class_id,
+    course_id,
+    teacher_id,
+    session_date,
+    period,
+    room_id,
+    origin = "手工",
+    hours
+  } = req.body || {};
   const classId = toIntOrNull(class_id);
   const courseId = toIntOrNull(course_id);
   const per = Number(period);
-  if (!classId) return res.status(400).json({ success: false, message: "请选择班级" });
-  if (!courseId) return res.status(400).json({ success: false, message: "请选择课程" });
-  if (!Number.isInteger(per) || per < engine.PERIOD_MIN || per > engine.PERIOD_MAX) {
-    return res.status(400).json({ success: false, message: `节次范围 ${engine.PERIOD_MIN}-${engine.PERIOD_MAX}` });
+  if (!classId)
+    return res.status(400).json({ success: false, message: "请选择班级" });
+  if (!courseId)
+    return res.status(400).json({ success: false, message: "请选择课程" });
+  if (
+    !Number.isInteger(per) ||
+    per < engine.PERIOD_MIN ||
+    per > engine.PERIOD_MAX
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: `节次范围 ${engine.PERIOD_MIN}-${engine.PERIOD_MAX}`
+    });
+  }
+  // v30：一节课默认 1 课时，允许按课次指定（如两节连上 = 2）
+  const hrs =
+    hours === undefined || hours === null || hours === ""
+      ? DEFAULT_HOURS
+      : Number(hours);
+  if (!Number.isFinite(hrs) || hrs <= 0 || hrs > MAX_SESSION_HOURS) {
+    return res.status(400).json({
+      success: false,
+      message: `课时数须在 0 与 ${MAX_SESSION_HOURS} 之间`
+    });
   }
   const dateRes = parseDate(session_date, { field: "上课日期" });
-  if (!dateRes.ok) return res.status(400).json({ success: false, message: dateRes.message });
+  if (!dateRes.ok)
+    return res.status(400).json({ success: false, message: dateRes.message });
   if (!ORIGINS.includes(origin) || origin === "模板生成" || origin === "挪课") {
-    return res.status(400).json({ success: false, message: "来源仅支持「手工」或「补课」" });
+    return res
+      .status(400)
+      .json({ success: false, message: "来源仅支持「手工」或「补课」" });
   }
   if (!db.prepare("SELECT 1 FROM classes WHERE id = ?").get(classId)) {
     return res.status(400).json({ success: false, message: "班级不存在" });
@@ -308,9 +451,12 @@ router.post("/", auth, requireRole("admin"), (req, res) => {
   if (!db.prepare("SELECT 1 FROM courses WHERE id = ?").get(courseId)) {
     return res.status(400).json({ success: false, message: "课程不存在" });
   }
-  const currentTerm = db.prepare("SELECT id FROM terms WHERE is_current = 1").get();
+  const currentTerm = db
+    .prepare("SELECT id FROM terms WHERE is_current = 1")
+    .get();
   const termId = currentTerm ? Number(currentTerm.id) : null;
-  const teachId = toIntOrNull(teacher_id) || engine.resolveTeacher(classId, courseId, termId);
+  const teachId =
+    toIntOrNull(teacher_id) || engine.resolveTeacher(classId, courseId, termId);
   if (teachId && !db.prepare("SELECT 1 FROM users WHERE id = ?").get(teachId)) {
     return res.status(400).json({ success: false, message: "授课教师不存在" });
   }
@@ -318,21 +464,37 @@ router.post("/", auth, requireRole("admin"), (req, res) => {
   const start_time = pt ? pt.start_time : "";
   const end_time = pt ? pt.end_time : "";
   const today = engine.todayStr();
-  const status = dateRes.value < today ? engine.STATUS_DONE : engine.STATUS_SCHEDULED;
+  const status =
+    dateRes.value < today ? engine.STATUS_DONE : engine.STATUS_SCHEDULED;
   const roomId = toIntOrNull(room_id);
   try {
     const info = db
       .prepare(
         `INSERT INTO class_sessions
            (term_id, schedule_id, class_id, course_id, teacher_id, substitute_teacher_id, room_id,
-            session_date, period, start_time, end_time, status, origin, related_session_id, topic)
-         VALUES (?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, '')`
+            session_date, period, start_time, end_time, status, origin, related_session_id, topic, hours)
+         VALUES (?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, '', ?)`
       )
-      .run(termId, classId, courseId, teachId, roomId, dateRes.value, per, start_time, end_time, status, origin);
+      .run(
+        termId,
+        classId,
+        courseId,
+        teachId,
+        roomId,
+        dateRes.value,
+        per,
+        start_time,
+        end_time,
+        status,
+        origin,
+        hrs
+      );
     res.json({ success: true, data: { id: info.lastInsertRowid } });
   } catch (e) {
     if (/UNIQUE/i.test(String(e.message))) {
-      return res.status(400).json({ success: false, message: "该班级在该日期该节次已存在课次" });
+      return res
+        .status(400)
+        .json({ success: false, message: "该班级在该日期该节次已存在课次" });
     }
     throw e;
   }
@@ -349,7 +511,8 @@ router.get("/:id", auth, (req, res) => {
   const session = db
     .prepare(`SELECT ${SESSION_SELECT} ${SESSION_FROM} WHERE cs.id = ?`)
     .get(id);
-  if (!session) return res.status(404).json({ success: false, message: "课次不存在" });
+  if (!session)
+    return res.status(404).json({ success: false, message: "课次不存在" });
   if (!canAccessSession(req, id)) {
     return res.status(403).json({ success: false, message: "无权查看该课次" });
   }
@@ -359,7 +522,7 @@ router.get("/:id", auth, (req, res) => {
       `SELECT s.id AS student_id, s.student_no, s.name, a.status, a.remark, a.id AS attendance_id
        FROM students s
        LEFT JOIN attendances a ON a.student_id = s.id AND a.session_id = ?
-       WHERE s.class_id = ? AND s.status = '在读'
+       WHERE s.class_id = ? AND s.status = '在读' AND s.deleted_at IS NULL
        ORDER BY s.student_no`
     )
     .all(id, session.class_id);
@@ -382,12 +545,18 @@ router.get("/:id", auth, (req, res) => {
 
   let related = null;
   if (session.related_session_id) {
-    related = db
-      .prepare("SELECT id, session_date, period, status FROM class_sessions WHERE id = ?")
-      .get(session.related_session_id) || null;
+    related =
+      db
+        .prepare(
+          "SELECT id, session_date, period, status FROM class_sessions WHERE id = ?"
+        )
+        .get(session.related_session_id) || null;
   }
 
-  res.json({ success: true, data: { session, students, evaluations, consumptions, related } });
+  res.json({
+    success: true,
+    data: { session, students, evaluations, consumptions, related }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -415,14 +584,79 @@ router.put("/:id/room", auth, requireRole("admin", "teacher"), (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// 课次课时数（v30）
+// ─────────────────────────────────────────────────────────────
+/**
+ * 修改课次的课时数（一节课扣几个课时）。
+ *
+ * ★ 为什么单独开一个端点而不是塞进"改教室"：
+ *   课时数直接决定扣课金额，和教室这类展示属性不是一回事；单独端点便于审计与权限收窄。
+ *
+ * ★ 已产生扣减流水的课次**不允许改课时数** ——
+ *   否则 `orders.remain_hours` 与 `hour_consumptions` 会对不上：
+ *   流水写的是旧课时数，账面却是按新值算的。要改请先撤销考勤，改完再重新点名。
+ */
+router.put("/:id/hours", auth, requireRole("admin"), (req, res) => {
+  const id = Number(req.params.id);
+  const session = db
+    .prepare("SELECT * FROM class_sessions WHERE id = ?")
+    .get(id);
+  if (!session)
+    return res.status(404).json({ success: false, message: "课次不存在" });
+
+  const raw = (req.body || {}).hours;
+  const hrs =
+    raw === undefined || raw === null || raw === ""
+      ? DEFAULT_HOURS
+      : Number(raw);
+  if (!Number.isFinite(hrs) || hrs <= 0 || hrs > MAX_SESSION_HOURS) {
+    return res.status(400).json({
+      success: false,
+      message: `课时数须大于 0 且不超过 ${MAX_SESSION_HOURS}`
+    });
+  }
+
+  // ★ 2026-10-19（业务逻辑深测 P0 修复）：护栏不能只查 session_id。
+  //   补课/legacy 考勤产生的流水可能 session_id=NULL（历史数据），但它们同样
+  //   消耗了「同班同课同日」的课时 —— 若只按 session_id 判断，会出现
+  //   「补课扣 2 → 把课次改成 1 → 撤销补课只回 1，学员净损 1 课时」。
+  const used = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM hour_consumptions
+       WHERE session_id = ?
+          OR (session_id IS NULL AND class_id = ? AND course_id = ? AND date = ?)`
+    )
+    .get(id, session.class_id, session.course_id, session.session_date).c;
+  if (used > 0) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "该课次已产生课时流水，改课时数会导致账实不符。请先撤销相关考勤后再改"
+    });
+  }
+
+  db.prepare(
+    "UPDATE class_sessions SET hours = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+  ).run(hrs, id);
+  audit(req.user, "修改课次课时数", `课次#${id} → ${hrs} 课时`);
+  res.json({ success: true, data: { hours: hrs } });
+});
+
+// ─────────────────────────────────────────────────────────────
 // 停课 / 恢复 / 挪课 / 代课（admin）
 // ─────────────────────────────────────────────────────────────
 router.put("/:id/stop", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  const session = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(id);
-  if (!session) return res.status(404).json({ success: false, message: "课次不存在" });
+  const session = db
+    .prepare("SELECT * FROM class_sessions WHERE id = ?")
+    .get(id);
+  if (!session)
+    return res.status(404).json({ success: false, message: "课次不存在" });
   if (session.status !== "待上课") {
-    return res.status(400).json({ success: false, message: `仅「待上课」的课次可停课（当前：${session.status}）` });
+    return res.status(400).json({
+      success: false,
+      message: `仅「待上课」的课次可停课（当前：${session.status}）`
+    });
   }
   db.prepare(
     "UPDATE class_sessions SET status = '已停课', updated_at = datetime('now','localtime') WHERE id = ?"
@@ -432,10 +666,16 @@ router.put("/:id/stop", auth, requireRole("admin"), (req, res) => {
 
 router.put("/:id/restore", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
-  const session = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(id);
-  if (!session) return res.status(404).json({ success: false, message: "课次不存在" });
+  const session = db
+    .prepare("SELECT * FROM class_sessions WHERE id = ?")
+    .get(id);
+  if (!session)
+    return res.status(404).json({ success: false, message: "课次不存在" });
   if (session.status !== "已停课") {
-    return res.status(400).json({ success: false, message: `仅「已停课」的课次可恢复（当前：${session.status}）` });
+    return res.status(400).json({
+      success: false,
+      message: `仅「已停课」的课次可恢复（当前：${session.status}）`
+    });
   }
   db.prepare(
     "UPDATE class_sessions SET status = '待上课', updated_at = datetime('now','localtime') WHERE id = ?"
@@ -446,26 +686,47 @@ router.put("/:id/restore", auth, requireRole("admin"), (req, res) => {
 router.post("/:id/reschedule", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   const { session_date, period, room_id } = req.body || {};
-  const session = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(id);
-  if (!session) return res.status(404).json({ success: false, message: "课次不存在" });
+  const session = db
+    .prepare("SELECT * FROM class_sessions WHERE id = ?")
+    .get(id);
+  if (!session)
+    return res.status(404).json({ success: false, message: "课次不存在" });
   if (session.status !== "待上课") {
-    return res.status(400).json({ success: false, message: "仅「待上课」的课次可挪课（Q4）" });
+    return res
+      .status(400)
+      .json({ success: false, message: "仅「待上课」的课次可挪课（Q4）" });
   }
   if (session.related_session_id != null) {
-    return res.status(400).json({ success: false, message: "该课次已挪课，不可重复挪课" });
+    return res
+      .status(400)
+      .json({ success: false, message: "该课次已挪课，不可重复挪课" });
   }
   const per = Number(period);
-  if (!Number.isInteger(per) || per < engine.PERIOD_MIN || per > engine.PERIOD_MAX) {
-    return res.status(400).json({ success: false, message: `节次范围 ${engine.PERIOD_MIN}-${engine.PERIOD_MAX}` });
+  if (
+    !Number.isInteger(per) ||
+    per < engine.PERIOD_MIN ||
+    per > engine.PERIOD_MAX
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: `节次范围 ${engine.PERIOD_MIN}-${engine.PERIOD_MAX}`
+    });
   }
   const dateRes = parseDate(session_date, { field: "挪课日期" });
-  if (!dateRes.ok) return res.status(400).json({ success: false, message: dateRes.message });
-  if (dateRes.value === session.session_date && per === Number(session.period)) {
-    return res.status(400).json({ success: false, message: "目标时段与原时段相同，无需挪课" });
+  if (!dateRes.ok)
+    return res.status(400).json({ success: false, message: dateRes.message });
+  if (
+    dateRes.value === session.session_date &&
+    per === Number(session.period)
+  ) {
+    return res
+      .status(400)
+      .json({ success: false, message: "目标时段与原时段相同，无需挪课" });
   }
   const pt = engine.getPeriodTimeMap().get(per);
   const today = engine.todayStr();
-  const newStatus = dateRes.value < today ? engine.STATUS_DONE : engine.STATUS_SCHEDULED;
+  const newStatus =
+    dateRes.value < today ? engine.STATUS_DONE : engine.STATUS_SCHEDULED;
   const roomId = room_id === undefined ? session.room_id : toIntOrNull(room_id);
 
   db.exec("BEGIN");
@@ -474,8 +735,8 @@ router.post("/:id/reschedule", auth, requireRole("admin"), (req, res) => {
       .prepare(
         `INSERT INTO class_sessions
            (term_id, schedule_id, class_id, course_id, teacher_id, substitute_teacher_id, room_id,
-            session_date, period, start_time, end_time, status, origin, related_session_id, topic)
-         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, '挪课', NULL, ?)`
+            session_date, period, start_time, end_time, status, origin, related_session_id, topic, hours)
+         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, '挪课', NULL, ?, ?)`
       )
       .run(
         session.term_id,
@@ -489,7 +750,9 @@ router.post("/:id/reschedule", auth, requireRole("admin"), (req, res) => {
         pt ? pt.start_time : "",
         pt ? pt.end_time : "",
         newStatus,
-        session.topic || ""
+        session.topic || "",
+        // v30：挪课不改变"这节课上多少课时"，从原课次继承
+        Number(session.hours) > 0 ? Number(session.hours) : DEFAULT_HOURS
       );
     const newId = info.lastInsertRowid;
     db.prepare(
@@ -503,7 +766,10 @@ router.post("/:id/reschedule", auth, requireRole("admin"), (req, res) => {
   } catch (e) {
     db.exec("ROLLBACK");
     if (/UNIQUE/i.test(String(e.message))) {
-      return res.status(400).json({ success: false, message: "目标时段已存在课次，请选择其他时段" });
+      return res.status(400).json({
+        success: false,
+        message: "目标时段已存在课次，请选择其他时段"
+      });
     }
     throw e;
   }
@@ -512,10 +778,14 @@ router.post("/:id/reschedule", auth, requireRole("admin"), (req, res) => {
 router.post("/:id/substitute", auth, requireRole("admin"), (req, res) => {
   const id = Number(req.params.id);
   const { substitute_teacher_id, room_id } = req.body || {};
-  const session = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(id);
-  if (!session) return res.status(404).json({ success: false, message: "课次不存在" });
+  const session = db
+    .prepare("SELECT * FROM class_sessions WHERE id = ?")
+    .get(id);
+  if (!session)
+    return res.status(404).json({ success: false, message: "课次不存在" });
   const subId = toIntOrNull(substitute_teacher_id);
-  if (!subId) return res.status(400).json({ success: false, message: "请选择代课人" });
+  if (!subId)
+    return res.status(400).json({ success: false, message: "请选择代课人" });
   if (!db.prepare("SELECT 1 FROM users WHERE id = ?").get(subId)) {
     return res.status(400).json({ success: false, message: "代课人不存在" });
   }

@@ -216,8 +216,14 @@ function renderChart() {
         barMaxWidth: 30,
         data: data.map(i => i.attendance_rate),
         itemStyle: {
+          // echarts 回调里的 value 是宽联合类型（string | number | Date | ...），
+          // 用 Number() 收窄再比较，数值含义不变
           color: i =>
-            i.value >= 90 ? "#67C23A" : i.value >= 60 ? "#E6A23C" : "#F56C6C"
+            Number(i.value) >= 90
+              ? "#67C23A"
+              : Number(i.value) >= 60
+                ? "#E6A23C"
+                : "#F56C6C"
         }
       }
     ]
@@ -472,7 +478,7 @@ onMounted(() => {
           </el-col>
           <el-col :xs="24" :md="10">
             <el-card shadow="never" header="出勤率 Top 20">
-              <div ref="chartRef" style="height: 480px; width: 100%" />
+              <div ref="chartRef" style=" width: 100%;height: 480px" />
             </el-card>
           </el-col>
         </el-row>
@@ -496,7 +502,7 @@ onMounted(() => {
           <div
             ref="trendChartRef"
             v-loading="trendLoading"
-            style="height: 320px; width: 100%"
+            style=" width: 100%;height: 320px"
           />
         </el-card>
 
@@ -801,24 +807,29 @@ onMounted(() => {
   body * {
     visibility: hidden;
   }
+
   #printMonthly,
   #printMonthly * {
     visibility: visible;
   }
+
   #printMonthly {
     position: absolute;
-    left: 0;
     top: 0;
+    left: 0;
     width: 100%;
     padding: 0;
   }
+
   .no-print {
     display: none !important;
   }
+
   .print-only {
     display: block !important;
   }
 }
+
 .print-only {
   display: none;
 }

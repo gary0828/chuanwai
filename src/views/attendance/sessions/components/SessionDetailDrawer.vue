@@ -18,7 +18,8 @@ import {
   restoreSession,
   rescheduleSession,
   substituteSession,
-  saveClassEval
+  saveClassEval,
+  updateSessionHours
 } from "@/api/sessions";
 import { useUserStoreHook } from "@/store/modules/user";
 import { AppEmpty } from "@/components/AppEmpty";
@@ -204,6 +205,29 @@ async function submitEval() {
   }
 }
 
+/** 修改课时数（v30；已产生课时流水的课次后端会拒绝） */
+function editHours() {
+  const cur = Number(session.value?.hours ?? 1);
+  ElMessageBox.prompt("一节课扣几个课时？（如两节连上填 2）", "修改课时数", {
+    inputValue: String(cur),
+    inputPattern: /^\d+(\.\d{1,2})?$/,
+    inputErrorMessage: "请输入大于 0 的数字",
+    confirmButtonText: "保存",
+    cancelButtonText: "取消"
+  })
+    .then(async ({ value }) => {
+      const hours = Number(value);
+      if (!(hours > 0)) return;
+      const res: any = await updateSessionHours(session.value.id, hours);
+      if (res.success) {
+        ElMessage.success("课时数已更新");
+        load();
+        emit("changed");
+      }
+    })
+    .catch(() => {});
+}
+
 /** 停课（二次确认） */
 function doStop() {
   ElMessageBox.confirm(
@@ -374,6 +398,19 @@ async function submitSubstitute() {
             </el-descriptions-item>
             <el-descriptions-item label="来源">
               {{ session.origin }}
+            </el-descriptions-item>
+            <!-- v30：一节课扣几个课时 -->
+            <el-descriptions-item label="课时数">
+              <span>{{ Number(session.hours ?? 1) }} 课时</span>
+              <el-button
+                v-if="isAdmin"
+                link
+                type="primary"
+                class="ml-2"
+                @click="editHours"
+              >
+                修改
+              </el-button>
             </el-descriptions-item>
           </el-descriptions>
         </div>
@@ -706,8 +743,8 @@ async function submitSubstitute() {
 .drawer-head__time {
   font-size: var(--text-sm);
   font-weight: var(--weight-normal);
-  color: var(--ink-500);
   font-variant-numeric: tabular-nums;
+  color: var(--ink-500);
 }
 
 .drawer-tabs {

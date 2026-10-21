@@ -219,7 +219,8 @@ const scoreDistributionChart = computed(() => {
   const scores = scoreRows.value
     .map((s: any) => s.score)
     .filter(
-      (v: any) => v !== null && v !== undefined && v !== "" && !Number.isNaN(Number(v))
+      (v: any) =>
+        v !== null && v !== undefined && v !== "" && !Number.isNaN(Number(v))
     )
     .map(Number);
   if (!scores.length) return null;
@@ -726,17 +727,20 @@ onMounted(() => {
   body * {
     visibility: hidden;
   }
+
   #printScorecard,
   #printScorecard * {
     visibility: visible;
   }
+
   #printScorecard {
     position: absolute;
-    left: 0;
     top: 0;
+    left: 0;
     width: 100%;
     padding: 10px;
   }
+
   .el-overlay,
   .el-overlay .el-dialog {
     background: transparent !important;

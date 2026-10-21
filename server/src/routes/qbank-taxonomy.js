@@ -31,16 +31,6 @@ const router = express.Router();
 /** 管理端点统一要求登录 + admin/teacher 角色 */
 const managerOnly = [auth, requireRole("admin", "teacher")];
 
-/** 安全解析 JSON 数组（DB 里可能存着历史脏数据） */
-function safeJsonArray(s) {
-  try {
-    const v = JSON.parse(s || "[]");
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
-  }
-}
-
 // ══════════════════════════════════════════════════════════════════════
 // 读取：一次性拿回两棵树（带引用计数，供管理页显示"这个节点被用了多少次"）
 // ══════════════════════════════════════════════════════════════════════
@@ -100,13 +90,13 @@ router.get("/taxonomy", auth, (req, res) => {
   res.json({
     success: true,
     data: {
-      knowledge: kps.map((k) => ({
+      knowledge: kps.map(k => ({
         ...k,
         questionCount: kpQ.get(k.id) || 0,
         // ★ 非 0 表示"删了会连学生测评记录一起没了"，前端要显式警示
         assessmentCount: kpA.get(k.id) || 0
       })),
-      chapters: chapters.map((c) => ({ ...c, questionCount: chQ.get(c.id) || 0 }))
+      chapters: chapters.map(c => ({ ...c, questionCount: chQ.get(c.id) || 0 }))
     }
   });
 });
@@ -129,10 +119,13 @@ function kpDeleteBlocker(kpId) {
       )
       .get(kpId).c
   );
-  if (q > 0) return `该知识点下还有 ${q} 道题在用，请先把这些题换到别的知识点（或删除它们）`;
+  if (q > 0)
+    return `该知识点下还有 ${q} 道题在用，请先把这些题换到别的知识点（或删除它们）`;
 
   const a = Number(
-    db.prepare("SELECT COUNT(*) AS c FROM kp_assessments WHERE kp_id = ?").get(kpId).c
+    db
+      .prepare("SELECT COUNT(*) AS c FROM kp_assessments WHERE kp_id = ?")
+      .get(kpId).c
   );
   if (a > 0) {
     return (
@@ -143,7 +136,9 @@ function kpDeleteBlocker(kpId) {
   }
 
   const child = Number(
-    db.prepare("SELECT COUNT(*) AS c FROM knowledge_points WHERE parent_id = ?").get(kpId).c
+    db
+      .prepare("SELECT COUNT(*) AS c FROM knowledge_points WHERE parent_id = ?")
+      .get(kpId).c
   );
   if (child > 0) return `该知识点下还有 ${child} 个子知识点，请先处理子节点`;
   return null;
@@ -152,32 +147,52 @@ function kpDeleteBlocker(kpId) {
 /** 新增知识点 */
 router.post("/taxonomy/kp", ...managerOnly, (req, res, next) => {
   try {
-    const nameRes = parseText(req.body?.name, { field: "知识点名称", max: 60, required: true });
-    if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
+    const nameRes = parseText(req.body?.name, {
+      field: "知识点名称",
+      max: 60,
+      required: true
+    });
+    if (!nameRes.ok)
+      return res.status(400).json({ success: false, message: nameRes.message });
     const name = nameRes.value;
 
     const diff = parseNumber(req.body?.difficulty ?? 2, {
-      field: "难度", min: 1, max: 5, integer: true
+      field: "难度",
+      min: 1,
+      max: 5,
+      integer: true
     });
-    if (!diff.ok) return res.status(400).json({ success: false, message: diff.message });
+    if (!diff.ok)
+      return res.status(400).json({ success: false, message: diff.message });
 
     // ★ 学科必填（迁移 028）：知识点必须归属学科，否则管理页切换学科后会"消失"
     const kpCourseId = Number(req.body?.course_id);
     if (!Number.isInteger(kpCourseId) || kpCourseId <= 0) {
-      return res.status(400).json({ success: false, message: "请选择所属学科" });
+      return res
+        .status(400)
+        .json({ success: false, message: "请选择所属学科" });
     }
     if (!db.prepare("SELECT id FROM courses WHERE id = ?").get(kpCourseId)) {
-      return res.status(400).json({ success: false, message: "所选学科不存在" });
+      return res
+        .status(400)
+        .json({ success: false, message: "所选学科不存在" });
     }
 
     let parentId = null;
     if (!isBlank(req.body?.parent_id)) {
       parentId = Number(req.body.parent_id);
-      const p = db.prepare("SELECT id, course_id FROM knowledge_points WHERE id = ?").get(parentId);
-      if (!p) return res.status(400).json({ success: false, message: "上级知识点不存在" });
+      const p = db
+        .prepare("SELECT id, course_id FROM knowledge_points WHERE id = ?")
+        .get(parentId);
+      if (!p)
+        return res
+          .status(400)
+          .json({ success: false, message: "上级知识点不存在" });
       // ★ 上级必须同一学科 —— 否则会造出"物理章节下的数学知识点"这种跨科父子关系
       if (Number(p.course_id) !== kpCourseId) {
-        return res.status(400).json({ success: false, message: "上级知识点属于其他学科" });
+        return res
+          .status(400)
+          .json({ success: false, message: "上级知识点属于其他学科" });
       }
     }
 
@@ -192,12 +207,19 @@ router.post("/taxonomy/kp", ...managerOnly, (req, res, next) => {
         code =
           "K-" +
           Array.from(crypto.randomBytes(8))
-            .map((b) => alphabet[b % alphabet.length])
+            .map(b => alphabet[b % alphabet.length])
             .join("");
         tries += 1;
-      } while (db.prepare("SELECT 1 FROM knowledge_points WHERE code = ?").get(code) && tries < 10);
-    } else if (db.prepare("SELECT 1 FROM knowledge_points WHERE code = ?").get(code)) {
-      return res.status(400).json({ success: false, message: `编码「${code}」已被占用，请换一个` });
+      } while (
+        db.prepare("SELECT 1 FROM knowledge_points WHERE code = ?").get(code) &&
+        tries < 10
+      );
+    } else if (
+      db.prepare("SELECT 1 FROM knowledge_points WHERE code = ?").get(code)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: `编码「${code}」已被占用，请换一个` });
     }
 
     const info = db
@@ -211,12 +233,17 @@ router.post("/taxonomy/kp", ...managerOnly, (req, res, next) => {
         name,
         diff.value,
         Number(req.body?.seq) || 0,
-        String(req.body?.description || "").trim().slice(0, 300),
+        String(req.body?.description || "")
+          .trim()
+          .slice(0, 300),
         kpCourseId
       );
 
     audit(req.user, "新增知识点", `${name}（${code}）`);
-    res.json({ success: true, data: { id: Number(info.lastInsertRowid), code } });
+    res.json({
+      success: true,
+      data: { id: Number(info.lastInsertRowid), code }
+    });
   } catch (err) {
     next(err);
   }
@@ -226,29 +253,55 @@ router.post("/taxonomy/kp", ...managerOnly, (req, res, next) => {
 router.put("/taxonomy/kp/:id", ...managerOnly, (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const row = db.prepare("SELECT * FROM knowledge_points WHERE id = ?").get(id);
-    if (!row) return res.status(404).json({ success: false, message: "知识点不存在" });
+    const row = db
+      .prepare("SELECT * FROM knowledge_points WHERE id = ?")
+      .get(id);
+    if (!row)
+      return res.status(404).json({ success: false, message: "知识点不存在" });
 
     const nameRes = isBlank(req.body?.name)
       ? { ok: true, value: row.name }
-      : parseText(req.body.name, { field: "知识点名称", max: 60, required: true });
-    if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
+      : parseText(req.body.name, {
+          field: "知识点名称",
+          max: 60,
+          required: true
+        });
+    if (!nameRes.ok)
+      return res.status(400).json({ success: false, message: nameRes.message });
 
     const diffRes = parseNumber(req.body?.difficulty ?? row.difficulty, {
-      field: "难度", min: 1, max: 5, integer: true
+      field: "难度",
+      min: 1,
+      max: 5,
+      integer: true
     });
-    if (!diffRes.ok) return res.status(400).json({ success: false, message: diffRes.message });
+    if (!diffRes.ok)
+      return res.status(400).json({ success: false, message: diffRes.message });
 
     // 上级变更：防成环（不能把自己挂到自己的子孙下面）
-    let parentId = req.body?.parent_id === undefined ? row.parent_id : (isBlank(req.body.parent_id) ? null : Number(req.body.parent_id));
+    let parentId =
+      req.body?.parent_id === undefined
+        ? row.parent_id
+        : isBlank(req.body.parent_id)
+          ? null
+          : Number(req.body.parent_id);
     if (parentId !== null) {
-      if (parentId === id) return res.status(400).json({ success: false, message: "不能把自己设为上级" });
+      if (parentId === id)
+        return res
+          .status(400)
+          .json({ success: false, message: "不能把自己设为上级" });
       // 沿 parent 链上溯，若遇到自己则成环
       let cur = parentId;
       let guard = 0;
       while (cur !== null && guard < 50) {
-        if (cur === id) return res.status(400).json({ success: false, message: "不能挂到自己的下级知识点下（会形成环）" });
-        const p = db.prepare("SELECT parent_id FROM knowledge_points WHERE id = ?").get(cur);
+        if (cur === id)
+          return res.status(400).json({
+            success: false,
+            message: "不能挂到自己的下级知识点下（会形成环）"
+          });
+        const p = db
+          .prepare("SELECT parent_id FROM knowledge_points WHERE id = ?")
+          .get(cur);
         cur = p ? p.parent_id : null;
         guard += 1;
       }
@@ -256,8 +309,14 @@ router.put("/taxonomy/kp/:id", ...managerOnly, (req, res, next) => {
 
     const code = String(req.body?.code || "").trim();
     if (code && code !== row.code) {
-      if (db.prepare("SELECT 1 FROM knowledge_points WHERE code = ? AND id != ?").get(code, id)) {
-        return res.status(400).json({ success: false, message: `编码「${code}」已被占用` });
+      if (
+        db
+          .prepare("SELECT 1 FROM knowledge_points WHERE code = ? AND id != ?")
+          .get(code, id)
+      ) {
+        return res
+          .status(400)
+          .json({ success: false, message: `编码「${code}」已被占用` });
       }
     }
 
@@ -272,8 +331,14 @@ router.put("/taxonomy/kp/:id", ...managerOnly, (req, res, next) => {
       code || row.code,
       diffRes.value,
       req.body?.seq === undefined ? row.seq : Number(req.body.seq) || 0,
-      req.body?.is_active === undefined ? row.is_active : (req.body.is_active ? 1 : 0),
-      req.body?.description === undefined ? row.description : String(req.body.description).trim().slice(0, 300),
+      req.body?.is_active === undefined
+        ? row.is_active
+        : req.body.is_active
+          ? 1
+          : 0,
+      req.body?.description === undefined
+        ? row.description
+        : String(req.body.description).trim().slice(0, 300),
       id
     );
 
@@ -288,14 +353,19 @@ router.put("/taxonomy/kp/:id", ...managerOnly, (req, res, next) => {
 router.delete("/taxonomy/kp/:id", ...managerOnly, (req, res) => {
   const id = Number(req.params.id);
   const row = db.prepare("SELECT * FROM knowledge_points WHERE id = ?").get(id);
-  if (!row) return res.status(404).json({ success: false, message: "知识点不存在" });
+  if (!row)
+    return res.status(404).json({ success: false, message: "知识点不存在" });
 
   const blocker = kpDeleteBlocker(id);
-  if (blocker) return res.status(409).json({ success: false, message: blocker });
+  if (blocker)
+    return res.status(409).json({ success: false, message: blocker });
 
   db.prepare("DELETE FROM knowledge_points WHERE id = ?").run(id);
   audit(req.user, "删除知识点", `#${id} ${row.name}`);
-  res.json({ success: true, data: { id, message: `已删除知识点「${row.name}」` } });
+  res.json({
+    success: true,
+    data: { id, message: `已删除知识点「${row.name}」` }
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════
@@ -313,7 +383,7 @@ function chapterSubtreeIds(rootId) {
        ) SELECT id FROM sub`
     )
     .all(rootId);
-  return rows.map((r) => r.id);
+  return rows.map(r => r.id);
 }
 
 /** 删除前的引用检查（含子树） */
@@ -338,35 +408,58 @@ function chapterDeleteBlocker(chId) {
 /** 新增章节 */
 router.post("/taxonomy/chapter", ...managerOnly, (req, res, next) => {
   try {
-    const nameRes = parseText(req.body?.name, { field: "章节名称", max: 80, required: true });
-    if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
+    const nameRes = parseText(req.body?.name, {
+      field: "章节名称",
+      max: 80,
+      required: true
+    });
+    if (!nameRes.ok)
+      return res.status(400).json({ success: false, message: nameRes.message });
 
     // ★ 学科必填（迁移 028）
     const chCourseId = Number(req.body?.course_id);
     if (!Number.isInteger(chCourseId) || chCourseId <= 0) {
-      return res.status(400).json({ success: false, message: "请选择所属学科" });
+      return res
+        .status(400)
+        .json({ success: false, message: "请选择所属学科" });
     }
     if (!db.prepare("SELECT id FROM courses WHERE id = ?").get(chCourseId)) {
-      return res.status(400).json({ success: false, message: "所选学科不存在" });
+      return res
+        .status(400)
+        .json({ success: false, message: "所选学科不存在" });
     }
 
     let parentId = null;
     if (!isBlank(req.body?.parent_id)) {
       parentId = Number(req.body.parent_id);
-      const p = db.prepare("SELECT id, parent_id, course_id FROM question_chapters WHERE id = ?").get(parentId);
-      if (!p) return res.status(400).json({ success: false, message: "上级章节不存在" });
+      const p = db
+        .prepare(
+          "SELECT id, parent_id, course_id FROM question_chapters WHERE id = ?"
+        )
+        .get(parentId);
+      if (!p)
+        return res
+          .status(400)
+          .json({ success: false, message: "上级章节不存在" });
       // ★ 上级必须同一学科（否则会造出跨科的父子关系）
       if (Number(p.course_id) !== chCourseId) {
-        return res.status(400).json({ success: false, message: "上级章节属于其他学科" });
+        return res
+          .status(400)
+          .json({ success: false, message: "上级章节属于其他学科" });
       }
       // 只允许两层（章 → 节）：本项目教材结构就是两级，三层会让组卷时的层级语义变乱
       if (p.parent_id !== null) {
-        return res.status(400).json({ success: false, message: "章节最多两层（章 → 节），不能在「节」下再建子级" });
+        return res.status(400).json({
+          success: false,
+          message: "章节最多两层（章 → 节），不能在「节」下再建子级"
+        });
       }
     }
 
     const info = db
-      .prepare("INSERT INTO question_chapters (parent_id, course_id, name, sort) VALUES (?, ?, ?, ?)")
+      .prepare(
+        "INSERT INTO question_chapters (parent_id, course_id, name, sort) VALUES (?, ?, ?, ?)"
+      )
       .run(parentId, chCourseId, nameRes.value, Number(req.body?.sort) || 0);
 
     audit(req.user, "新增章节", nameRes.value);
@@ -380,27 +473,53 @@ router.post("/taxonomy/chapter", ...managerOnly, (req, res, next) => {
 router.put("/taxonomy/chapter/:id", ...managerOnly, (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const row = db.prepare("SELECT * FROM question_chapters WHERE id = ?").get(id);
-    if (!row) return res.status(404).json({ success: false, message: "章节不存在" });
+    const row = db
+      .prepare("SELECT * FROM question_chapters WHERE id = ?")
+      .get(id);
+    if (!row)
+      return res.status(404).json({ success: false, message: "章节不存在" });
 
     const nameRes = isBlank(req.body?.name)
       ? { ok: true, value: row.name }
-      : parseText(req.body.name, { field: "章节名称", max: 80, required: true });
-    if (!nameRes.ok) return res.status(400).json({ success: false, message: nameRes.message });
+      : parseText(req.body.name, {
+          field: "章节名称",
+          max: 80,
+          required: true
+        });
+    if (!nameRes.ok)
+      return res.status(400).json({ success: false, message: nameRes.message });
 
-    let parentId = req.body?.parent_id === undefined
-      ? row.parent_id
-      : (isBlank(req.body.parent_id) ? null : Number(req.body.parent_id));
+    let parentId =
+      req.body?.parent_id === undefined
+        ? row.parent_id
+        : isBlank(req.body.parent_id)
+          ? null
+          : Number(req.body.parent_id);
     if (parentId !== null) {
-      if (parentId === id) return res.status(400).json({ success: false, message: "不能把自己设为上级" });
-      const p = db.prepare("SELECT id, parent_id FROM question_chapters WHERE id = ?").get(parentId);
-      if (!p) return res.status(400).json({ success: false, message: "上级章节不存在" });
+      if (parentId === id)
+        return res
+          .status(400)
+          .json({ success: false, message: "不能把自己设为上级" });
+      const p = db
+        .prepare("SELECT id, parent_id FROM question_chapters WHERE id = ?")
+        .get(parentId);
+      if (!p)
+        return res
+          .status(400)
+          .json({ success: false, message: "上级章节不存在" });
       if (p.parent_id !== null) {
-        return res.status(400).json({ success: false, message: "章节最多两层，不能在「节」下再建子级" });
+        return res.status(400).json({
+          success: false,
+          message: "章节最多两层，不能在「节」下再建子级"
+        });
       }
       // 有子章节的「章」不能降级成「节」（否则三层）
       const childCount = Number(
-        db.prepare("SELECT COUNT(*) AS c FROM question_chapters WHERE parent_id = ?").get(id).c
+        db
+          .prepare(
+            "SELECT COUNT(*) AS c FROM question_chapters WHERE parent_id = ?"
+          )
+          .get(id).c
       );
       if (childCount > 0) {
         return res.status(400).json({
@@ -410,7 +529,9 @@ router.put("/taxonomy/chapter/:id", ...managerOnly, (req, res, next) => {
       }
     }
 
-    db.prepare("UPDATE question_chapters SET parent_id = ?, name = ?, sort = ? WHERE id = ?").run(
+    db.prepare(
+      "UPDATE question_chapters SET parent_id = ?, name = ?, sort = ? WHERE id = ?"
+    ).run(
       parentId,
       nameRes.value,
       req.body?.sort === undefined ? row.sort : Number(req.body.sort) || 0,
@@ -427,11 +548,15 @@ router.put("/taxonomy/chapter/:id", ...managerOnly, (req, res, next) => {
 /** 删除章节（有引用时拒绝，含子树检查） */
 router.delete("/taxonomy/chapter/:id", ...managerOnly, (req, res) => {
   const id = Number(req.params.id);
-  const row = db.prepare("SELECT * FROM question_chapters WHERE id = ?").get(id);
-  if (!row) return res.status(404).json({ success: false, message: "章节不存在" });
+  const row = db
+    .prepare("SELECT * FROM question_chapters WHERE id = ?")
+    .get(id);
+  if (!row)
+    return res.status(404).json({ success: false, message: "章节不存在" });
 
   const blocker = chapterDeleteBlocker(id);
-  if (blocker) return res.status(409).json({ success: false, message: blocker });
+  if (blocker)
+    return res.status(409).json({ success: false, message: blocker });
 
   const subCount = chapterSubtreeIds(id).length - 1;
   db.prepare("DELETE FROM question_chapters WHERE id = ?").run(id);
@@ -440,9 +565,10 @@ router.delete("/taxonomy/chapter/:id", ...managerOnly, (req, res) => {
     success: true,
     data: {
       id,
-      message: subCount > 0
-        ? `已删除章节「${row.name}」及其 ${subCount} 个下级章节`
-        : `已删除章节「${row.name}」`
+      message:
+        subCount > 0
+          ? `已删除章节「${row.name}」及其 ${subCount} 个下级章节`
+          : `已删除章节「${row.name}」`
     }
   });
 });

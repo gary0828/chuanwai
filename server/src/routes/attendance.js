@@ -11,9 +11,17 @@ const {
   teacherClassPredicate
 } = require("../utils/scope");
 const { getDeductStatuses } = require("../utils/attendance-rules");
-const { SOURCE, reconcile } = require("../utils/hours-reconcile");
+const {
+  SOURCE,
+  reconcile,
+  sessionHours,
+  charge,
+  refund
+} = require("../utils/hours-reconcile");
 const { attendanceRate } = require("../utils/attendance-rate");
 const { parseDate } = require("../utils/validate");
+// ★ 统一分页钳制（2026-10-18 深度测试 P2-4）
+const { clampPagination } = require("../utils/pagination");
 
 const router = express.Router();
 
@@ -25,14 +33,19 @@ const STATUSES = ["正常", "迟到", "早退", "缺勤", "请假"];
 router.get("/", auth, (req, res) => {
   const { date, class_id, course_id, session_id } = req.query;
 
-  const sessionId = session_id != null && session_id !== "" ? Number(session_id) : null;
+  const sessionId =
+    session_id != null && session_id !== "" ? Number(session_id) : null;
   if (sessionId != null) {
-    const session = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(sessionId);
+    const session = db
+      .prepare("SELECT * FROM class_sessions WHERE id = ?")
+      .get(sessionId);
     if (!session) {
       return res.status(404).json({ success: false, message: "课次不存在" });
     }
     if (!canAccessSession(req, sessionId)) {
-      return res.status(403).json({ success: false, message: "无权查看该课次考勤" });
+      return res
+        .status(403)
+        .json({ success: false, message: "无权查看该课次考勤" });
     }
     const list = db
       .prepare(
@@ -41,7 +54,7 @@ router.get("/", auth, (req, res) => {
          FROM students s
          LEFT JOIN attendances a
            ON a.student_id = s.id AND a.session_id = ?
-         WHERE s.class_id = ? AND s.status = '在读'
+         WHERE s.class_id = ? AND s.status = '在读' AND s.deleted_at IS NULL
          ORDER BY s.student_no`
       )
       .all(sessionId, Number(session.class_id));
@@ -65,7 +78,7 @@ router.get("/", auth, (req, res) => {
        FROM students s
        LEFT JOIN attendances a
          ON a.student_id = s.id AND a.course_id = ? AND a.date = ?
-       WHERE s.class_id = ? AND s.status = '在读'
+       WHERE s.class_id = ? AND s.status = '在读' AND s.deleted_at IS NULL
        ORDER BY s.student_no`
     )
     .all(Number(course_id), date, Number(class_id));
@@ -80,7 +93,9 @@ router.post("/batch", auth, (req, res) => {
   let { date, course_id } = body;
   const { records } = body;
   const sessionIdIn =
-    body.session_id != null && body.session_id !== "" ? Number(body.session_id) : null;
+    body.session_id != null && body.session_id !== ""
+      ? Number(body.session_id)
+      : null;
 
   if (!Array.isArray(records) || records.length === 0) {
     return res
@@ -88,22 +103,29 @@ router.post("/batch", auth, (req, res) => {
       .json({ success: false, message: "请先选择日期、课程并填写考勤记录" });
   }
 
-  const getStudentClass = db.prepare("SELECT class_id FROM students WHERE id = ?");
+  const getStudentClass = db.prepare(
+    "SELECT class_id, deleted_at FROM students WHERE id = ?"
+  );
 
   // 课次分支：按课次 upsert（含停课阻断 + 代课人可录，Q5/Q9）
   let session = null;
   if (sessionIdIn != null) {
-    session = db.prepare("SELECT * FROM class_sessions WHERE id = ?").get(sessionIdIn);
+    session = db
+      .prepare("SELECT * FROM class_sessions WHERE id = ?")
+      .get(sessionIdIn);
     if (!session) {
       return res.status(404).json({ success: false, message: "课次不存在" });
     }
     if (!canAccessSession(req, sessionIdIn)) {
-      return res.status(403).json({ success: false, message: "无权操作该课次考勤" });
+      return res
+        .status(403)
+        .json({ success: false, message: "无权操作该课次考勤" });
     }
     if (session.status === "已停课") {
-      return res
-        .status(400)
-        .json({ success: false, message: "该课次已停课，不能点名（请先恢复）" });
+      return res.status(400).json({
+        success: false,
+        message: "该课次已停课，不能点名（请先恢复）"
+      });
     }
     for (const r of records) {
       if (!STATUSES.includes(r.status)) {
@@ -112,7 +134,19 @@ router.post("/batch", auth, (req, res) => {
           .json({ success: false, message: `考勤状态「${r.status}」不合法` });
       }
       const st = getStudentClass.get(Number(r.student_id));
-      if (!st || Number(st.class_id) !== Number(session.class_id)) {
+      if (!st) {
+        return res
+          .status(403)
+          .json({ success: false, message: "包含不属于该课次班级的学生记录" });
+      }
+      // ★ P1-1（v30 软删联动，2026-10-18）：已归档学员不得再点名（否则会新产生课时流水）
+      if (st.deleted_at) {
+        return res.status(400).json({
+          success: false,
+          message: "该学员档案已删除，请先恢复后再点名"
+        });
+      }
+      if (Number(st.class_id) !== Number(session.class_id)) {
         return res
           .status(403)
           .json({ success: false, message: "包含不属于该课次班级的学生记录" });
@@ -136,6 +170,13 @@ router.post("/batch", auth, (req, res) => {
         return res
           .status(400)
           .json({ success: false, message: `考勤状态「${r.status}」不合法` });
+      }
+      // ★ P1-1（v30 软删联动）：已归档学员不得再产生考勤/课时流水
+      if (getStudentClass.get(Number(r.student_id))?.deleted_at) {
+        return res.status(400).json({
+          success: false,
+          message: "该学员档案已删除，请先恢复后再登记考勤"
+        });
       }
       if (!canManageStudent(req, r.student_id)) {
         return res
@@ -162,8 +203,19 @@ router.post("/batch", auth, (req, res) => {
     "SELECT status FROM attendances WHERE student_id = ? AND course_id = ? AND date = ?"
   );
   // 课次分支：按 (session_id, student_id) 手动 select → insert/update
+  // ★ 2026-10-19（业务逻辑深测 P0 修复）：必须带出 status —— 旧实现只 SELECT id，
+  //   导致 session 模式 oldStatus 恒为 undefined：正常→缺勤/请假不回补，
+  //   且同一批「正常」重复提交会重复扣课时（实测 10→8→6）。
   const findAttBySession = db.prepare(
-    "SELECT id FROM attendances WHERE session_id = ? AND student_id = ?"
+    "SELECT id, status FROM attendances WHERE session_id = ? AND student_id = ?"
+  );
+  // legacy 考勤（无 session_id）在扣课时也要用「当天课次的 hours」，
+  // 否则 3 课时的课次通过 legacy 点名只扣 1（业务逻辑深测 P1）。
+  const findLegacySession = db.prepare(
+    `SELECT id FROM class_sessions
+     WHERE class_id = (SELECT class_id FROM students WHERE id = ?)
+       AND course_id = ? AND session_date = ? AND status != '已停课'
+     ORDER BY period LIMIT 1`
   );
   const insertSessionAtt = db.prepare(
     "INSERT INTO attendances (student_id, course_id, date, status, remark, session_id) VALUES (?, ?, ?, ?, ?, ?)"
@@ -180,20 +232,10 @@ router.post("/batch", auth, (req, res) => {
   const findRefundOrder = db.prepare(
     "SELECT id FROM orders WHERE student_id = ? AND course_id = ? AND status = '在读' AND total_hours > 0 ORDER BY remain_hours DESC, id LIMIT 1"
   );
-  const deductOrder = db.prepare(
-    "UPDATE orders SET remain_hours = MAX(0, remain_hours - 1), updated_at = datetime('now','localtime') WHERE id = ?"
-  );
-  // v13：回补设上限（remain_hours 不超过 total_hours）
-  const refundOrder = db.prepare(
-    "UPDATE orders SET remain_hours = MIN(total_hours, remain_hours + 1), updated_at = datetime('now','localtime') WHERE id = ?"
-  );
-  // 课时消耗流水：扣减/回补后落流水（date 为考勤日期，session_id 课次分支落课次 id，legacy 为 NULL）
-  //  ★ v29：新增 `source`（来源）与 `attendance_id`（精确关联考勤）——
-  //    没有 attendance_id 时，对账只能按日期"宽松匹配"历史流水，会把补课/手工调整的流水
-  //    误认成"这条考勤扣过了"。带上它之后，每一条考勤的扣减/回补都能被精确追踪。
-  const insertCons = db.prepare(
-    "INSERT INTO hour_consumptions (student_id, order_id, course_id, class_id, date, session_id, hours, type, source, attendance_id, operator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  );
+  // ★ 2026-10-18：扣减/回补的 SQL 已收口到 utils/hours-reconcile 的 charge()/refund()。
+  //   这里只保留"找哪一张订单"的查询 —— 记账动作不在本文件里发生。
+  //   历史教训：这三段 SQL 曾在本文件、leaves.js、makeups.js 各存一份，
+  //   改课时口径（如"一节课几课时"）时必须同步改 6 处，必然漏。
   // legacy 分支的考勤 id 回查（session 分支用 findAttBySession）
   const getAttIdLegacy = db.prepare(
     "SELECT id FROM attendances WHERE student_id = ? AND course_id = ? AND date = ?"
@@ -247,7 +289,14 @@ router.post("/batch", auth, (req, res) => {
         if (existing) {
           updateSessionAtt.run(r.status, r.remark || "", effSessionId, sid);
         } else {
-          insertSessionAtt.run(sid, effCourseId, effDate, r.status, r.remark || "", effSessionId);
+          insertSessionAtt.run(
+            sid,
+            effCourseId,
+            effDate,
+            r.status,
+            r.remark || "",
+            effSessionId
+          );
         }
       } else {
         insert.run(sid, effCourseId, effDate, r.status, r.remark || "");
@@ -262,41 +311,44 @@ router.post("/batch", auth, (req, res) => {
           const newDeduct = isDeduct(r.status);
           const classId = session
             ? effClassId
-            : getStudentClass.get(sid)?.class_id ?? null;
+            : (getStudentClass.get(sid)?.class_id ?? null);
           // 本条考勤的 id（v29：写进流水，供对账精确追踪）
           const attId = session
-            ? (existing ?? findAttBySession.get(effSessionId, sid))?.id ?? null
-            : getAttIdLegacy.get(sid, effCourseId, effDate)?.id ?? null;
+            ? ((existing ?? findAttBySession.get(effSessionId, sid))?.id ??
+              null)
+            : (getAttIdLegacy.get(sid, effCourseId, effDate)?.id ?? null);
+          // v30：一课时的实际课时数取课次上的 hours；legacy 考勤按
+          // (学员班级, 课程, 日期) 找到当天课次，避免多课时课次只扣 1。
+          const hrsSessionId = session
+            ? effSessionId
+            : (findLegacySession.get(sid, effCourseId, effDate)?.id ?? null);
+          const hrs = sessionHours(db, hrsSessionId);
           if (!oldDeduct && newDeduct) {
-            deductOrder.run(order.id);
-            insertCons.run(
-              sid,
-              order.id,
-              effCourseId,
+            charge(db, {
+              orderId: order.id,
+              studentId: sid,
+              courseId: effCourseId,
               classId,
-              effDate,
-              effSessionId,
-              1,
-              "扣减",
-              SOURCE.ATTENDANCE,
-              attId,
-              req.user.id
-            );
+              date: effDate,
+              sessionId: effSessionId,
+              hours: hrs,
+              source: SOURCE.ATTENDANCE,
+              attendanceId: attId,
+              operatorId: req.user.id
+            });
           } else if (oldDeduct && !newDeduct) {
-            refundOrder.run(order.id);
-            insertCons.run(
-              sid,
-              order.id,
-              effCourseId,
+            refund(db, {
+              orderId: order.id,
+              studentId: sid,
+              courseId: effCourseId,
               classId,
-              effDate,
-              effSessionId,
-              1,
-              "回补",
-              SOURCE.ATTENDANCE,
-              attId,
-              req.user.id
-            );
+              date: effDate,
+              sessionId: effSessionId,
+              hours: hrs,
+              source: SOURCE.ATTENDANCE,
+              attendanceId: attId,
+              operatorId: req.user.id
+            });
           }
         }
         // 缺勤通知联动
@@ -306,15 +358,8 @@ router.post("/batch", auth, (req, res) => {
             const course = getCourseName.get(effCourseId);
             const title = "考勤缺勤提醒";
             const content = `${student?.name || "学员"} ${effDate} ${course?.name || "课程"} 缺勤，请家长关注`;
-            const parentName =
-              getParentName.get(sid)?.parent_name || "";
-            insertNotice.run(
-              sid,
-              title,
-              content,
-              effDate,
-              parentName
-            );
+            const parentName = getParentName.get(sid)?.parent_name || "";
+            insertNotice.run(sid, title, content, effDate, parentName);
           }
         } else if (oldStatus === "缺勤") {
           deleteAbsentNotice.run(sid, effDate);
@@ -341,7 +386,9 @@ router.post("/batch", auth, (req, res) => {
     //   对账以"本学员本课程已有的出勤考勤"为基准重核一遍，缺多少补多少（幂等，可重复执行）。
     //   ★ 本函数不开事务 —— 这里已经在事务里，SQLite 不支持嵌套事务。
     const reconciled = [];
-    const touched = new Set(records.map(r => `${Number(r.student_id)}|${effCourseId}`));
+    const touched = new Set(
+      records.map(r => `${Number(r.student_id)}|${effCourseId}`)
+    );
     for (const key of touched) {
       const [stuId, couId] = key.split("|").map(Number);
       const rc = reconcile(db, {
@@ -363,19 +410,9 @@ router.post("/batch", auth, (req, res) => {
 
 /** 考勤记录查询（分页，供考勤记录页查看/导出） */
 router.get("/records", auth, (req, res) => {
-  const {
-    date_start,
-    date_end,
-    course_id,
-    class_id,
-    student_id,
-    status,
-    page = 1,
-    pageSize = 10
-  } = req.query;
-  const p = Number(page) || 1;
-  const ps = Number(pageSize) || 10;
-  const offset = (p - 1) * ps;
+  const { date_start, date_end, course_id, class_id, student_id, status } =
+    req.query;
+  const { pageSize: ps, offset } = clampPagination(req.query);
 
   let where = "WHERE 1=1";
   const params = [];
@@ -464,9 +501,12 @@ router.get("/statistics", auth, (req, res) => {
     SUM(CASE WHEN a.status = '请假' THEN 1 ELSE 0 END) AS leave_count`;
 
   let list;
+  // ★ P1-2（2026-10-18）：参数顺序必须与 SQL 中 `${joinCond}` → `${where}` → `${scope.clause}`
+  //   的出现顺序一致。旧实现先拼 [...params, ...scope.params]，随后才 push class_id，
+  //   导致 teacher 带 class_id 时绑定整体错位、列表恒空。
   if (dimension === "class") {
     let where = "WHERE 1=1";
-    const whereParams = [...params, ...scope.params];
+    const whereParams = [...params];
     if (class_id) {
       where += " AND c.id = ?";
       whereParams.push(Number(class_id));
@@ -481,10 +521,10 @@ router.get("/statistics", auth, (req, res) => {
          GROUP BY c.id
          ORDER BY c.id`
       )
-      .all(...whereParams);
+      .all(...whereParams, ...scope.params);
   } else {
     let where = "WHERE 1=1";
-    const whereParams = [...params, ...scope.params];
+    const whereParams = [...params];
     if (class_id) {
       where += " AND s.class_id = ?";
       whereParams.push(Number(class_id));
@@ -499,7 +539,7 @@ router.get("/statistics", auth, (req, res) => {
          GROUP BY s.id
          ORDER BY total DESC`
       )
-      .all(...whereParams);
+      .all(...whereParams, ...scope.params);
   }
 
   // 汇总（教师仅统计本班）
@@ -508,7 +548,9 @@ router.get("/statistics", auth, (req, res) => {
       ? ` AND a.student_id IN (SELECT s.id FROM students s JOIN classes c ON s.class_id = c.id WHERE ${teacherClassPredicate("c")})`
       : "";
   const summaryParams =
-    req.user.role === "teacher" ? [req.user.id, req.user.id, ...params] : [...params];
+    req.user.role === "teacher"
+      ? [req.user.id, req.user.id, ...params]
+      : [...params];
   const summary = db
     .prepare(
       `SELECT
@@ -665,12 +707,18 @@ router.get("/statistics/monthly", auth, (req, res) => {
       ? ` AND a.student_id IN (SELECT s.id FROM students s JOIN classes c ON s.class_id = c.id WHERE ${teacherClassPredicate("c")})`
       : "";
   const summaryParams =
-    req.user.role === "teacher" ? [req.user.id, req.user.id, ...params] : [...params];
+    req.user.role === "teacher"
+      ? [req.user.id, req.user.id, ...params]
+      : [...params];
+  // ★ P1-3（2026-10-18）：cond 里可能含 `s.class_id = ?`（按班级筛选），本查询必须与主查询
+  //   一样 JOIN students，否则 SQLite 报 `no such column: s.class_id` → 只要传 class_id 就 500。
   const summary = db
     .prepare(
       `SELECT COUNT(a.id) AS total,
               SUM(CASE WHEN a.status = '缺勤' THEN 1 ELSE 0 END) AS absent_count
-       FROM attendances a WHERE 1=1${summaryScope}${cond.length ? ` AND ${cond.join(" AND ")}` : ""}`
+       FROM attendances a
+       JOIN students s ON s.id = a.student_id
+       WHERE 1=1${summaryScope}${cond.length ? ` AND ${cond.join(" AND ")}` : ""}`
     )
     .get(...summaryParams);
 
@@ -752,7 +800,7 @@ router.get("/warnings", auth, (req, res) => {
        FROM students s
        JOIN classes c ON s.class_id = c.id
        LEFT JOIN attendances a ON a.student_id = s.id AND a.date BETWEEN ? AND ?
-       WHERE s.status = '在读' ${where}${scope.clause}
+       WHERE s.status = '在读' AND s.deleted_at IS NULL ${where}${scope.clause}
        GROUP BY s.id
        HAVING COUNT(a.id) > 0`
     )
@@ -778,7 +826,7 @@ router.get("/warnings", auth, (req, res) => {
        FROM students s
        JOIN classes c ON s.class_id = c.id
        LEFT JOIN attendances a ON a.student_id = s.id AND a.status = '缺勤' AND a.date BETWEEN ? AND ?
-       WHERE s.status = '在读' ${where}${scope.clause}
+       WHERE s.status = '在读' AND s.deleted_at IS NULL ${where}${scope.clause}
        ORDER BY s.id, a.date`
     )
     .all(startStr, endStr, ...params, ...scope.params);
